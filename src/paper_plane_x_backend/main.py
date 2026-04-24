@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from paper_plane_x_backend.api.routers import (
+    agent_traces,
     data_process,
     hitl,
     librarian,
@@ -47,6 +48,7 @@ app.add_middleware(
 # 注册路由
 app.include_router(project.router, prefix="/api/v1")
 app.include_router(paper.router, prefix="/api/v1")
+app.include_router(agent_traces.router, prefix="/api/v1")
 app.include_router(librarian.router, prefix="/api/v1")
 app.include_router(data_process.router, prefix="/api/v1")
 app.include_router(hitl.router, prefix="/api/v1")

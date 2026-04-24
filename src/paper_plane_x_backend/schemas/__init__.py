@@ -19,6 +19,9 @@ from paper_plane_x_backend.schemas.agent_io import (
     UserMessage,
 )
 from paper_plane_x_backend.schemas.api import (
+    AgentTraceQueryRequest,
+    AgentTraceQueryResponse,
+    AgentTraceResponse,
     DataProcessManualUpdateRequest,
     DataProcessRequest,
     DataProcessSubmitResponse,
@@ -45,6 +48,9 @@ from paper_plane_x_backend.schemas.api import (
 
 __all__ = [
     # API Schemas
+    "AgentTraceQueryRequest",
+    "AgentTraceQueryResponse",
+    "AgentTraceResponse",
     "DataProcessSubmitResponse",
     "DataProcessTaskListResponse",
     "DataProcessTaskResponse",

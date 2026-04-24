@@ -25,6 +25,7 @@ class PaperResponse(BaseModel):
     raw_pdf_sha256: str | None = Field(
         default=None, description="原始 PDF 的 SHA256 校验值"
     )
+    images_paths: list[str] = Field(default_factory=list, description="提取图片路径")
     extraction_status: ExtractionStatus = Field(..., description="提取状态")
     extraction_fact_check_status: FactCheckStatus = Field(
         ...,

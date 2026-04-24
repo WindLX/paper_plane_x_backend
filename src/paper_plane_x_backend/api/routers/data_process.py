@@ -9,12 +9,13 @@
 import logging
 from typing import NoReturn
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from paper_plane_x_backend.api.dependencies import DBDep, TaskManagerDep
 from paper_plane_x_backend.schemas import (
     DataProcessTaskListResponse,
     DataProcessTaskResponse,
+    MessageResponse,
 )
 from paper_plane_x_backend.services.data_process_tasks.models import (
     DataProcessTaskState,
@@ -72,15 +73,20 @@ def _to_task_response(state: DataProcessTaskState) -> DataProcessTaskResponse:
 async def list_data_process_tasks(
     db: DBDep,
     task_manager: TaskManagerDep,
+    offset: int = Query(0, ge=0, description="分页偏移量"),
+    limit: int = Query(20, ge=1, le=200, description="每页数量"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$", description="按 created_at 排序"),
 ) -> DataProcessTaskListResponse:
     logger.debug("event=data_process.tasks_list_request_received")
     orchestrator = _build_orchestrator(db, task_manager)
     try:
-        states, counts = orchestrator.list_tasks()
+        states, counts = orchestrator.list_tasks(sort_order=sort_order)
     except DataProcessDomainError as exc:
         _raise_as_http(exc)
 
-    items = [_to_task_response(state) for state in states]
+    total = len(states)
+    page_states = states[offset : offset + limit]
+    items = [_to_task_response(state) for state in page_states]
 
     return DataProcessTaskListResponse(
         queued=counts["queued"],
@@ -88,8 +94,32 @@ async def list_data_process_tasks(
         completed=counts["completed"],
         failed=counts["failed"],
         canceled=counts["canceled"],
+        total=total,
+        offset=offset,
+        limit=limit,
         items=items,
     )
+
+
+@router.get(
+    "/tasks/{task_id}",
+    response_model=DataProcessTaskResponse,
+    summary="查看单条 data-process 任务",
+    responses={404: {"description": "任务不存在"}},
+)
+async def get_data_process_task(
+    task_id: str,
+    db: DBDep,
+    task_manager: TaskManagerDep,
+) -> DataProcessTaskResponse:
+    orchestrator = _build_orchestrator(db, task_manager)
+    state = orchestrator.task_manager.get_task(task_id)
+    if state is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task {task_id} not found",
+        )
+    return _to_task_response(state)
 
 
 @router.post(
@@ -142,3 +172,27 @@ async def retry_failed_task(
         _raise_as_http(exc)
 
     return _to_task_response(task_state)
+
+
+@router.delete(
+    "/tasks/{task_id}",
+    response_model=MessageResponse,
+    summary="删除 data-process 任务记录",
+    responses={
+        404: {"description": "任务不存在"},
+        409: {"description": "任务仍在运行中，不可删除"},
+    },
+)
+async def delete_data_process_task_record(
+    task_id: str,
+    db: DBDep,
+    task_manager: TaskManagerDep,
+) -> MessageResponse:
+    logger.info("event=data_process.delete_record_request_received task_id=%s", task_id)
+    orchestrator = _build_orchestrator(db, task_manager)
+    try:
+        orchestrator.delete_task_record(task_id=task_id)
+    except DataProcessDomainError as exc:
+        _raise_as_http(exc)
+
+    return MessageResponse(message=f"Task record {task_id} deleted")

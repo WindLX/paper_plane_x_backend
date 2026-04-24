@@ -462,10 +462,13 @@ class DataProcessOrchestrator:
 
         return updated
 
-    def list_tasks(self) -> tuple[list[DataProcessTaskState], dict[str, int]]:
+    def list_tasks(
+        self, *, sort_order: str = "desc"
+    ) -> tuple[list[DataProcessTaskState], dict[str, int]]:
         logger.debug("event=data_process.tasks_list_requested")
 
         states = self.task_manager.list_tasks()
+        states.sort(key=lambda state: state.created_at, reverse=sort_order != "asc")
         counts = {
             "queued": 0,
             "running": 0,
@@ -514,6 +517,29 @@ class DataProcessOrchestrator:
             return state
         except ValueError as exc:
             raise DataProcessDomainError(status.HTTP_409_CONFLICT, str(exc))
+
+    def delete_task_record(self, task_id: str) -> None:
+        """删除单条已结束任务记录（仅删 data_process_tasks 表）."""
+        logger.info("event=data_process.delete_task_record_requested task_id=%s", task_id)
+        state = self.task_manager.get_task(task_id)
+        if state is None:
+            raise DataProcessDomainError(
+                status.HTTP_404_NOT_FOUND,
+                f"Task {task_id} not found",
+            )
+
+        if state.status in {
+            DataProcessTaskStatus.QUEUED,
+            DataProcessTaskStatus.RUNNING,
+            DataProcessTaskStatus.CANCELING,
+        }:
+            raise DataProcessDomainError(
+                status.HTTP_409_CONFLICT,
+                f"Task {task_id} is still active, cannot delete record",
+            )
+
+        self.db.delete("data_process_tasks", "task_id = ?", (task_id,))
+        logger.info("event=data_process.task_record_deleted task_id=%s", task_id)
 
     async def retry_failed_task(
         self,

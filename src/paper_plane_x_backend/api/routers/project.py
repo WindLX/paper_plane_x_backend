@@ -49,6 +49,7 @@ def _project_to_response(project: Project) -> ProjectResponse:
         description=project.description,
         created_at=project.created_at,
         updated_at=project.updated_at,
+        operation_logs=project.operation_logs,
     )
 
 
@@ -235,6 +236,7 @@ def _paper_to_response(
         custom_meta=paper.custom_meta,
         raw_pdf_path=paper.raw_pdf_path,
         raw_pdf_sha256=paper.raw_pdf_sha256,
+        images_paths=paper.images_paths,
         extraction_status=paper.extraction_status,
         extraction_fact_check_status=paper.extraction_fact_check_status,
         analysis_fact_check_status=paper.analysis_fact_check_status,

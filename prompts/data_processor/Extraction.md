@@ -35,9 +35,9 @@ role 为 assistant，name 为 FactCheckAgent 的 消息。
 
 ## 2. Synthesis Data (深度综述构建)
 为后续撰写综述提供结构化素材。
-**【极其重要的引用约束】**：本部分所有的 `CitedText` 类型字段（除 `approach_name` 等专有名词外）都必须包含 `text`（你的提炼总结）和 `citations`（原文引用列表）。每个引用必须包含：
-- `quote`: 支撑该总结的原文句子（必须是 `raw_md` 中的**不超过 12 词的精确子串**，绝不允许修改任何标点符号）。
-- `source_header`: 该片段所在的 Markdown 章节标题（如 "### 3.1 Problem Formulation"）。
+**【极其重要的引用约束】**：所有的 `CitedText` 类型字段都必须包含 `text`（你的生成内容）和 `citations`（原文引用列表）。每个引用必须包含：
+- `quote`: 支撑该总结的原文句子（必须是 `raw_md` 中的**不超过 12 词的精确子串**，不要求完整句子，只要能通过这句检索到原文所在位置即可，通过绝不允许修改任何标点符号）。
+- `source_header`: 该片段所在的章节标题（如 "3.1 Problem Formulation"）。
 
 请按此结构提取以下内容：
 - **Research Gap (背景与痛点)**
@@ -65,7 +65,9 @@ role 为 assistant，name 为 FactCheckAgent 的 消息。
 - 不允许输出任何 schema 外包装键
 
 完整 Output Schema（由后端基于 Pydantic 实时注入）：
+```json
 {{OUTPUT_SCHEMA_JSON}}
+```
 
 ## 4.Final Check
 在输出前自我审查：是否所有数值都完全来源于原文？是否剔除了所有主观赞美的形容词？是否严格遵循了 JSON 格式？是否键名与层级 100% 匹配？

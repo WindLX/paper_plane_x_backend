@@ -1,7 +1,10 @@
 """Project 编排服务（容器语义）。"""
 
+import json
 import logging
+from collections.abc import Mapping
 from datetime import datetime
+from typing import Any
 from uuid import uuid4
 
 from fastapi import status
@@ -43,6 +46,47 @@ class ProjectOrchestrator:
                 status.HTTP_404_NOT_FOUND,
                 f"Project {project_id} not found",
             )
+
+    def _load_operation_logs(self, project_id: str) -> list[dict[str, Any]]:
+        row = self.db.fetchone(
+            "SELECT operation_logs FROM projects WHERE project_id = ?",
+            (project_id,),
+        )
+        if row is None:
+            raise ProjectDomainError(
+                status.HTTP_404_NOT_FOUND,
+                f"Project {project_id} not found",
+            )
+
+        raw = row.get("operation_logs")
+        if isinstance(raw, str) and raw:
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                return []
+            if isinstance(parsed, list):
+                return [item for item in parsed if isinstance(item, dict)]
+        elif isinstance(raw, list):
+            return [item for item in raw if isinstance(item, dict)]
+
+        return []
+
+    def _build_operation_logs_payload(
+        self,
+        *,
+        project_id: str,
+        operation: str,
+        detail: Mapping[str, object] | None = None,
+    ) -> str:
+        logs = self._load_operation_logs(project_id)
+        logs.append(
+            {
+                "operation": operation,
+                "timestamp": datetime.now().isoformat(),
+                "detail": dict(detail or {}),
+            }
+        )
+        return json.dumps(logs, ensure_ascii=False)
 
     def create_project(self, *, name: str, description: str | None) -> Project:
         now = datetime.now()
@@ -111,24 +155,30 @@ class ProjectOrchestrator:
     ) -> Project:
         self._ensure_project_exists(project_id)
 
+        changed_fields: list[str] = []
         update_data: dict[str, object] = {"updated_at": datetime.now()}
         if name is not None:
             update_data["name"] = name
+            changed_fields.append("name")
         if description is not None:
             update_data["description"] = description
+            changed_fields.append("description")
 
-        if len(update_data) > 1:
-            self.db.update("projects", update_data, "project_id = ?", (project_id,))
-            logger.info(
-                "event=project.updated project_id=%s fields=%s",
-                project_id,
-                sorted([k for k in update_data.keys() if k != "updated_at"]),
-            )
-        else:
-            logger.debug(
-                "event=project.update_skipped project_id=%s reason=no_mutable_fields",
-                project_id,
-            )
+        update_data["operation_logs"] = self._build_operation_logs_payload(
+            project_id=project_id,
+            operation="update_project",
+            detail={
+                "changed_fields": changed_fields,
+                "has_name_input": name is not None,
+                "has_description_input": description is not None,
+            },
+        )
+        self.db.update("projects", update_data, "project_id = ?", (project_id,))
+        logger.info(
+            "event=project.updated project_id=%s fields=%s",
+            project_id,
+            sorted(changed_fields),
+        )
 
         row = self.db.fetchone(
             "SELECT * FROM projects WHERE project_id = ?",
@@ -143,8 +193,17 @@ class ProjectOrchestrator:
 
     def delete_project(self, project_id: str) -> None:
         self._ensure_project_exists(project_id)
+        detached_count = self.db.delete(
+            "paper_projects",
+            "project_id = ?",
+            (project_id,),
+        )
         self.db.delete("projects", "project_id = ?", (project_id,))
-        logger.info("event=project.deleted project_id=%s", project_id)
+        logger.info(
+            "event=project.deleted project_id=%s detached_papers=%s",
+            project_id,
+            detached_count,
+        )
 
     def list_papers(
         self,
@@ -190,6 +249,19 @@ class ProjectOrchestrator:
                 f"Paper {paper_id} not found",
             )
         self.paper_repo.link_to_project(paper_id=paper_id, project_id=project_id)
+        self.db.update(
+            "projects",
+            {
+                "updated_at": datetime.now(),
+                "operation_logs": self._build_operation_logs_payload(
+                    project_id=project_id,
+                    operation="link_paper",
+                    detail={"paper_id": paper_id},
+                ),
+            },
+            "project_id = ?",
+            (project_id,),
+        )
 
     def unlink_paper(self, *, project_id: str, paper_id: str) -> None:
         self._ensure_project_exists(project_id)
@@ -199,6 +271,19 @@ class ProjectOrchestrator:
                 f"Paper {paper_id} not found in project {project_id}",
             )
         self.paper_repo.unlink_from_project(paper_id=paper_id, project_id=project_id)
+        self.db.update(
+            "projects",
+            {
+                "updated_at": datetime.now(),
+                "operation_logs": self._build_operation_logs_payload(
+                    project_id=project_id,
+                    operation="unlink_paper",
+                    detail={"paper_id": paper_id},
+                ),
+            },
+            "project_id = ?",
+            (project_id,),
+        )
 
     def list_paper_project_ids(self, paper_id: str) -> list[str]:
         return self.paper_repo.list_project_ids(paper_id)

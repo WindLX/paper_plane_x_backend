@@ -148,4 +148,7 @@ class DataProcessTaskListResponse(BaseModel):
     completed: int = Field(..., description="已完成任务数")
     failed: int = Field(..., description="失败任务数")
     canceled: int = Field(..., description="已取消任务数")
+    total: int = Field(..., description="任务总数")
+    offset: int = Field(..., description="分页偏移")
+    limit: int = Field(..., description="分页大小")
     items: list[DataProcessTaskResponse] = Field(..., description="任务列表")

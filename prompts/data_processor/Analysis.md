@@ -31,8 +31,8 @@ role 为 assistant，name 为 FactCheckAgent 的 消息。
 
 ## 1. Analysis Report (理论分析报告)
 **【极其重要的引用约束】**：所有的 `CitedText` 类型字段都必须包含 `text`（你的生成内容）和 `citations`（原文引用列表）。每个引用必须包含：
-- `quote`: 支撑该总结的原文句子（必须是 `raw_md` 中的**不超过 12 词的精确子串**，绝不允许修改任何标点符号）。
-- `source_header`: 该片段所在的 Markdown 章节标题（如 "### 3.1 Problem Formulation"）。
+- `quote`: 支撑该总结的原文句子（必须是 `raw_md` 中的**不超过 12 词的精确子串**，不要求完整句子，只要能通过这句检索到原文所在位置即可，通过绝不允许修改任何标点符号）。
+- `source_header`: 该片段所在的章节标题（如 "3.1 Problem Formulation"）。
 
 请按此结构提取以下内容：
 - **Prerequisites (先修学科知识构建)**: 为了让一个刚接触该领域的博士生看懂这篇论文，请提取 3-5 个最核心的底层理论或算法概念。
@@ -55,7 +55,9 @@ role 为 assistant，name 为 FactCheckAgent 的 消息。
 - 不允许输出任何 schema 外包装键
 
 完整 Output Schema（由后端基于 Pydantic 实时注入）：
+```json
 {{OUTPUT_SCHEMA_JSON}}
+```
 
 ## 3.Final Check
 在输出前自我审查：是否所有数值都完全来源于原文？是否剔除了所有主观赞美的形容词？是否严格遵循了 JSON 格式？是否键名与层级 100% 匹配？

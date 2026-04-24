@@ -4,6 +4,11 @@
 """
 
 from paper_plane_x_backend.schemas.api.common import ErrorResponse, MessageResponse
+from paper_plane_x_backend.schemas.api.agent_trace import (
+    AgentTraceQueryRequest,
+    AgentTraceQueryResponse,
+    AgentTraceResponse,
+)
 from paper_plane_x_backend.schemas.api.data_process import (
     DataProcessManualUpdateRequest,
     DataProcessRequest,
@@ -34,6 +39,9 @@ from paper_plane_x_backend.schemas.api.project import (
 )
 
 __all__ = [
+    "AgentTraceQueryRequest",
+    "AgentTraceQueryResponse",
+    "AgentTraceResponse",
     "DataProcessManualUpdateRequest",
     "DataProcessRequest",
     "DataProcessSubmitResponse",

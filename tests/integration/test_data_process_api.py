@@ -821,6 +821,38 @@ class TestDataProcessAPI:
         assert payload["queued"] >= 1
         assert len(payload["items"]) >= 1
         assert payload["items"][0]["status"] in {"QUEUED", "RUNNING", "COMPLETED"}
+        assert "total" in payload
+        assert "offset" in payload
+        assert "limit" in payload
+
+    def test_get_data_process_task_by_id(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """测试单条任务详情接口."""
+        create_project_resp = client.post(
+            "/api/v1/projects",
+            json={"name": "Task Detail Project"},
+        )
+        assert create_project_resp.status_code == 201
+
+        async def fake_submit_task(
+            self, task: DataProcessQueueTask
+        ) -> DataProcessTaskState:
+            return _stub_enqueue_state(task)
+
+        monkeypatch.setattr(DataProcessOrchestrator, "_submit_task", fake_submit_task)
+
+        create_task_resp = client.post(
+            "/api/v1/papers",
+            files={"pdf_file": ("sample.pdf", b"%PDF-1.4 test", "application/pdf")},
+        )
+        assert create_task_resp.status_code == 202
+        task_id = create_task_resp.json()["task_id"]
+
+        detail_resp = client.get(f"/api/v1/data-process/tasks/{task_id}")
+        assert detail_resp.status_code == 200
+        payload = detail_resp.json()
+        assert payload["task_id"] == task_id
 
     def test_cancel_data_process_task(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch

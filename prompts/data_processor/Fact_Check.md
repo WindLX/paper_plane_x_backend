@@ -41,7 +41,9 @@ role 为 assistant，name 为 ExtractionAgent 或者 AnalysisAgent 的消息(只
 - 不允许输出 schema 外包装键
 
 完整 Output Schema（由后端基于 Pydantic 实时注入）：
+```json
 {{OUTPUT_SCHEMA_JSON}}
+```
 
 # Output
 严格根据 Pydantic 模型 `FactCheckAgentOutput` 定义的 JSON Schema 进行输出。绝不包含任何多余的文本或 Markdown 标记。**绝不包含**任何多余的文本或 Markdown 标记，**直接输出** JSON 字符串。

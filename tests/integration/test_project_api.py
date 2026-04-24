@@ -163,6 +163,49 @@ class TestProjectAPI:
         get_response = client.get(f"/api/v1/projects/{project_id}")
         assert get_response.status_code == 404
 
+    def test_delete_project_also_cleans_paper_links(
+        self, client: TestClient, db: Database
+    ) -> None:
+        """删除 project 时会清理 paper_projects 关联."""
+        create_response = client.post(
+            "/api/v1/projects",
+            json={"name": "Delete With Links"},
+        )
+        project_id = create_response.json()["project_id"]
+
+        now = datetime.now()
+        _insert_linked_paper(
+            db,
+            project_id,
+            {
+                "paper_id": "paper-linked-to-delete-project",
+                "title": "Linked Paper",
+                "authors": json.dumps(["Alice"], ensure_ascii=False),
+                "md_content": "",
+                "images_paths": json.dumps([], ensure_ascii=False),
+                "extraction_status": "FAILED",
+                "extraction_fact_check_status": "FAILED",
+                "extraction_retry_count": 1,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+        before = db.fetchone(
+            "SELECT COUNT(*) AS count FROM paper_projects WHERE project_id = ?",
+            (project_id,),
+        )
+        assert before is not None and before["count"] == 1
+
+        response = client.delete(f"/api/v1/projects/{project_id}")
+        assert response.status_code == 200
+
+        after = db.fetchone(
+            "SELECT COUNT(*) AS count FROM paper_projects WHERE project_id = ?",
+            (project_id,),
+        )
+        assert after is not None and after["count"] == 0
+
     def test_delete_project_not_found(self, client: TestClient) -> None:
         """测试删除不存在的项目."""
         response = client.delete("/api/v1/projects/non-existent-id")
@@ -248,6 +291,95 @@ class TestProjectAPI:
             f"/api/v1/projects/{project_id}/papers/paper-processing"
         )
         assert response.status_code == 200
+
+    def test_update_project_writes_operation_log_and_updates_timestamp(
+        self, client: TestClient, db: Database
+    ) -> None:
+        create_response = client.post(
+            "/api/v1/projects",
+            json={"name": "Update Log Project", "description": "before"},
+        )
+        project_id = create_response.json()["project_id"]
+        before = db.fetchone(
+            "SELECT updated_at FROM projects WHERE project_id = ?",
+            (project_id,),
+        )
+        assert before is not None
+
+        response = client.patch(
+            f"/api/v1/projects/{project_id}",
+            json={"name": "after"},
+        )
+        assert response.status_code == 200
+
+        after = db.fetchone(
+            "SELECT updated_at, operation_logs FROM projects WHERE project_id = ?",
+            (project_id,),
+        )
+        assert after is not None
+        assert after["updated_at"] >= before["updated_at"]
+        logs = json.loads(after["operation_logs"] or "[]")
+        assert logs
+        assert logs[-1]["operation"] == "update_project"
+
+    def test_link_and_unlink_write_operation_logs_and_touch_updated_at(
+        self, client: TestClient, db: Database
+    ) -> None:
+        create_project_resp = client.post(
+            "/api/v1/projects",
+            json={"name": "Link Log Project"},
+        )
+        project_id = create_project_resp.json()["project_id"]
+
+        now = datetime.now()
+        db.insert(
+            "papers",
+            {
+                "paper_id": "paper-link-log",
+                "title": "Link Log Paper",
+                "authors": json.dumps([], ensure_ascii=False),
+                "md_content": "",
+                "images_paths": json.dumps([], ensure_ascii=False),
+                "extraction_status": "PENDING",
+                "extraction_fact_check_status": "PENDING",
+                "analysis_fact_check_status": "PENDING",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+        before = db.fetchone(
+            "SELECT updated_at FROM projects WHERE project_id = ?",
+            (project_id,),
+        )
+        assert before is not None
+
+        link_resp = client.post(f"/api/v1/projects/{project_id}/papers/paper-link-log")
+        assert link_resp.status_code == 200
+
+        after_link = db.fetchone(
+            "SELECT updated_at, operation_logs FROM projects WHERE project_id = ?",
+            (project_id,),
+        )
+        assert after_link is not None
+        assert after_link["updated_at"] >= before["updated_at"]
+        logs = json.loads(after_link["operation_logs"] or "[]")
+        assert logs[-1]["operation"] == "link_paper"
+        assert logs[-1]["detail"]["paper_id"] == "paper-link-log"
+
+        unlink_resp = client.delete(
+            f"/api/v1/projects/{project_id}/papers/paper-link-log"
+        )
+        assert unlink_resp.status_code == 200
+
+        after_unlink = db.fetchone(
+            "SELECT updated_at, operation_logs FROM projects WHERE project_id = ?",
+            (project_id,),
+        )
+        assert after_unlink is not None
+        logs_after_unlink = json.loads(after_unlink["operation_logs"] or "[]")
+        assert logs_after_unlink[-1]["operation"] == "unlink_paper"
+        assert logs_after_unlink[-1]["detail"]["paper_id"] == "paper-link-log"
 
     def test_project_search_delegates_to_librarian_with_project_scope(
         self, client: TestClient, db: Database
