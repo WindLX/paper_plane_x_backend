@@ -11,3 +11,6 @@ example/*.pdf
 .env
 *.dev.toml
 export/
+
+*.codex
+CLAUDE.md
