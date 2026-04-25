@@ -28,6 +28,14 @@ def test_paper_from_db_row_parses_enums_and_json_fields() -> None:
         "extraction_status": "COMPLETED",
         "quick_scan": json.dumps({"k": 1}, ensure_ascii=False),
         "synthesis_data": json.dumps({"s": 2}, ensure_ascii=False),
+        "analysis_report": json.dumps(
+            {
+                "related_references": [
+                    {"title": "Ref A", "reason": "important baseline"}
+                ]
+            },
+            ensure_ascii=False,
+        ),
         "fact_check_status": "PASSED",
         "fact_check_result": json.dumps({"ok": True}, ensure_ascii=False),
         "extraction_retry_count": 1,
@@ -43,6 +51,9 @@ def test_paper_from_db_row_parses_enums_and_json_fields() -> None:
     assert paper.images_paths == ["/tmp/i.png"]
     assert paper.quick_scan == {"k": 1}
     assert paper.synthesis_data == {"s": 2}
+    assert paper.analysis_report == {
+        "related_references": [{"title": "Ref A", "reason": "important baseline"}]
+    }
     assert paper.extraction_fact_check_result == {"ok": True}
     assert paper.analysis_fact_check_status == FactCheckStatus.PENDING
     assert paper.raw_pdf_sha256 == "hash-1"

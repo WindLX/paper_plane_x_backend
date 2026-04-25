@@ -213,6 +213,38 @@ class TestLibrarianAPI:
         assert value["text"] == "目标函数"
         assert "citations" in value
 
+    def test_projection_reads_analysis_related_references(
+        self, client: TestClient, db: Database
+    ) -> None:
+        _insert_paper(db, "paper-proj-analysis-ref-1")
+        db.update(
+            table="papers",
+            data={
+                "analysis_report": json.dumps(
+                    {
+                        "related_references": [
+                            {"title": "Ref A", "reason": "foundation"}
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            },
+            where="paper_id = ?",
+            where_params=("paper-proj-analysis-ref-1",),
+        )
+
+        response = client.post(
+            "/api/v1/librarian/projection",
+            json={
+                "paper_id": "paper-proj-analysis-ref-1",
+                "field_path": "analysis_report.related_references",
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["value"] == [{"title": "Ref A", "reason": "foundation"}]
+
     def test_search_endpoint_filters_by_condition_group(
         self, client: TestClient, db: Database
     ) -> None:

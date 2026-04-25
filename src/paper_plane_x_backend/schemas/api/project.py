@@ -1,6 +1,7 @@
 """Project API schemas."""
 
 from datetime import datetime
+from typing import Literal
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -50,3 +51,72 @@ class ProjectListResponse(BaseModel):
     total: int = Field(..., description="总数")
     offset: int = Field(..., description="偏移量")
     limit: int = Field(..., description="每页数量")
+
+
+PaperExportField = Literal[
+    "paper_id",
+    "project_ids",
+    "title",
+    "authors",
+    "year",
+    "publication",
+    "doi",
+    "custom_meta",
+    "raw_pdf_path",
+    "raw_pdf_sha256",
+    "images_paths",
+    "extraction_status",
+    "extraction_fact_check_status",
+    "analysis_fact_check_status",
+    "extraction_retry_count",
+    "analysis_retry_count",
+    "created_at",
+    "updated_at",
+    "quick_scan",
+    "synthesis_data",
+    "analysis_report",
+    "extraction_fact_check_result",
+    "analysis_fact_check_result",
+]
+
+
+class ProjectExportRequest(BaseModel):
+    """导出项目请求."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    fields: list[PaperExportField] = Field(
+        default_factory=lambda: [
+            "paper_id",
+            "project_ids",
+            "title",
+            "authors",
+            "year",
+            "publication",
+            "doi",
+            "custom_meta",
+            "raw_pdf_path",
+            "raw_pdf_sha256",
+            "images_paths",
+            "extraction_status",
+            "extraction_fact_check_status",
+            "analysis_fact_check_status",
+            "extraction_retry_count",
+            "analysis_retry_count",
+            "created_at",
+            "updated_at",
+            "quick_scan",
+            "synthesis_data",
+            "analysis_report",
+            "extraction_fact_check_result",
+            "analysis_fact_check_result",
+        ],
+        description="需要导出的 PaperDetailResponse 字段列表",
+    )
+    citations_mode: Literal["keep", "strip"] = Field(
+        default="keep",
+        description=(
+            "对于 quick_scan / synthesis_data / analysis_report："
+            "keep=保留 citations；strip=递归移除 citations"
+        ),
+    )

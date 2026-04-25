@@ -277,3 +277,60 @@ def test_migration_merges_agent_traces_output_into_messages(tmp_path: Path) -> N
         "content": '{"result": "ok"}',
         "name": "ExtractionAgent",
     }
+
+
+def test_migration_backfills_analysis_report_related_references(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "legacy_analysis_report.sqlite3"
+    db = Database(db_path)
+
+    with db.get_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE papers (
+                paper_id TEXT PRIMARY KEY,
+                analysis_report TEXT,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO papers (paper_id, analysis_report, created_at, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            (
+                "p1",
+                '{"core_formulation":{"objective_function":{"text":"x","citations":[]}}}',
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO papers (paper_id, analysis_report, created_at, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            (
+                "p2",
+                '{"related_references":[{"title":"Known Ref","reason":"classic"}]}',
+            ),
+        )
+        conn.commit()
+
+    db.init_tables()
+    db.init_tables()
+
+    row1 = db.fetchone("SELECT analysis_report FROM papers WHERE paper_id = ?", ("p1",))
+    row2 = db.fetchone("SELECT analysis_report FROM papers WHERE paper_id = ?", ("p2",))
+
+    assert row1 is not None
+    assert row2 is not None
+
+    payload1 = __import__("json").loads(row1["analysis_report"])
+    payload2 = __import__("json").loads(row2["analysis_report"])
+
+    assert payload1["related_references"] == []
+    assert payload2["related_references"] == [
+        {"title": "Known Ref", "reason": "classic"}
+    ]

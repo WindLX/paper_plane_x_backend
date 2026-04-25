@@ -32,6 +32,7 @@ from paper_plane_x_backend.schemas.api.paper import (
     PaperResponse,
 )
 from paper_plane_x_backend.schemas.api.project import (
+    ProjectExportRequest,
     ProjectCreateRequest,
     ProjectListResponse,
     ProjectResponse,
@@ -61,6 +62,7 @@ __all__ = [
     "PaperListResponse",
     "PaperResponse",
     "ProjectCreateRequest",
+    "ProjectExportRequest",
     "ProjectListResponse",
     "ProjectResponse",
     "ProjectUpdateRequest",

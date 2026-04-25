@@ -79,6 +79,22 @@ class DataProcessConfig(BaseModel):
     )
 
 
+class APIConfig(BaseModel):
+    """FastAPI 运行时配置。"""
+
+    host: str = Field(default="127.0.0.1", description="监听地址")
+    port: int = Field(default=8000, description="监听端口")
+    reload: bool = Field(default=False, description="是否启用 reload")
+    cors_allow_origins: list[str] = Field(
+        default_factory=lambda: ["*"],
+        description="允许的 CORS origins",
+    )
+    console_dist_dir: Path = Field(
+        default=Path("./data/console"),
+        description="前端构建产物目录",
+    )
+
+
 class LLMConfig(BaseModel):
     """LLM 配置模型.
 
@@ -185,19 +201,12 @@ class Settings(BaseSettings):
     app_name: str = "Paper Plane X"
     debug: bool = False
     log: LogConfig = Field(default_factory=LogConfig)
+    api: APIConfig = Field(default_factory=APIConfig)
 
-    # 服务器配置
-    host: str = "127.0.0.1"
-    port: int = 8000
-
-    # 数据目录
+    # 数据与资源目录
     data_dir: Path = Path("./data")
-
-    # Prompt 目录
+    database_path: Path = Path("./data/app.db")
     prompts_dir: Path = Path("./prompts")
-
-    # 数据库配置
-    database_url: str = "sqlite:///./data/app.db"
 
     # LLM 全局默认配置
     llm: LLMConfig = Field(default_factory=LLMConfig)
@@ -211,14 +220,11 @@ class Settings(BaseSettings):
     # Data Process 配置
     data_process: DataProcessConfig = Field(default_factory=DataProcessConfig)
 
-    @property
-    def database_path(self) -> Path:
-        """获取数据库文件路径."""
-        return self.data_dir / "app.db"
-
     def ensure_directories(self) -> None:
         """确保必要的目录存在."""
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.api.console_dist_dir.mkdir(parents=True, exist_ok=True)
         self.mineru.output_dir.mkdir(parents=True, exist_ok=True)
         self.log.file_path.parent.mkdir(parents=True, exist_ok=True)
 

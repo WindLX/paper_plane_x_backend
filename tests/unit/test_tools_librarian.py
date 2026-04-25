@@ -100,6 +100,7 @@ def test_build_field_paths_guide_contains_meta_and_structured_paths() -> None:
     assert "quick_scan.verdict" in guide
     assert "synthesis_data.methodology.innovation.text" in guide
     assert "analysis_report.core_formulation.objective_function.text" in guide
+    assert "analysis_report.related_references[0].title" in guide
 
 
 def test_matrix_compare_description_contains_field_paths_guide() -> None:

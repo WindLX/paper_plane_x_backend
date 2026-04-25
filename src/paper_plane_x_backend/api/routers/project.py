@@ -1,9 +1,11 @@
 """Project 路由."""
 
 import logging
+from pathlib import Path
 from typing import NoReturn
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+from fastapi.responses import FileResponse
 
 from paper_plane_x_backend.api.dependencies import DBDep
 from paper_plane_x_backend.api.routers.librarian import run_search_paper
@@ -15,6 +17,7 @@ from paper_plane_x_backend.schemas import (
     PaperListResponse,
     PaperResponse,
     ProjectCreateRequest,
+    ProjectExportRequest,
     ProjectListResponse,
     ProjectResponse,
     ProjectUpdateRequest,
@@ -215,6 +218,45 @@ async def delete_project(
         _raise_as_http(exc)
 
     return MessageResponse(message=f"Project {project_id} deleted successfully")
+
+
+@router.post(
+    "/{project_id}/export",
+    summary="导出项目数据与文件",
+    responses={
+        404: {"description": "项目不存在"},
+    },
+)
+async def export_project(
+    project_id: str,
+    request: ProjectExportRequest,
+    db: DBDep,
+    background_tasks: BackgroundTasks,
+) -> FileResponse:
+    orchestrator = _build_orchestrator(db)
+    try:
+        zip_path, download_name = orchestrator.export_project_bundle(
+            project_id=project_id,
+            fields=request.fields,
+            citations_mode=request.citations_mode,
+        )
+    except ProjectDomainError as exc:
+        _raise_as_http(exc)
+
+    path_obj = Path(zip_path)
+
+    def _cleanup_export_file(path: Path) -> None:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("event=project.export_cleanup_failed path=%s", str(path))
+
+    background_tasks.add_task(_cleanup_export_file, path_obj)
+    return FileResponse(
+        path=path_obj,
+        media_type="application/zip",
+        filename=download_name,
+    )
 
 
 # ==================== Paper Endpoints ====================

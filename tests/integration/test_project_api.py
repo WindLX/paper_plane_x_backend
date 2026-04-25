@@ -1,6 +1,8 @@
 """Project API 测试."""
 
+import io
 import json
+import zipfile
 from datetime import datetime
 
 from fastapi.testclient import TestClient
@@ -246,7 +248,7 @@ class TestProjectAPI:
         detail_response = client.get(
             f"/api/v1/projects/{project_id}/papers/paper-to-delete"
         )
-        assert detail_response.status_code == 405
+        assert detail_response.status_code == 404
 
     def test_delete_paper_not_found(self, client: TestClient) -> None:
         """测试删除不存在的论文."""
@@ -459,3 +461,163 @@ class TestProjectAPI:
         assert payload["project_id"] == p1
         assert payload["total"] == 1
         assert payload["paper_ids"] == ["paper-search-in-p1"]
+
+    def test_export_project_bundle_strips_citations_and_packs_files(
+        self,
+        client: TestClient,
+        db: Database,
+        tmp_path,
+    ) -> None:
+        create_resp = client.post("/api/v1/projects", json={"name": "Export Project"})
+        project_id = create_resp.json()["project_id"]
+
+        paper_dir = tmp_path / "paper-a"
+        paper_dir.mkdir(parents=True, exist_ok=True)
+        pdf_path = paper_dir / "paper.pdf"
+        img_path = paper_dir / "fig1.png"
+        pdf_path.write_bytes(b"%PDF-1.4 mock")
+        img_path.write_bytes(b"\x89PNG\r\n")
+
+        now = datetime.now()
+        _insert_linked_paper(
+            db,
+            project_id,
+            {
+                "paper_id": "paper-export-a",
+                "title": "Export A",
+                "authors": json.dumps(["Alice"], ensure_ascii=False),
+                "md_content": "",
+                "raw_pdf_path": str(pdf_path),
+                "images_paths": json.dumps([str(img_path)], ensure_ascii=False),
+                "quick_scan": json.dumps(
+                    {
+                        "verdict": "ok",
+                        "citations": [{"quote": "q1"}],
+                    },
+                    ensure_ascii=False,
+                ),
+                "synthesis_data": json.dumps(
+                    {
+                        "summary": "x",
+                        "nested": {"citations": [{"quote": "q2"}]},
+                    },
+                    ensure_ascii=False,
+                ),
+                "analysis_report": json.dumps(
+                    {
+                        "findings": "y",
+                        "citations": [{"quote": "q3"}],
+                        "related_references": [
+                            {"title": "Ref A", "reason": "worth following"}
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                "extraction_status": "COMPLETED",
+                "extraction_fact_check_status": "PASSED",
+                "analysis_fact_check_status": "PASSED",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+        response = client.post(
+            f"/api/v1/projects/{project_id}/export",
+            json={
+                "fields": [
+                    "paper_id",
+                    "title",
+                    "raw_pdf_path",
+                    "quick_scan",
+                    "synthesis_data",
+                    "analysis_report",
+                ],
+                "citations_mode": "strip",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/zip")
+
+        zf = zipfile.ZipFile(io.BytesIO(response.content))
+        names = zf.namelist()
+        export_json_path = [name for name in names if name.endswith("/project_export.json")]
+        assert export_json_path
+        packed_pdf = [name for name in names if name.endswith("/paper-export-a/paper.pdf")]
+        packed_img = [name for name in names if name.endswith("/paper-export-a/fig1.png")]
+        assert packed_pdf
+        assert packed_img
+
+        payload = json.loads(zf.read(export_json_path[0]).decode("utf-8"))
+        assert payload["project"]["project_id"] == project_id
+        assert payload["paper_count"] == 1
+        assert payload["export_options"]["citations_mode"] == "strip"
+        exported_paper = payload["papers"][0]
+        assert sorted(exported_paper.keys()) == sorted(
+            [
+                "paper_id",
+                "title",
+                "raw_pdf_path",
+                "quick_scan",
+                "synthesis_data",
+                "analysis_report",
+            ]
+        )
+        assert "citations" not in json.dumps(
+            {
+                "quick_scan": exported_paper["quick_scan"],
+                "synthesis_data": exported_paper["synthesis_data"],
+                "analysis_report": exported_paper["analysis_report"],
+            },
+            ensure_ascii=False,
+        )
+        assert exported_paper["analysis_report"]["related_references"] == [
+            {"title": "Ref A", "reason": "worth following"}
+        ]
+
+    def test_export_project_bundle_keeps_citations_when_requested(
+        self,
+        client: TestClient,
+        db: Database,
+    ) -> None:
+        create_resp = client.post(
+            "/api/v1/projects",
+            json={"name": "Export Keep Citations"},
+        )
+        project_id = create_resp.json()["project_id"]
+
+        now = datetime.now()
+        _insert_linked_paper(
+            db,
+            project_id,
+            {
+                "paper_id": "paper-export-b",
+                "title": "Export B",
+                "authors": json.dumps([], ensure_ascii=False),
+                "md_content": "",
+                "images_paths": json.dumps([], ensure_ascii=False),
+                "quick_scan": json.dumps(
+                    {"verdict": "ok", "citations": [{"quote": "q1"}]},
+                    ensure_ascii=False,
+                ),
+                "extraction_status": "COMPLETED",
+                "extraction_fact_check_status": "PASSED",
+                "analysis_fact_check_status": "PASSED",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+        response = client.post(
+            f"/api/v1/projects/{project_id}/export",
+            json={
+                "fields": ["paper_id", "quick_scan"],
+                "citations_mode": "keep",
+            },
+        )
+        assert response.status_code == 200
+        zf = zipfile.ZipFile(io.BytesIO(response.content))
+        export_json_path = [name for name in zf.namelist() if name.endswith("/project_export.json")]
+        assert export_json_path
+        payload = json.loads(zf.read(export_json_path[0]).decode("utf-8"))
+        exported_paper = payload["papers"][0]
+        assert "citations" in exported_paper["quick_scan"]

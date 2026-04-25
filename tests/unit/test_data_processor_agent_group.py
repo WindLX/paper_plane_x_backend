@@ -98,7 +98,14 @@ class _FakeFactCheckAgent:
 
 class _FakeAnalysisResult:
     def __init__(self) -> None:
-        self.analysis_report = _FakeSection({"summary": "analysis-ok"})
+        self.analysis_report = _FakeSection(
+            {
+                "summary": "analysis-ok",
+                "related_references": [
+                    {"title": "Reference A", "reason": "classic prior work"}
+                ],
+            }
+        )
 
     def model_dump(self) -> dict[str, Any]:
         return {"analysis_report": self.analysis_report.model_dump()}
@@ -184,6 +191,9 @@ async def test_group_run_parallel_loops_returns_both_branches_and_trace_ids() ->
     assert extraction_retry_count == 0
 
     assert analysis_result.analysis_report.model_dump()["summary"] == "analysis-ok"
+    assert analysis_result.analysis_report.model_dump()["related_references"] == [
+        {"title": "Reference A", "reason": "classic prior work"}
+    ]
     assert analysis_fact_check_result.is_passed is True
     assert analysis_retry_count == 0
 

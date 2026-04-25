@@ -1,7 +1,5 @@
-# Paper Plane X backend default configuration
-# You can override this file path via env var: PPX_CONFIG_FILE=/abs/path/to/your.toml
 app_name = "Paper Plane X"
-debug = false
+debug = true
 data_dir = "./data"
 database_path = "./data/app.db"
 prompts_dir = "./prompts"
@@ -9,15 +7,15 @@ prompts_dir = "./prompts"
 [api]
 host = "127.0.0.1"
 port = 8000
-reload = false
+reload = true
 cors_allow_origins = ["*"]
 console_dist_dir = "./data/console"
 
 [log]
-level = "INFO"
+level = "DEBUG"
 app_only = true
 to_file = true
-file_path = "./data/logs/backend.log"
+file_path = "./data/logs/backend.dev.log"
 file_max_bytes = 10485760
 file_backup_count = 5
 
@@ -34,19 +32,13 @@ task_max_seconds = 600.0
 [llm]
 model = "deepseek-v4-flash"
 base_url = "https://api.deepseek.com/v1"
-# pass api_key via env: PPX_LLM__API_KEY=sk-...
 api_key = ""
 temperature = 0.7
 max_tokens = 8192
 timeout = 180.0
 thinking_enabled = false
-# reasoning_effort = "high" # high/max for deepseek thinking mode
 is_vlm = false
 
-# Advanced vendor-specific request body passthrough.
-# For DeepSeek thinking mode, setting thinking_enabled = true maps to:
-# [llm.extra_body.thinking]
-# type = "enabled"
 [agent_llm.extraction]
 base_url = "https://api.deepseek.com/v1"
 model = "deepseek-v4-flash"

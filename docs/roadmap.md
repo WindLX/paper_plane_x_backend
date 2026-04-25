@@ -94,6 +94,8 @@
 | 5.3 Writer/Reviewer/Planner | Survey 多 Agent 协作流程                          | 待开始 |
 | 5.4 导出链路                | 结构化输出到文稿导出                              | 待开始 |
 
+单篇 paper 的聊天式交互
+
 说明：当前 `agents/planner.py`、`agents/reviewer.py`、`agents/writer.py` 为空占位文件。
 
 ---

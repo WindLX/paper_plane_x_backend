@@ -396,6 +396,7 @@ class Database:
         self._migrate_legacy_fact_check_columns(conn)
         self._drop_papers_trace_columns(conn)
         self._ensure_column(conn, "papers", "raw_pdf_sha256", "TEXT")
+        self._migrate_analysis_report_related_references(conn)
         self._migrate_agent_traces_messages_schema(conn)
         self._ensure_column(conn, "agent_traces", "llm_model", "TEXT")
         self._ensure_column(conn, "agent_traces", "prompt_tokens", "INTEGER")
@@ -472,6 +473,35 @@ class Database:
                         column,
                         exc,
                     )
+
+    def _migrate_analysis_report_related_references(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        rows = conn.execute(
+            """
+            SELECT paper_id, analysis_report
+            FROM papers
+            WHERE analysis_report IS NOT NULL
+            """
+        ).fetchall()
+
+        for row in rows:
+            raw = row["analysis_report"]
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if "related_references" in payload:
+                continue
+            payload["related_references"] = []
+            conn.execute(
+                "UPDATE papers SET analysis_report = ? WHERE paper_id = ?",
+                (json.dumps(payload, ensure_ascii=False), row["paper_id"]),
+            )
 
     def _migrate_agent_traces_messages_schema(self, conn: sqlite3.Connection) -> None:
         """迁移 agent_traces 旧字段到 messages 字段。

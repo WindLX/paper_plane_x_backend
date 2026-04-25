@@ -46,6 +46,10 @@ role 为 assistant，name 为 FactCheckAgent 的 消息。
 - **Derivation Steps (主干推导拆解)**: 不要盲目罗列所有公式，而是将作者的核心推理过程**拆解为符合人类学习逻辑的 Step-by-Step 步骤**。
   - `step_name`: 提炼该步骤的核心动作（如“引入惩罚项”、“求解马尔可夫过程”）。
   - `detail_explanation`: 解释作者是怎么从上一步推导到这一步的？引入了什么巧妙的 trick？（必须带溯源）
+- **Related References (关联文献)**: 从本文明确引用的文献里，挑选若干篇最重要、最值得顺着继续读的文献。
+  - `title`: 文献标题。
+  - `reason`: 用一句话说明为什么推荐继续阅读它，例如它提供了关键理论基础、核心 baseline、经典方法来源，或与本文方法形成直接对照。
+  - 该字段**不是** `CitedText`，不要附带 `citations`，也不要编造文献；只保留你能从原文引用关系中确认的文献。
 
 ## 2. Schema Contract（机器可执行约束）
 你必须严格遵循下方完整 JSON Schema 的字段名、层级结构、required 约束与类型约束。

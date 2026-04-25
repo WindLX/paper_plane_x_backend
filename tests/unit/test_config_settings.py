@@ -1,7 +1,10 @@
 """Settings tests."""
 
+import os
 import tomllib
 from pathlib import Path
+
+import pytest
 
 from paper_plane_x_backend.config import AgentLLMConfigs, LLMConfig, Settings
 
@@ -121,3 +124,49 @@ def test_default_toml_documents_reasoning_switch() -> None:
     data = tomllib.loads(config_path.read_text(encoding="utf-8"))
 
     assert data["llm"]["thinking_enabled"] is False
+
+
+def test_settings_source_precedence_init_over_env_over_dotenv_over_toml(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "profile.toml"
+    config_path.write_text(
+        """
+app_name = "toml-name"
+
+[api]
+port = 8001
+""".strip(),
+        encoding="utf-8",
+    )
+    env_path = tmp_path / ".env"
+    env_path.write_text("PPX_API__PORT=8002\n", encoding="utf-8")
+
+    monkeypatch.setenv("PPX_CONFIG_FILE", str(config_path))
+    monkeypatch.setenv("PPX_API__PORT", "8003")
+
+    settings = Settings(
+        _env_file=env_path,
+        app_name="init-name",
+        api={"port": 8004},
+    )
+
+    assert settings.app_name == "init-name"
+    assert settings.api.port == 8004
+
+
+def test_test_profile_uses_test_safe_paths_and_logging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = Path(__file__).resolve().parents[2] / "config" / "test.toml"
+    monkeypatch.setenv("PPX_CONFIG_FILE", str(config_path))
+
+    settings = Settings(_env_file=None)
+
+    assert "test" in settings.data_dir.as_posix()
+    assert "test" in settings.database_path.as_posix()
+    assert settings.log.to_file is False
+    assert settings.api.reload is False
+
+    monkeypatch.delenv("PPX_CONFIG_FILE", raising=False)

@@ -40,3 +40,14 @@
 - 业务错误在服务层收敛，路由层负责 HTTP 映射。
 - Agent 输出必须通过 schema 校验。
 - 关键流程日志统一采用 `event=` 字段。
+
+## Console 前端集成
+
+- 前端构建产物默认输出到：`paper_plane_x_backend/data/console`
+- 构建命令（在 frontend 目录）：
+	- `pnpm build:console`
+- 快捷命令（在 backend 目录）：
+	- `./scripts/build_console.sh`
+- 后端会自动将构建产物挂载到：
+	- `/`
+	- 并支持 SPA history fallback（如 `/tasks/:id`）

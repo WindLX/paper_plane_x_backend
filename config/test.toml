@@ -1,0 +1,39 @@
+app_name = "Paper Plane X"
+debug = false
+data_dir = "./data/test/runtime"
+database_path = "./data/test/app.test.db"
+prompts_dir = "./prompts"
+
+[api]
+host = "127.0.0.1"
+port = 18000
+reload = false
+cors_allow_origins = ["http://127.0.0.1:5173"]
+console_dist_dir = "./data/test/console"
+
+[log]
+level = "WARNING"
+app_only = true
+to_file = false
+file_path = "./data/test/logs/backend.test.log"
+file_max_bytes = 1048576
+file_backup_count = 1
+
+[mineru]
+base_url = "http://localhost:7860"
+output_dir = "./data/test/papers"
+
+[data_process]
+max_retries = 1
+worker_count = 1
+shutdown_timeout = 1.0
+task_max_seconds = 60.0
+
+[llm]
+model = "test-model"
+api_key = ""
+temperature = 0.0
+max_tokens = 2048
+timeout = 30.0
+thinking_enabled = false
+is_vlm = false

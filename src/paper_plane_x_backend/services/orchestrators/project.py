@@ -2,12 +2,16 @@
 
 import json
 import logging
+import tempfile
+import zipfile
 from collections.abc import Mapping
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from fastapi import status
+from fastapi.encoders import jsonable_encoder
 
 from paper_plane_x_backend.models import Paper, Project
 from paper_plane_x_backend.services.database import Database
@@ -287,3 +291,175 @@ class ProjectOrchestrator:
 
     def list_paper_project_ids(self, paper_id: str) -> list[str]:
         return self.paper_repo.list_project_ids(paper_id)
+
+    def list_all_papers(self, *, project_id: str) -> list[Paper]:
+        self._ensure_project_exists(project_id)
+        rows = self.db.fetchall(
+            """
+            SELECT p.*
+            FROM papers p
+            JOIN paper_projects pp ON pp.paper_id = p.paper_id
+            WHERE pp.project_id = ?
+            ORDER BY p.created_at DESC
+            """,
+            (project_id,),
+        )
+        return [Paper.from_db_row(row) for row in rows]
+
+    @staticmethod
+    def _strip_citations_recursively(value: Any) -> Any:
+        if isinstance(value, list):
+            return [
+                ProjectOrchestrator._strip_citations_recursively(item) for item in value
+            ]
+        if isinstance(value, dict):
+            cleaned: dict[str, Any] = {}
+            for key, raw in value.items():
+                if key == "citations":
+                    continue
+                cleaned[key] = ProjectOrchestrator._strip_citations_recursively(raw)
+            return cleaned
+        return value
+
+    def _paper_detail_payload(self, paper: Paper) -> dict[str, Any]:
+        return {
+            "paper_id": paper.paper_id,
+            "project_ids": self.list_paper_project_ids(paper.paper_id),
+            "title": paper.title,
+            "authors": paper.authors,
+            "year": paper.year,
+            "publication": paper.publication,
+            "doi": paper.doi,
+            "custom_meta": paper.custom_meta,
+            "raw_pdf_path": paper.raw_pdf_path,
+            "raw_pdf_sha256": paper.raw_pdf_sha256,
+            "images_paths": paper.images_paths,
+            "extraction_status": paper.extraction_status,
+            "extraction_fact_check_status": paper.extraction_fact_check_status,
+            "analysis_fact_check_status": paper.analysis_fact_check_status,
+            "extraction_retry_count": paper.extraction_retry_count,
+            "analysis_retry_count": paper.analysis_retry_count,
+            "created_at": paper.created_at,
+            "updated_at": paper.updated_at,
+            "quick_scan": paper.quick_scan,
+            "synthesis_data": paper.synthesis_data,
+            "analysis_report": paper.analysis_report,
+            "extraction_fact_check_result": paper.extraction_fact_check_result,
+            "analysis_fact_check_result": paper.analysis_fact_check_result,
+        }
+
+    def export_project_bundle(
+        self,
+        *,
+        project_id: str,
+        fields: list[str],
+        citations_mode: str,
+    ) -> tuple[str, str]:
+        project = self.get_project(project_id)
+        papers = self.list_all_papers(project_id=project_id)
+
+        selected_fields = list(dict.fromkeys(fields))
+        export_items: list[dict[str, Any]] = []
+        file_entries: list[dict[str, Any]] = []
+
+        for paper in papers:
+            full_payload = self._paper_detail_payload(paper)
+            item: dict[str, Any] = {}
+            for field in selected_fields:
+                if field not in full_payload:
+                    continue
+                value = full_payload[field]
+                if (
+                    citations_mode == "strip"
+                    and field in {"quick_scan", "synthesis_data", "analysis_report"}
+                ):
+                    value = self._strip_citations_recursively(value)
+                item[field] = value
+            export_items.append(jsonable_encoder(item))
+
+            folder_path: str | None = None
+            file_count = 0
+            raw_pdf_path = paper.raw_pdf_path
+            if raw_pdf_path:
+                candidate_dir = Path(raw_pdf_path).expanduser().resolve().parent
+                if candidate_dir.exists() and candidate_dir.is_dir():
+                    folder_path = str(candidate_dir)
+                    file_count = sum(
+                        1
+                        for p in candidate_dir.rglob("*")
+                        if p.is_file() and not p.is_symlink()
+                    )
+            file_entries.append(
+                {
+                    "paper_id": paper.paper_id,
+                    "folder_path": folder_path,
+                    "file_count": file_count,
+                }
+            )
+
+        export_payload = jsonable_encoder(
+            {
+                "project": {
+                    "project_id": project.project_id,
+                    "name": project.name,
+                    "description": project.description,
+                    "created_at": project.created_at,
+                    "updated_at": project.updated_at,
+                },
+                "export_options": {
+                    "fields": selected_fields,
+                    "citations_mode": citations_mode,
+                },
+                "paper_count": len(export_items),
+                "papers": export_items,
+                "file_folders": file_entries,
+                "exported_at": datetime.now(),
+            }
+        )
+
+        safe_project_id = "".join(
+            ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in project_id
+        )
+        now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_name = f"project_{safe_project_id}_export_{now_str}"
+        tmp_file = tempfile.NamedTemporaryFile(
+            suffix=".zip",
+            prefix=f"{base_name}_",
+            delete=False,
+        )
+        zip_path = Path(tmp_file.name)
+        tmp_file.close()
+
+        with zipfile.ZipFile(
+            zip_path,
+            mode="w",
+            compression=zipfile.ZIP_DEFLATED,
+        ) as zf:
+            zf.writestr(
+                f"{base_name}/project_export.json",
+                json.dumps(export_payload, ensure_ascii=False, indent=2),
+            )
+
+            for paper in papers:
+                raw_pdf_path = paper.raw_pdf_path
+                if not raw_pdf_path:
+                    continue
+                candidate_dir = Path(raw_pdf_path).expanduser().resolve().parent
+                if not candidate_dir.exists() or not candidate_dir.is_dir():
+                    continue
+                for file_path in candidate_dir.rglob("*"):
+                    if not file_path.is_file() or file_path.is_symlink():
+                        continue
+                    relative_path = file_path.relative_to(candidate_dir)
+                    arcname = (
+                        f"{base_name}/paper_files/{paper.paper_id}/{relative_path.as_posix()}"
+                    )
+                    zf.write(file_path, arcname=arcname)
+
+        logger.info(
+            "event=project.exported project_id=%s papers=%s zip_path=%s",
+            project_id,
+            len(papers),
+            str(zip_path),
+        )
+        return str(zip_path), f"{base_name}.zip"

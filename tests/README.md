@@ -1,46 +1,99 @@
-# 测试目录说明
+# Backend Testing Guide
 
-当前测试按职责分层：
+这份文档说明后端测试目录如何组织、平时怎么跑，以及新增测试时该放哪里。
 
-- `tests/unit/`：纯单元测试（不依赖 HTTP 路由行为）
-  - `test_agent_runtime.py` / `test_agent_runtime_extended.py`：Agent runtime、LLM client、memory/tooling
-  - `test_data_process_task_manager.py`：任务池生命周期、取消与关闭行为
-  - `test_paper_repository.py`：PaperRepository 的数据访问与状态重置逻辑
-  - `test_paper_parser.py`：PaperParser 的输入准备与图片编码逻辑
-  - `test_paper_processor.py`：PaperProcessor 的处理流水线与失败回滚逻辑
-  - `test_database_service.py`：SQLite schema 初始化与迁移兜底
-  - `test_orchestrators_data_process.py`：编排器业务分支与重试路径
-  - `test_data_process_router_lifecycle.py`：worker 池生命周期委托
-  - `test_models_core.py`：核心模型序列化/反序列化与枚举解析
-  - `test_config_settings.py`：配置合并与 agent 级覆盖逻辑
-- `tests/integration/`：API 与业务编排集成测试
-  - `test_project_api.py`：Project 路由、Paper 顶层路由与 Project-Paper 关联
-  - `test_data_process_api.py`：data-process 路由与编排
-  - `test_app_health.py`：应用健康检查端点
-- `tests/conftest.py`：共享 fixture（临时运行目录、测试 DB、TestClient）
+## 1. 测试分层
 
-## 覆盖重点
+当前测试分成两层：
 
-- Data-process worker 池在 shutdown 时的可中断性：`test_data_process_task_manager.py`
-- Data-process 运行中任务取消竞态与清理路径：`test_data_process_task_manager.py`
-- Data-process 提交/重试/取消/重试失败任务等关键流程：`test_data_process_api.py`
-- Data-process 已取消任务重试链路：`test_data_process_api.py`
-- Agent 结构化输出、工具循环、trace 落库与 LLMClient 请求构造：unit agent tests
-- Database schema 新字段与旧表清理：`test_database_service.py`
-- Orchestrator 对重试失败任务的边界处理：`test_orchestrators_data_process.py`
-- 核心模型 JSON/枚举转换：`test_models_core.py`
-- Settings agent 配置覆盖合并：`test_config_settings.py`
+- `tests/unit/`
+  - 纯单元测试
+  - 重点验证函数、类、配置合并、数据库逻辑、Agent runtime 细节
+- `tests/integration/`
+  - API 与业务编排集成测试
+  - 重点验证路由、依赖注入、数据库交互与主流程
 
-## 当前回归状态
+共享 fixture 放在：
 
-- 后端当前回归结果：103 passed
-- 推荐本地执行顺序：
-  1. `uv run ruff check .`
-  2. `uv run pyright`
-  3. `uv run pytest -q`
+- `tests/conftest.py`
 
-## 约定
+## 2. 当前覆盖重点
 
-- 新增测试时优先判断应放入 `unit` 还是 `integration`。
-- 文件名使用 `test_*`，类/函数命名反映行为，不反映实现细节。
-- 修复 bug 时，优先补最小可复现测试，再改实现。
+### 2.1 Unit
+
+- Agent runtime / LLM client / memory / tooling
+- `DataProcessTaskManager`
+- `Database` schema 初始化与迁移
+- `PaperRepository`
+- `PaperProcessor`
+- `PaperParser`
+- `Settings` 配置合并与 profile 行为
+
+### 2.2 Integration
+
+- `Project` API
+- `Paper` API
+- `Data Process` task API
+- `App health`
+- `Librarian` API
+
+## 3. 推荐执行方式
+
+### 3.1 全量测试
+
+```bash
+cd paper_plane_x_backend
+./scripts/test.sh
+```
+
+### 3.2 跑指定文件
+
+```bash
+./scripts/test.sh tests/unit/test_config_settings.py
+./scripts/test.sh tests/integration/test_project_api.py
+```
+
+### 3.3 推荐本地回归顺序
+
+```bash
+uv run ruff check .
+uv run pyright
+./scripts/test.sh
+```
+
+## 4. 测试环境约定
+
+测试运行时会使用测试专用运行目录和测试安全配置，不应污染你的日常开发数据。
+
+当前测试重点约束：
+
+- 临时数据目录独立
+- 日志输出可控
+- 测试数据库与开发数据库隔离
+- 测试 client 通过依赖覆盖注入测试 DB 与测试 task manager
+
+## 5. 新增测试时怎么判断位置
+
+### 放进 `unit/` 的情况
+
+- 不依赖 HTTP 路由
+- 只验证单个类、函数或模块行为
+- 只需要 mock / fixture，不需要完整 app lifecycle
+
+### 放进 `integration/` 的情况
+
+- 需要 `TestClient`
+- 需要真实 router / dependency / database 交互
+- 需要验证一条完整业务路径
+
+## 6. 命名约定
+
+- 文件名使用 `test_*.py`
+- 测试名描述行为，不描述实现细节
+- 修 bug 时，优先补最小可复现测试
+
+## 7. 维护原则
+
+- 如果修改了配置系统，优先更新 `test_config_settings.py`
+- 如果修改了路由语义，优先更新对应 integration tests
+- 如果修改了数据库结构或迁移逻辑，优先更新 `test_database_service.py`

@@ -34,7 +34,14 @@ class _FakeExtractionResult:
 
 class _FakeAnalysisResult:
     def __init__(self) -> None:
-        self.analysis_report = _FakeSection({"summary": "analysis-ok"})
+        self.analysis_report = _FakeSection(
+            {
+                "summary": "analysis-ok",
+                "related_references": [
+                    {"title": "Reference A", "reason": "foundational method"}
+                ],
+            }
+        )
 
 
 class _FakeFactCheckResult:
@@ -202,6 +209,9 @@ async def test_process_success_updates_paper(db) -> None:
     assert updated.quick_scan.get("quick_summary") == "ok"
     assert updated.analysis_report is not None
     assert updated.analysis_report.get("summary") == "analysis-ok"
+    assert updated.analysis_report.get("related_references") == [
+        {"title": "Reference A", "reason": "foundational method"}
+    ]
     assert updated.extraction_retry_count == 1
     assert updated.analysis_retry_count == 2
 

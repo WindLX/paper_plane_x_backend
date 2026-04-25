@@ -109,6 +109,13 @@ class DerivationStep(BaseModel):
     )
 
 
+class RelatedReference(BaseModel):
+    """论文中关联的重要参考文献"""
+
+    title: str = Field(..., description="关联文献标题")
+    reason: str = Field(..., description="推荐继续阅读该文献的理由")
+
+
 class AnalysisReport(BaseModel):
     """理论解析智能体最终输出 Schema"""
 
@@ -119,6 +126,10 @@ class AnalysisReport(BaseModel):
     derivation_steps: list[DerivationStep] = Field(
         ...,
         description="核心方法的 Step-by-Step 逻辑推导（剥离次要证明，保留主干逻辑）",
+    )
+    related_references: list[RelatedReference] = Field(
+        ...,
+        description="原文引用中值得继续追踪的重要文献及推荐理由",
     )
 
 
