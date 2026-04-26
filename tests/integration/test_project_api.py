@@ -440,17 +440,7 @@ class TestProjectAPI:
             f"/api/v1/projects/{p1}/search",
             json={
                 "project_id": p2,
-                "condition_group": {
-                    "logic": "and",
-                    "predicates": [
-                        {
-                            "field": "md_content",
-                            "op": "contains",
-                            "value": "lyapunov",
-                        }
-                    ],
-                    "groups": [],
-                },
+                "query_expr": "(md_content CONTAINS lyapunov)",
                 "limit": 10,
                 "offset": 0,
             },
@@ -540,10 +530,16 @@ class TestProjectAPI:
 
         zf = zipfile.ZipFile(io.BytesIO(response.content))
         names = zf.namelist()
-        export_json_path = [name for name in names if name.endswith("/project_export.json")]
+        export_json_path = [
+            name for name in names if name.endswith("/project_export.json")
+        ]
         assert export_json_path
-        packed_pdf = [name for name in names if name.endswith("/paper-export-a/paper.pdf")]
-        packed_img = [name for name in names if name.endswith("/paper-export-a/fig1.png")]
+        packed_pdf = [
+            name for name in names if name.endswith("/paper-export-a/paper.pdf")
+        ]
+        packed_img = [
+            name for name in names if name.endswith("/paper-export-a/fig1.png")
+        ]
         assert packed_pdf
         assert packed_img
 
@@ -616,7 +612,9 @@ class TestProjectAPI:
         )
         assert response.status_code == 200
         zf = zipfile.ZipFile(io.BytesIO(response.content))
-        export_json_path = [name for name in zf.namelist() if name.endswith("/project_export.json")]
+        export_json_path = [
+            name for name in zf.namelist() if name.endswith("/project_export.json")
+        ]
         assert export_json_path
         payload = json.loads(zf.read(export_json_path[0]).decode("utf-8"))
         exported_paper = payload["papers"][0]

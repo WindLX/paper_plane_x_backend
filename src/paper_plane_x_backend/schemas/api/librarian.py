@@ -1,8 +1,14 @@
 """Librarian API schemas."""
 
-from typing import Any, Literal, cast
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from paper_plane_x_backend.models import PaperSortKey, SortOrder
+from paper_plane_x_backend.schemas import QuickScan
+from paper_plane_x_backend.services.librarian.query_parser import (
+    parse_librarian_query_expr,
+)
 
 
 class LibrarianProjectionRequest(BaseModel):
@@ -43,74 +49,99 @@ class LibrarianMatrixResponse(BaseModel):
     items: dict[str, dict[str, Any | None]]
 
 
-class LibrarianConditionPredicate(BaseModel):
-    """统一搜索中的原子条件。"""
+class LibrarianGlobalFinderRequest(BaseModel):
+    """项目级文献总览请求。"""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    field: str = Field(..., min_length=1, description="过滤字段（projection 路径）")
-    op: Literal["contains", "between"] = Field(..., description="操作符")
-    value: Any = Field(..., description="过滤值")
-
-    @model_validator(mode="after")
-    def validate_predicate(self) -> "LibrarianConditionPredicate":
-        normalized = self.field.strip()
-        if not normalized:
-            raise ValueError("field cannot be empty")
-
-        is_year = normalized in {"year", "meta.year"}
-        if is_year:
-            if self.op != "between":
-                raise ValueError("year only supports 'between' operator")
-            raw_value: object = self.value
-            if not isinstance(raw_value, list):
-                raise ValueError("year 'between' requires [start, end]")
-            range_value = cast(list[object], raw_value)
-            if len(range_value) != 2:
-                raise ValueError("year 'between' requires [start, end]")
-            start, end = range_value[0], range_value[1]
-            if not isinstance(start, int) or not isinstance(end, int):
-                raise ValueError("year 'between' values must be integers")
-            return self
-
-        if self.op != "contains":
-            raise ValueError("non-year fields only support 'contains' operator")
-        if not isinstance(self.value, str) or not self.value.strip():
-            raise ValueError("contains requires a non-empty string value")
-        return self
+    project_id: str = Field(..., min_length=1, description="项目 ID")
 
 
-class LibrarianConditionGroup(BaseModel):
-    """统一搜索条件组（支持嵌套 AND/OR）。"""
+class LibrarianGlobalFinderPaperSummary(BaseModel):
+    """Global Finder 中的论文基础摘要。"""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    logic: Literal["and", "or"] = Field(default="and", description="组内逻辑")
-    predicates: list[LibrarianConditionPredicate] = Field(
-        default_factory=lambda: cast(list[LibrarianConditionPredicate], []),
-        description="当前组直接包含的原子条件",
-    )
-    groups: list["LibrarianConditionGroup"] = Field(
-        default_factory=lambda: cast(list[LibrarianConditionGroup], []),
-        description="子条件组",
-    )
+    paper_id: str
+    title: str | None = None
+    authors: list[str] = Field(default_factory=list)
+    year: int | None = None
+    quick_scan: QuickScan | None = None
 
-    @model_validator(mode="after")
-    def validate_group_not_empty(self) -> "LibrarianConditionGroup":
-        if not self.predicates and not self.groups:
-            raise ValueError("condition group must contain predicates or subgroups")
-        return self
+
+class LibrarianYearDistributionStats(BaseModel):
+    """年份分布统计。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    available_count: int = 0
+    missing_count: int = 0
+    mean: float | None = None
+    variance: float | None = None
+    median: float | None = None
+    mode_years: list[int] = Field(default_factory=list)
+    q25: float | None = None
+    q75: float | None = None
+    outlier_count: int = 0
+    low_outlier_count: int = 0
+    high_outlier_count: int = 0
+
+
+class LibrarianTagCount(BaseModel):
+    """标签统计项。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    tag: str
+    count: int
+
+
+class LibrarianGlobalFinderStats(BaseModel):
+    """Global Finder 统计信息。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    paper_count: int
+    top_tags_limit: int
+    year_distribution: LibrarianYearDistributionStats
+    top_tags: list[LibrarianTagCount] = Field(default_factory=list)
+
+
+class LibrarianGlobalFinderResponse(BaseModel):
+    """项目级文献总览响应。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    project_id: str
+    papers: list[LibrarianGlobalFinderPaperSummary] = Field(default_factory=list)
+    stats: LibrarianGlobalFinderStats
 
 
 class LibrarianUnifiedSearchRequest(BaseModel):
     """统一搜索请求。"""
 
-    model_config = ConfigDict(strict=True, extra="forbid")
+    model_config = ConfigDict(extra="forbid")
 
     project_id: str | None = Field(default=None, description="项目作用域，可选")
-    condition_group: LibrarianConditionGroup = Field(..., description="组合条件")
+    paper_id: str | None = Field(default=None, description="按论文 ID 精确搜索")
+    query_expr: str | None = Field(
+        default=None,
+        description="条件表达式，例如 (meta.title CONTAINS xxx) AND (meta.year BETWEEN [2020, 2025])",
+    )
     limit: int = Field(default=20, ge=1, le=100, description="返回条数")
     offset: int = Field(default=0, ge=0, description="偏移量")
+    sort_by: PaperSortKey = Field(
+        default=PaperSortKey.CREATED_AT, description="排序字段"
+    )
+    sort_order: SortOrder = Field(
+        default=SortOrder.DESC, description="排序方向，asc 或 desc"
+    )
+
+    @model_validator(mode="after")
+    def validate_query_expr(self) -> "LibrarianUnifiedSearchRequest":
+        if self.query_expr:
+            parse_librarian_query_expr(self.query_expr)
+        return self
 
 
 class LibrarianUnifiedSearchResponse(BaseModel):
@@ -125,4 +156,18 @@ class LibrarianUnifiedSearchResponse(BaseModel):
     paper_ids: list[str] = Field(..., description="命中论文 ID 列表")
 
 
-LibrarianConditionGroup.model_rebuild()
+class LibrarianGuideResponse(BaseModel):
+    """Librarian 字段与用法说明."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    field_paths_guide: str
+    global_finder_schema: dict[str, Any]
+    query_schema: dict[str, Any]
+    projection_schema: dict[str, Any]
+    matrix_schema: dict[str, Any]
+    query_examples: list[str]
+    projection_examples: list[str]
+    matrix_tips: list[str]
+    project_query_tips: list[str]
+    global_finder_tips: list[str]

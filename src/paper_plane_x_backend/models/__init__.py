@@ -8,6 +8,12 @@ from paper_plane_x_backend.models.core import (
     Paper,
     Project,
 )
+from paper_plane_x_backend.models.sort import (
+    PaperSortKey,
+    ProjectSortKey,
+    SortOrder,
+    TaskSortKey,
+)
 
 __all__ = [
     "AgentTrace",
@@ -16,4 +22,8 @@ __all__ = [
     "FactCheckStatus",
     "Paper",
     "Project",
+    "PaperSortKey",
+    "ProjectSortKey",
+    "SortOrder",
+    "TaskSortKey",
 ]

@@ -35,6 +35,11 @@ Paper Plane X 后端负责整个数据处理主链路：
    - 控制台所需的项目、任务、导出接口
    - Librarian 字段投影、矩阵对比、项目内搜索
 
+5. **论文对话学习**
+   - Teacher 会话式学习 Agent
+   - 单篇论文上下文注入
+   - 会话历史与 trace 追踪
+
 ## 2. 快速开始
 
 ### 2.1 前置条件
@@ -134,6 +139,23 @@ uv run pyright
 
 - `POST /api/v1/agent-traces/query`
 - `DELETE /api/v1/agent-traces/{trace_id}`
+
+### 4.5 Librarian
+
+- `GET /api/v1/librarian/guide`
+- `POST /api/v1/librarian/global-finder`
+- `POST /api/v1/librarian/search`
+- `POST /api/v1/librarian/projection`
+- `POST /api/v1/librarian/matrix`
+
+### 4.6 Teacher
+
+- `GET /api/v1/teacher/conversations`
+- `POST /api/v1/teacher/conversations`
+- `GET /api/v1/teacher/conversations/{conversation_id}`
+- `PATCH /api/v1/teacher/conversations/{conversation_id}`
+- `DELETE /api/v1/teacher/conversations/{conversation_id}`
+- `POST /api/v1/teacher/conversations/{conversation_id}/run`
 
 ## 5. 配置说明
 
@@ -250,6 +272,7 @@ docker compose up --build -d
 - [docs/README.md](./docs/README.md)
 - [docs/workflow_quickstart.md](./docs/workflow_quickstart.md)
 - [docs/architecture.md](./docs/architecture.md)
+- [docs/teacher.md](./docs/teacher.md)
 - [tests/README.md](./tests/README.md)
 
 ## 10. 常见问题

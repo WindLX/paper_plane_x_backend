@@ -19,6 +19,8 @@ from paper_plane_x_backend.models import (
     ExtractionStatus,
     FactCheckStatus,
     Paper,
+    SortOrder,
+    TaskSortKey,
 )
 from paper_plane_x_backend.services.data_process_tasks.models import (
     DataProcessQueueTask,
@@ -463,12 +465,14 @@ class DataProcessOrchestrator:
         return updated
 
     def list_tasks(
-        self, *, sort_order: str = "desc"
+        self,
+        *,
+        sort_order: SortOrder = SortOrder.DESC,
+        sort_by: TaskSortKey = TaskSortKey.CREATED_AT,
     ) -> tuple[list[DataProcessTaskState], dict[str, int]]:
         logger.debug("event=data_process.tasks_list_requested")
 
-        states = self.task_manager.list_tasks()
-        states.sort(key=lambda state: state.created_at, reverse=sort_order != "asc")
+        states = self.task_manager.list_tasks(sort_order=sort_order, sort_by=sort_by)
         counts = {
             "queued": 0,
             "running": 0,
@@ -520,7 +524,9 @@ class DataProcessOrchestrator:
 
     def delete_task_record(self, task_id: str) -> None:
         """删除单条已结束任务记录（仅删 data_process_tasks 表）."""
-        logger.info("event=data_process.delete_task_record_requested task_id=%s", task_id)
+        logger.info(
+            "event=data_process.delete_task_record_requested task_id=%s", task_id
+        )
         state = self.task_manager.get_task(task_id)
         if state is None:
             raise DataProcessDomainError(

@@ -68,9 +68,9 @@ Unified Filter Engine 输入包含：
 
 ### 条件语义
 
-*   `year`：仅支持范围语义（例如 `between` 或 `gte/lte` 组合）。
-*   其他字段：仅支持 `contains` 字符串包含匹配。
-*   `contains` 匹配规则：
+*   `year`：仅支持范围语义（`BETWEEN`）。
+*   其他字段：仅支持 `CONTAINS` 字符串包含匹配。
+*   `CONTAINS` 匹配规则：
     *   大小写不敏感。
     *   对 JSON 字段按文本化后匹配（可命中 JSON 子结构中的目标字符串）。
 
@@ -95,7 +95,33 @@ Unified Filter Engine 在任意查询下都会自动追加以下过滤条件：
 
 这一层是将 Layer 1 和 Layer 2 进行有机组合，包装成符合 LiteLLM Tool-Calling 规范的、面向 Agent（或前端页面）的超级工具。
 
-当前实现中，**仅 `matrix_compare` 暴露为 Agent Tool**。
+当前实现中，`global_finder`、`matrix_compare` 与 `search_paper` 都可作为 Agent Tool 使用。
+
+### Tool: 全局发现者 (Global Finder)
+**能力**：聚合指定 project 下全部已关联论文的最基础信息，帮助 Agent 先建立对整批文献的整体感觉。
+
+*   **返回内容**：
+    *   每篇论文的 `paper_id / title / authors / year / quick_scan`
+    *   全体统计信息：
+        *   `paper_count`
+        *   `year_distribution`
+        *   `top_tags`
+*   **年份统计字段**：
+    *   `mean`
+    *   `variance`
+    *   `median`
+    *   `mode_years`
+    *   `q25`
+    *   `q75`
+    *   `outlier_count`
+    *   `low_outlier_count`
+    *   `high_outlier_count`
+*   **离群值口径**：
+    *   小于 5% 分位数的年份计入 `low_outlier_count`
+    *   大于 95% 分位数的年份计入 `high_outlier_count`
+*   **热门标签口径**：
+    *   统计 `quick_scan.tags` 出现次数
+    *   默认返回前 8 个标签（可通过配置 `librarian.top_tags_limit` 调整）
 
 ### Tool: 矩阵分析仪 (Matrix Compare) - **最核心能力！**
 **能力**：利用 Layer 1 的点索引能力，在多篇论文间进行“横向拉网式”的数据穿透。
@@ -122,12 +148,12 @@ Unified Filter Engine 在任意查询下都会自动追加以下过滤条件：
     ```
 *   **价值**：Writer Agent 撰写综述“对比分析”章节时，无需通读原文，瞬间拿到带引用的二维对比表格，直接开始撰写。
 
-`projection` 与 `search` 能力通过 API 路由提供，不以 Agent Tool 形式暴露。
+`projection` 仍主要通过 API 路由提供；`search_paper` 则同时支持 API 与 Agent Tool。
 
 ### 规划中能力说明（未实现）
 
-- 发现者（Global Finder）与深潜器（Deep Diver）当前处于规划阶段，属于“尚未实现”，并非被删除。
-- 当前已落地并对 Agent 暴露的工具仅有 `matrix_compare_by_paths`。
+- 深潜器（Deep Diver）当前仍处于规划阶段，属于“尚未实现”。
+- 当前已落地能力包括 `global_finder`、`projection`、`search`、`matrix`，其中 `global_finder` / `search_paper` / `matrix_compare` 也可供 Agent 调用。
 
 ---
 
@@ -178,33 +204,84 @@ Unified Filter Engine 在任意查询下都会自动追加以下过滤条件：
 - `POST /api/v1/librarian/projection`
 - `POST /api/v1/librarian/matrix`
 - `POST /api/v1/librarian/search`
+- `POST /api/v1/librarian/global-finder`
+- `GET /api/v1/librarian/guide`
 
-### Unified Search 请求示例
+### Global Finder 请求示例
 
-`search` 通过新 DSL 描述组合条件：
+```json
+{
+    "project_id": "proj_1"
+}
+```
 
-示例：
+### Global Finder 响应示例
 
 ```json
 {
     "project_id": "proj_1",
-    "condition_group": {
-        "logic": "and",
-        "predicates": [
-            {"field": "meta.year", "op": "between", "value": [2020, 2025]},
-            {"field": "quick_scan.verdict", "op": "contains", "value": "推荐"}
-        ],
-        "groups": [
-            {
-                "logic": "or",
-                "predicates": [
-                    {"field": "analysis_report", "op": "contains", "value": "Lyapunov"},
-                    {"field": "md_content", "op": "contains", "value": "AdamW"}
-                ],
-                "groups": []
+    "papers": [
+        {
+            "paper_id": "paper_123",
+            "title": "A Great Paper",
+            "authors": ["Alice", "Bob"],
+            "year": 2024,
+            "quick_scan": {
+                "tags": ["优化算法", "控制策略"],
+                "verdict": "推荐精读",
+                "reason": "方法和实验都比较扎实",
+                "quick_summary": "..."
             }
+        }
+    ],
+    "stats": {
+        "paper_count": 12,
+        "top_tags_limit": 8,
+        "year_distribution": {
+            "available_count": 10,
+            "missing_count": 2,
+            "mean": 2022.4,
+            "variance": 1.84,
+            "median": 2022.0,
+            "mode_years": [2022],
+            "q25": 2021.25,
+            "q75": 2024.0,
+            "outlier_count": 1,
+            "low_outlier_count": 0,
+            "high_outlier_count": 1
+        },
+        "top_tags": [
+            {"tag": "优化算法", "count": 6},
+            {"tag": "控制策略", "count": 4}
         ]
-    },
+    }
+}
+```
+
+### Unified Search 请求示例
+
+`search` 现在支持两种输入模式：
+
+1. `paper_id` 精确搜索
+2. `query_expr` 条件表达式搜索
+
+### Unified Search 请求示例（query_expr）
+
+```json
+{
+    "project_id": "proj_1",
+    "query_expr": "(meta.year BETWEEN [2020, 2025]) AND (quick_scan.verdict CONTAINS 推荐)",
+    "limit": 20,
+    "offset": 0
+}
+```
+
+### Unified Search 请求示例（paper_id）
+
+```json
+{
+    "project_id": "proj_1",
+    "paper_id": "paper_123",
     "limit": 20,
     "offset": 0
 }
@@ -221,4 +298,4 @@ Unified Filter Engine 在任意查询下都会自动追加以下过滤条件：
 - `422 invalid_field`：字段不在白名单
 - `422 invalid_operator`：操作符非法
 - `422 invalid_value`：值类型或约束不合法
-- `422 invalid_condition_group`：条件树结构不合法
+- `422 invalid_query_expr`：条件表达式语法不合法

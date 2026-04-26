@@ -10,7 +10,13 @@ from datetime import datetime
 from typing import TypeAlias, cast
 from uuid import uuid4
 
-from paper_plane_x_backend.models import ExtractionStatus, FactCheckStatus, Paper
+from paper_plane_x_backend.models import (
+    ExtractionStatus,
+    FactCheckStatus,
+    Paper,
+    PaperSortKey,
+    SortOrder,
+)
 from paper_plane_x_backend.services.database import Database
 
 logger = logging.getLogger(__name__)
@@ -92,25 +98,83 @@ class PaperQueryRepository:
             )
         return self._decode_json_or_value(row.get("payload"))
 
+    def list_project_paper_overview(
+        self,
+        *,
+        project_id: str,
+    ) -> list[dict[str, object]]:
+        """列出项目下论文的基础信息，供全局总览使用。"""
+        project_row = self.db.fetchone(
+            "SELECT 1 FROM projects WHERE project_id = ?",
+            (project_id,),
+        )
+        if project_row is None:
+            raise PaperRepositoryError(
+                f"Project {project_id} not found",
+                error_code="not_found",
+            )
+
+        rows = self.db.fetchall(
+            """
+            SELECT
+                p.paper_id,
+                p.title,
+                p.authors,
+                p.year,
+                p.quick_scan
+            FROM papers p
+            JOIN paper_projects pp ON pp.paper_id = p.paper_id
+            WHERE pp.project_id = ?
+            ORDER BY p.created_at DESC, p.paper_id ASC
+            """,
+            (project_id,),
+        )
+
+        items: list[dict[str, object]] = []
+        for row in rows:
+            authors_value = self._decode_json_or_value(row.get("authors"))
+            quick_scan_value = self._decode_json_or_value(row.get("quick_scan"))
+            items.append(
+                {
+                    "paper_id": row.get("paper_id"),
+                    "title": row.get("title"),
+                    "authors": authors_value if isinstance(authors_value, list) else [],
+                    "year": row.get("year"),
+                    "quick_scan": (
+                        quick_scan_value if isinstance(quick_scan_value, dict) else None
+                    ),
+                }
+            )
+        return items
+
     def search_paper(
         self,
         *,
         project_id: str | None,
-        condition_group: dict[str, object],
+        paper_id: str | None = None,
+        query_group: dict[str, object] | None = None,
         limit: int,
         offset: int,
+        sort_by: PaperSortKey = PaperSortKey.CREATED_AT,
+        sort_order: SortOrder = SortOrder.DESC,
     ) -> tuple[list[str], int]:
         """统一搜索：可选 project + 组合条件 + 自动质量过滤。"""
         where_clauses: list[str] = []
         params: list[object] = []
 
-        if project_id:
-            where_clauses.append("pp.project_id = ?")
-            params.append(project_id)
-
-        group_clause, group_params = self._build_search_group_predicate(condition_group)
-        where_clauses.append(group_clause)
-        params.extend(group_params)
+        if paper_id:
+            where_clauses.append("p.paper_id = ?")
+            params.append(paper_id)
+        else:
+            if project_id:
+                where_clauses.append("pp.project_id = ?")
+                params.append(project_id)
+            if query_group is not None:
+                group_clause, group_params = self._build_search_group_predicate(
+                    query_group
+                )
+                where_clauses.append(group_clause)
+                params.extend(group_params)
 
         status_clause, status_params = self._build_search_status_predicate()
         where_clauses.append(status_clause)
@@ -130,11 +194,13 @@ class PaperQueryRepository:
         )
         total = int(count_row.get("total", 0)) if count_row else 0
 
+        order_by = f"p.{sort_by.value} {sort_order.value.upper()}"
+
         rows = self.db.fetchall(
             (
                 "SELECT p.paper_id"
                 f"{from_sql}{where_sql} "
-                "ORDER BY p.created_at DESC, p.paper_id ASC "
+                f"ORDER BY {order_by} "
                 "LIMIT ? OFFSET ?"
             ),
             tuple([*params, limit, offset]),
@@ -186,11 +252,11 @@ class PaperQueryRepository:
         self,
         group: dict[str, object],
     ) -> tuple[str, list[object]]:
-        logic_raw = str(group.get("logic") or "and").strip().lower()
+        logic_raw = str(group.get("logic") or "AND").strip().lower()
         if logic_raw not in {"and", "or"}:
             raise PaperRepositoryError(
-                "condition_group.logic must be 'and' or 'or'",
-                error_code="invalid_condition_group",
+                "query group logic must be 'and' or 'or'",
+                error_code="invalid_query_group",
             )
         joiner = " AND " if logic_raw == "and" else " OR "
 
@@ -204,12 +270,12 @@ class PaperQueryRepository:
             for predicate_item in cast(list[object], predicates_raw):
                 if not isinstance(predicate_item, dict):
                     raise PaperRepositoryError(
-                        "condition_group.predicates must contain objects",
-                        error_code="invalid_condition_group",
+                        "query group predicates must contain objects",
+                        error_code="invalid_query_group",
                     )
                 predicate_dict = cast(dict[str, object], predicate_item)
                 field = str(predicate_dict.get("field") or "").strip()
-                op = str(predicate_dict.get("op") or "").strip()
+                op = str(predicate_dict.get("op") or "").strip().upper()
                 value = predicate_dict.get("value")
 
                 field_expr = self._resolve_search_field_expr(field)
@@ -223,16 +289,16 @@ class PaperQueryRepository:
                 params.extend(clause_params)
         elif predicates_raw is not None:
             raise PaperRepositoryError(
-                "condition_group.predicates must be an array",
-                error_code="invalid_condition_group",
+                "query group predicates must be an array",
+                error_code="invalid_query_group",
             )
 
         if isinstance(groups_raw, list):
             for subgroup in cast(list[object], groups_raw):
                 if not isinstance(subgroup, dict):
                     raise PaperRepositoryError(
-                        "condition_group.groups must contain objects",
-                        error_code="invalid_condition_group",
+                        "query group groups must contain objects",
+                        error_code="invalid_query_group",
                     )
                 subgroup_dict = cast(dict[str, object], subgroup)
                 sub_clause, sub_params = self._build_search_group_predicate(
@@ -242,14 +308,14 @@ class PaperQueryRepository:
                 params.extend(sub_params)
         elif groups_raw is not None:
             raise PaperRepositoryError(
-                "condition_group.groups must be an array",
-                error_code="invalid_condition_group",
+                "query group groups must be an array",
+                error_code="invalid_query_group",
             )
 
         if not clauses:
             raise PaperRepositoryError(
-                "condition_group must contain at least one filter or subgroup",
-                error_code="invalid_condition_group",
+                "query group must contain at least one filter or subgroup",
+                error_code="invalid_query_group",
             )
 
         return joiner.join(clauses), params
@@ -262,7 +328,7 @@ class PaperQueryRepository:
         value: object,
         field: str,
     ) -> tuple[str, list[object]]:
-        if op == "contains":
+        if op == "CONTAINS":
             if not isinstance(value, str) or not value.strip():
                 raise PaperRepositoryError(
                     f"Operator 'contains' requires non-empty string value for field: {field}",
@@ -270,7 +336,7 @@ class PaperQueryRepository:
                 )
             return f"LOWER(CAST({field_expr} AS TEXT)) LIKE ?", [f"%{value.lower()}%"]
 
-        if op == "between":
+        if op == "BETWEEN":
             if not isinstance(value, list):
                 raise PaperRepositoryError(
                     f"Operator 'between' requires [start, end] for field: {field}",
@@ -447,12 +513,18 @@ class PaperRepository:
             return None
         return Paper.from_db_row(row)
 
-    def list_all(self, offset: int = 0, limit: int = 20) -> list[Paper]:
+    def list_all(
+        self,
+        offset: int = 0,
+        limit: int = 20,
+        sort_by: PaperSortKey = PaperSortKey.CREATED_AT,
+        sort_order: SortOrder = SortOrder.DESC,
+    ) -> list[Paper]:
         """列出所有论文."""
         rows = self.db.fetchall(
-            """
+            f"""
             SELECT p.* FROM papers p
-            ORDER BY p.created_at DESC
+            ORDER BY p.{sort_by.value} {sort_order.upper()}
             LIMIT ? OFFSET ?
             """,
             (limit, offset),

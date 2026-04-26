@@ -6,7 +6,12 @@ from typing import NoReturn
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
 from paper_plane_x_backend.api.dependencies import DBDep, TaskManagerDep
-from paper_plane_x_backend.models import DataProcessTaskStatus, Paper
+from paper_plane_x_backend.models import (
+    DataProcessTaskStatus,
+    Paper,
+    PaperSortKey,
+    SortOrder,
+)
 from paper_plane_x_backend.schemas import (
     DataProcessManualUpdateRequest,
     DataProcessSubmitResponse,
@@ -126,23 +131,6 @@ async def create_paper(
     )
 
 
-@router.get("", response_model=PaperListResponse, summary="列出论文")
-async def list_papers(
-    db: DBDep,
-    task_manager: TaskManagerDep,
-    offset: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
-) -> PaperListResponse:
-    orchestrator = _build_orchestrator(db, task_manager)
-    papers, total = orchestrator.list_papers(offset=offset, limit=limit)
-    return PaperListResponse(
-        items=[_to_paper_response(orchestrator, paper) for paper in papers],
-        total=total,
-        offset=offset,
-        limit=limit,
-    )
-
-
 @router.get("/{paper_id}", response_model=PaperDetailResponse, summary="获取论文详情")
 async def get_paper(
     paper_id: str,
@@ -155,6 +143,35 @@ async def get_paper(
     except PaperDomainError as exc:
         _raise_as_http(exc)
     return _to_paper_detail_response(orchestrator, paper)
+
+
+@router.post("/batch-get", response_model=PaperListResponse, summary="批量获取论文详情")
+async def batch_get_papers(
+    paper_ids: list[str],
+    db: DBDep,
+    task_manager: TaskManagerDep,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    sort_order: SortOrder = Query(SortOrder.DESC, description="按 created_at 排序"),
+    sort_by: PaperSortKey = Query(
+        PaperSortKey.CREATED_AT,
+        description="排序字段，支持 created_at、updated_at、name",
+    ),
+) -> PaperListResponse:
+    orchestrator = _build_orchestrator(db, task_manager)
+    papers, total = orchestrator.batch_get_papers(
+        paper_ids=paper_ids,
+        offset=offset,
+        limit=limit,
+        sort_order=sort_order,
+        sort_by=sort_by,
+    )
+    return PaperListResponse(
+        items=[_to_paper_response(orchestrator, paper) for paper in papers],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.patch("/{paper_id}", response_model=PaperDetailResponse, summary="手动更新论文")

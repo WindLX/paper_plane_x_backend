@@ -245,7 +245,7 @@ class TestLibrarianAPI:
         payload = response.json()
         assert payload["value"] == [{"title": "Ref A", "reason": "foundation"}]
 
-    def test_search_endpoint_filters_by_condition_group(
+    def test_search_endpoint_filters_by_query_expr(
         self, client: TestClient, db: Database
     ) -> None:
         _insert_paper(db, "paper-search-1")
@@ -278,18 +278,7 @@ class TestLibrarianAPI:
         response = client.post(
             "/api/v1/librarian/search",
             json={
-                "condition_group": {
-                    "logic": "and",
-                    "predicates": [
-                        {"field": "meta.year", "op": "between", "value": [2023, 2025]},
-                        {
-                            "field": "quick_scan.verdict",
-                            "op": "contains",
-                            "value": "推荐",
-                        },
-                    ],
-                    "groups": [],
-                },
+                "query_expr": "(meta.year BETWEEN [2023, 2025]) AND (quick_scan.verdict CONTAINS 推荐)",
                 "limit": 10,
                 "offset": 0,
             },
@@ -326,17 +315,7 @@ class TestLibrarianAPI:
         response = client.post(
             "/api/v1/librarian/search",
             json={
-                "condition_group": {
-                    "logic": "and",
-                    "predicates": [
-                        {
-                            "field": "md_content",
-                            "op": "contains",
-                            "value": "lyapunov",
-                        }
-                    ],
-                    "groups": [],
-                },
+                "query_expr": "(md_content CONTAINS lyapunov)",
                 "limit": 10,
                 "offset": 0,
             },
@@ -347,7 +326,7 @@ class TestLibrarianAPI:
         assert payload["total"] == 1
         assert payload["paper_ids"] == ["paper-status-pass"]
 
-    def test_search_endpoint_supports_nested_condition_group(
+    def test_search_endpoint_supports_nested_query_expr(
         self, client: TestClient, db: Database
     ) -> None:
         _insert_paper(db, "paper-search-n1")
@@ -374,30 +353,7 @@ class TestLibrarianAPI:
         response = client.post(
             "/api/v1/librarian/search",
             json={
-                "condition_group": {
-                    "logic": "or",
-                    "predicates": [
-                        {"field": "meta.year", "op": "between", "value": [2025, 2030]}
-                    ],
-                    "groups": [
-                        {
-                            "logic": "and",
-                            "predicates": [
-                                {
-                                    "field": "quick_scan.verdict",
-                                    "op": "contains",
-                                    "value": "推荐",
-                                },
-                                {
-                                    "field": "meta.year",
-                                    "op": "between",
-                                    "value": [2023, 2024],
-                                },
-                            ],
-                            "groups": [],
-                        }
-                    ],
-                },
+                "query_expr": "(meta.year BETWEEN [2025, 2030]) OR ((quick_scan.verdict CONTAINS 推荐) AND (meta.year BETWEEN [2023, 2024]))",
                 "limit": 10,
                 "offset": 0,
             },
@@ -416,13 +372,7 @@ class TestLibrarianAPI:
         response = client.post(
             "/api/v1/librarian/search",
             json={
-                "condition_group": {
-                    "logic": "and",
-                    "predicates": [
-                        {"field": "unknown_field", "op": "contains", "value": "x"}
-                    ],
-                    "groups": [],
-                },
+                "query_expr": "(unknown_field CONTAINS x)",
                 "limit": 10,
                 "offset": 0,
             },

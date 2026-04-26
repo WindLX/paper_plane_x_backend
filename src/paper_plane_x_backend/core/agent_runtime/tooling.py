@@ -36,6 +36,21 @@ class Tool(BaseModel):
         exclude=True,
         description="实际执行的函数",
     )
+    bound_kwargs: dict[str, Any] = Field(
+        default_factory=dict,
+        exclude=True,
+        description="对 LLM 隐藏、在执行时自动注入的固定参数",
+    )
+    context_params: dict[str, str] = Field(
+        default_factory=dict,
+        exclude=True,
+        description="参数名到上下文键名的映射，执行时从上下文自动注入",
+    )
+    shared_guides: dict[str, str] = Field(
+        default_factory=dict,
+        exclude=True,
+        description="当前工具依赖的共享说明片段，由 registry 聚合为公共 guide",
+    )
 
     def to_openai_format(self) -> dict[str, Any]:
         """转换为 OpenAI 描述格式."""
@@ -48,13 +63,29 @@ class Tool(BaseModel):
             },
         }
 
-    async def execute(self, **kwargs: Any) -> Any:
+    async def execute(
+        self,
+        *,
+        context: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
         if self.function is None:
             raise RuntimeError(f"Tool '{self.name}' has no bound function")
 
+        merged_kwargs = dict(kwargs)
+        for key, value in self.bound_kwargs.items():
+            merged_kwargs[key] = value
+
+        for param_name, context_key in self.context_params.items():
+            if context is None or context_key not in context:
+                raise RuntimeError(
+                    f"Tool '{self.name}' requires hidden context key '{context_key}'"
+                )
+            merged_kwargs[param_name] = context[context_key]
+
         if inspect.iscoroutinefunction(self.function):
-            return await self.function(**kwargs)
-        return self.function(**kwargs)
+            return await self.function(**merged_kwargs)
+        return self.function(**merged_kwargs)
 
 
 class ToolRegistry:
@@ -62,6 +93,7 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
+        self._shared_guides: dict[str, str] = {}
 
     def register(self, tool: Tool) -> None:
         if tool.name in self._tools:
@@ -69,6 +101,20 @@ class ToolRegistry:
                 "event=tool.register_rejected_duplicate tool_name=%s", tool.name
             )
             raise ValueError(f"Tool '{tool.name}' already registered")
+
+        for guide_name, guide_content in tool.shared_guides.items():
+            existing = self._shared_guides.get(guide_name)
+            if existing is not None and existing != guide_content:
+                logger.warning(
+                    "event=tool.register_conflicting_shared_guide tool_name=%s guide_name=%s",
+                    tool.name,
+                    guide_name,
+                )
+                raise ValueError(
+                    f"Shared guide '{guide_name}' already exists with different content"
+                )
+            self._shared_guides[guide_name] = guide_content
+
         self._tools[tool.name] = tool
         logger.debug("event=tool.registered tool_name=%s", tool.name)
 
@@ -89,7 +135,22 @@ class ToolRegistry:
     def to_openai_format(self) -> list[dict[str, Any]]:
         return [tool.to_openai_format() for tool in self._tools.values()]
 
-    async def execute_tool_call(self, tool_call: ToolCallMessage) -> ToolMessage:
+    def build_shared_guide_message(self) -> str:
+        if not self._shared_guides:
+            return ""
+
+        sections: list[str] = ["Toolset Shared Guide:"]
+        for guide_name, guide_content in self._shared_guides.items():
+            sections.append(f"[{guide_name}]")
+            sections.append(guide_content.strip())
+        return "\n\n".join(sections).strip()
+
+    async def execute_tool_call(
+        self,
+        tool_call: ToolCallMessage,
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> ToolMessage:
         """按 ToolCall 执行工具并返回标准 ToolMessage。"""
         tool_id = tool_call.id
         tool_name = tool_call.function.name
@@ -120,7 +181,7 @@ class ToolRegistry:
             )
 
         try:
-            result = await tool.execute(**arguments)
+            result = await tool.execute(context=context, **arguments)
             if isinstance(result, str):
                 content = result
             elif isinstance(result, BaseModel):
@@ -198,6 +259,9 @@ def _get_type_schema(type_hint: Any) -> dict[str, Any]:
 def tool(
     name: str | None = None,
     description: str | None = None,
+    bound_kwargs: dict[str, Any] | None = None,
+    context_params: dict[str, str] | None = None,
+    shared_guides: dict[str, str] | None = None,
 ) -> Callable[[Callable[..., Any]], Tool]:
     """工具装饰器."""
 
@@ -211,8 +275,14 @@ def tool(
         properties: dict[str, Any] = {}
         required: list[str] = []
 
+        hidden_param_names = set((bound_kwargs or {}).keys()) | set(
+            (context_params or {}).keys()
+        )
+
         for param_name, param in sig.parameters.items():
             if param_name == "return":
+                continue
+            if param_name in hidden_param_names:
                 continue
 
             type_hint = type_hints.get(param_name, str)
@@ -236,6 +306,9 @@ def tool(
             description=tool_desc,
             parameters=parameters,
             function=func,
+            bound_kwargs=bound_kwargs or {},
+            context_params=context_params or {},
+            shared_guides=shared_guides or {},
         )
 
     return decorator

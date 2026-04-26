@@ -225,6 +225,7 @@ class Database:
             or (not task_trace_columns_ready)
             or agent_traces_legacy
             or papers_trace_legacy
+            or self._has_column(conn, "teacher_history", "conversation_id")
         )
 
     def _backup_database_before_migration(self, conn: sqlite3.Connection) -> None:
@@ -404,6 +405,7 @@ class Database:
         self._ensure_column(conn, "agent_traces", "total_tokens", "INTEGER")
         self._ensure_column(conn, "agent_traces", "usage_payload", "TEXT")
         self._ensure_trace_columns(conn, "data_process_tasks")
+        conn.execute("DROP TABLE IF EXISTS teacher_history")
         conn.execute("DROP TABLE IF EXISTS data_process_history")
         self._ensure_papers_fts_objects(conn)
 

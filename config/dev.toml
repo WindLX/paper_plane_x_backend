@@ -29,6 +29,9 @@ worker_count = 5
 shutdown_timeout = 5.0
 task_max_seconds = 600.0
 
+[librarian]
+top_tags_limit = 8
+
 [llm]
 model = "deepseek-v4-flash"
 base_url = "https://api.deepseek.com/v1"

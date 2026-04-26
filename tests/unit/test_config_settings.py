@@ -1,6 +1,5 @@
 """Settings tests."""
 
-import os
 import tomllib
 from pathlib import Path
 

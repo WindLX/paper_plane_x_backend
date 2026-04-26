@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from paper_plane_x_backend.config import settings
-from paper_plane_x_backend.models import DataProcessTaskStatus
+from paper_plane_x_backend.models import DataProcessTaskStatus, SortOrder, TaskSortKey
 from paper_plane_x_backend.services.data_process_tasks.models import (
     DataProcessQueueTask,
     DataProcessTaskState,
@@ -222,8 +222,16 @@ class DataProcessTaskManager:
         )
         return state
 
-    def list_tasks(self, *, paper_id: str | None = None) -> list[DataProcessTaskState]:
-        return self._state_store.list(paper_id=paper_id)
+    def list_tasks(
+        self,
+        *,
+        paper_id: str | None = None,
+        sort_order: SortOrder = SortOrder.DESC,
+        sort_by: TaskSortKey = TaskSortKey.CREATED_AT,
+    ) -> list[DataProcessTaskState]:
+        return self._state_store.list(
+            paper_id=paper_id, sort_order=sort_order, sort_by=sort_by
+        )
 
     def get_task(self, task_id: str) -> DataProcessTaskState | None:
         return self._state_store.get(task_id)

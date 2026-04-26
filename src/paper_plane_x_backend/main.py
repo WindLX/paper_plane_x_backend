@@ -135,7 +135,8 @@ async def console_fallback(resource_path: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="Not found")
     return _serve_console_file(resource_path)
 
-if __name__ == "__main__":
+
+def run():
     import uvicorn
 
     uvicorn.run(
@@ -144,3 +145,18 @@ if __name__ == "__main__":
         port=settings.api.port,
         reload=settings.api.reload,
     )
+
+
+def debug():
+    import debugpy
+
+    debugpy.listen(("127.0.0.1", 5678))
+    print("Waiting for debugger to attach on 127.0.0.1:5678")
+
+    debugpy.wait_for_client()
+    print("Debugger attached, starting the app...")
+    run()
+
+
+if __name__ == "__main__":
+    run()

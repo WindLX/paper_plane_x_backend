@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import UploadFile, status
 
 from paper_plane_x_backend.config import settings
-from paper_plane_x_backend.models import Paper
+from paper_plane_x_backend.models import Paper, PaperSortKey, SortOrder
 from paper_plane_x_backend.services.data_process_tasks.models import (
     DataProcessTaskState,
 )
@@ -50,10 +50,21 @@ class PaperOrchestrator:
             task_manager=task_manager,
         )
 
-    def list_papers(self, *, offset: int, limit: int) -> tuple[list[Paper], int]:
+    def list_papers(
+        self, *, offset: int, limit: int, sort_order: SortOrder, sort_by: PaperSortKey
+    ) -> tuple[list[Paper], int]:
         count_result = self.db.fetchone("SELECT COUNT(*) AS count FROM papers")
         total = int(count_result["count"]) if count_result else 0
-        papers = self.repo.list_all(offset=offset, limit=limit)
+        papers = self.repo.list_all(
+            offset=offset, limit=limit, sort_by=sort_by, sort_order=sort_order
+        )
+        logger.info(
+            "event=paper.listed offset=%s limit=%s returned=%s total=%s",
+            offset,
+            limit,
+            len(papers),
+            total,
+        )
         return papers, total
 
     def get_paper(self, *, paper_id: str) -> Paper:
@@ -62,9 +73,44 @@ class PaperOrchestrator:
             raise PaperDomainError(
                 status.HTTP_404_NOT_FOUND, f"Paper {paper_id} not found"
             )
+        logger.info("event=paper.fetched paper_id=%s", paper_id)
         return paper
 
+    def batch_get_papers(
+        self,
+        *,
+        paper_ids: list[str],
+        offset: int,
+        limit: int,
+        sort_order: SortOrder,
+        sort_by: PaperSortKey,
+    ) -> tuple[list[Paper], int]:
+        count_result = self.db.fetchone(
+            f"""SELECT COUNT(*) AS count FROM papers
+            WHERE paper_id IN ({','.join(['?'] *len(paper_ids))})""",
+            tuple(paper_ids),
+        )
+        total = int(count_result["count"]) if count_result else 0
+        rows = self.db.fetchall(
+            f"""SELECT * FROM papers
+            WHERE paper_id IN ({','.join(['?'] *len(paper_ids))})
+            ORDER BY {sort_by.value} {sort_order.upper()}
+            LIMIT ? OFFSET ?""",
+            tuple(paper_ids) + (limit, offset),
+        )
+        papers = [Paper.from_db_row(row) for row in rows]
+        logger.info(
+            "event=paper.batch_fetched requested_ids=%s offset=%s limit=%s returned=%s total=%s",
+            paper_ids,
+            offset,
+            limit,
+            len(papers),
+            total,
+        )
+        return papers, total
+
     def list_paper_project_ids(self, paper_id: str) -> list[str]:
+        logger.info("event=paper.list_project_ids paper_id=%s", paper_id)
         return self.repo.list_project_ids(paper_id)
 
     async def create_paper_and_start_processing(
@@ -112,6 +158,11 @@ class PaperOrchestrator:
                 paper_id=paper_id,
                 upload_file=upload_file,
             )
+            logger.info(
+                "event=paper.reprocessed paper_id=%s task_id=%s",
+                paper_id,
+                task_state.task_id,
+            )
             return task_state.task_id
         except DataProcessDomainError as exc:
             raise PaperDomainError(exc.status_code, exc.detail) from exc
@@ -156,6 +207,7 @@ class PaperOrchestrator:
                 analysis_fact_check_status=analysis_fact_check_status,
                 analysis_fact_check_result=analysis_fact_check_result,
             )
+            logger.info("event=paper.updated paper_id=%s", paper_id)
         except PaperRepositoryError as exc:
             if "not found" in exc.message.lower():
                 raise PaperDomainError(status.HTTP_404_NOT_FOUND, exc.message) from exc
@@ -198,6 +250,7 @@ class PaperOrchestrator:
             self.repo.unlink_from_project(paper_id=paper_id, project_id=project_id)
 
         self.db.delete("papers", "paper_id = ?", (paper_id,))
+        logger.info("event=paper.deleted paper_id=%s", paper_id)
 
         paper_dir = settings.mineru.output_dir / paper_id
         if paper_dir.exists():

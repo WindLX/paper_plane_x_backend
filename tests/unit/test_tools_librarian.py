@@ -1,5 +1,6 @@
 """Librarian hybrid retrieval tests."""
 
+from paper_plane_x_backend.services.librarian import build_field_paths_guide
 from paper_plane_x_backend.services.paper.repository import PaperRepositoryError
 from paper_plane_x_backend.tools import librarian
 
@@ -31,10 +32,6 @@ def test_matrix_compare_by_paths_tool_success(monkeypatch) -> None:
         field_paths=["meta.title"],
     )
     assert payload["items"]["p-1"]["meta.title"] == "T1"
-
-
-def test_search_paper_function_removed() -> None:
-    assert not hasattr(librarian, "search_paper")
 
 
 def test_matrix_compare_by_paths_tool_returns_error_payload(monkeypatch) -> None:
@@ -93,7 +90,7 @@ def test_matrix_compare_by_paths_tool_strips_citations(monkeypatch) -> None:
 
 
 def test_build_field_paths_guide_contains_meta_and_structured_paths() -> None:
-    guide = librarian.build_field_paths_guide()
+    guide = build_field_paths_guide()
 
     assert "meta：" in guide
     assert "meta.raw_pdf_path" in guide
@@ -105,5 +102,6 @@ def test_build_field_paths_guide_contains_meta_and_structured_paths() -> None:
 
 def test_matrix_compare_description_contains_field_paths_guide() -> None:
     desc = librarian.matrix_compare.description
-    assert "可用 field_paths" in desc
-    assert "custom_meta.<key>" in desc
+    shared_guide = librarian.matrix_compare.shared_guides
+    assert "跨多篇论文按 field_paths 读取结构化字段" in desc
+    assert "custom_meta.<key>" in shared_guide["Librarian Field Paths"]

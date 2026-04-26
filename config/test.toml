@@ -29,6 +29,9 @@ worker_count = 1
 shutdown_timeout = 1.0
 task_max_seconds = 60.0
 
+[librarian]
+top_tags_limit = 8
+
 [llm]
 model = "test-model"
 api_key = ""

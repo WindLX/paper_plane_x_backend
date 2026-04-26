@@ -12,6 +12,7 @@ from typing import NoReturn
 from fastapi import APIRouter, HTTPException, Query, status
 
 from paper_plane_x_backend.api.dependencies import DBDep, TaskManagerDep
+from paper_plane_x_backend.models import SortOrder, TaskSortKey
 from paper_plane_x_backend.schemas import (
     DataProcessTaskListResponse,
     DataProcessTaskResponse,
@@ -75,12 +76,13 @@ async def list_data_process_tasks(
     task_manager: TaskManagerDep,
     offset: int = Query(0, ge=0, description="分页偏移量"),
     limit: int = Query(20, ge=1, le=200, description="每页数量"),
-    sort_order: str = Query("desc", pattern="^(asc|desc)$", description="按 created_at 排序"),
+    sort_order: SortOrder = Query(SortOrder.DESC, description="按 sort_by 排序"),
+    sort_by: TaskSortKey = Query(TaskSortKey.CREATED_AT, description="排序字段"),
 ) -> DataProcessTaskListResponse:
     logger.debug("event=data_process.tasks_list_request_received")
     orchestrator = _build_orchestrator(db, task_manager)
     try:
-        states, counts = orchestrator.list_tasks(sort_order=sort_order)
+        states, counts = orchestrator.list_tasks(sort_order=sort_order, sort_by=sort_by)
     except DataProcessDomainError as exc:
         _raise_as_http(exc)
 

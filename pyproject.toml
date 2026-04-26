@@ -16,12 +16,17 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "debugpy>=1.8.20",
     "httpx>=0.28.0",
     "pyright>=1.1.408",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
     "ruff>=0.15.10",
 ]
+
+[project.scripts]
+app = "paper_plane_x_backend.main:run"
+debug = "paper_plane_x_backend.main:debug"
 
 [build-system]
 requires = ["hatchling"]

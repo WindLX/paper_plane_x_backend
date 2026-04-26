@@ -3,12 +3,12 @@
 定义 REST API 的输入输出数据结构。
 """
 
-from paper_plane_x_backend.schemas.api.common import ErrorResponse, MessageResponse
 from paper_plane_x_backend.schemas.api.agent_trace import (
     AgentTraceQueryRequest,
     AgentTraceQueryResponse,
     AgentTraceResponse,
 )
+from paper_plane_x_backend.schemas.api.common import ErrorResponse, MessageResponse
 from paper_plane_x_backend.schemas.api.data_process import (
     DataProcessManualUpdateRequest,
     DataProcessRequest,
@@ -17,8 +17,9 @@ from paper_plane_x_backend.schemas.api.data_process import (
     DataProcessTaskResponse,
 )
 from paper_plane_x_backend.schemas.api.librarian import (
-    LibrarianConditionGroup,
-    LibrarianConditionPredicate,
+    LibrarianGlobalFinderRequest,
+    LibrarianGlobalFinderResponse,
+    LibrarianGuideResponse,
     LibrarianMatrixRequest,
     LibrarianMatrixResponse,
     LibrarianProjectionRequest,
@@ -32,8 +33,8 @@ from paper_plane_x_backend.schemas.api.paper import (
     PaperResponse,
 )
 from paper_plane_x_backend.schemas.api.project import (
-    ProjectExportRequest,
     ProjectCreateRequest,
+    ProjectExportRequest,
     ProjectListResponse,
     ProjectResponse,
     ProjectUpdateRequest,
@@ -49,8 +50,9 @@ __all__ = [
     "DataProcessTaskListResponse",
     "DataProcessTaskResponse",
     "ErrorResponse",
-    "LibrarianConditionGroup",
-    "LibrarianConditionPredicate",
+    "LibrarianGlobalFinderRequest",
+    "LibrarianGlobalFinderResponse",
+    "LibrarianGuideResponse",
     "LibrarianMatrixRequest",
     "LibrarianMatrixResponse",
     "LibrarianProjectionRequest",

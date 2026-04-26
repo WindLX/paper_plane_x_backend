@@ -9,13 +9,15 @@ from fastapi.responses import FileResponse
 
 from paper_plane_x_backend.api.dependencies import DBDep
 from paper_plane_x_backend.api.routers.librarian import run_search_paper
-from paper_plane_x_backend.models import Paper, Project
+from paper_plane_x_backend.models import (
+    Project,
+    ProjectSortKey,
+    SortOrder,
+)
 from paper_plane_x_backend.schemas import (
     LibrarianUnifiedSearchRequest,
     LibrarianUnifiedSearchResponse,
     MessageResponse,
-    PaperListResponse,
-    PaperResponse,
     ProjectCreateRequest,
     ProjectExportRequest,
     ProjectListResponse,
@@ -92,6 +94,11 @@ async def list_projects(
     db: DBDep,
     offset: int = Query(0, ge=0, description="偏移量"),
     limit: int = Query(20, ge=1, le=100, description="每页数量"),
+    sort_order: SortOrder = Query(SortOrder.DESC, description="按 sort_by 排序"),
+    sort_by: ProjectSortKey = Query(
+        ProjectSortKey.CREATED_AT,
+        description="排序字段，支持 created_at、updated_at、name",
+    ),
 ) -> ProjectListResponse:
     """获取项目列表.
 
@@ -104,7 +111,9 @@ async def list_projects(
         ProjectListResponse: 项目列表响应
     """
     orchestrator = _build_orchestrator(db)
-    projects, total = orchestrator.list_projects(offset=offset, limit=limit)
+    projects, total = orchestrator.list_projects(
+        offset=offset, limit=limit, sort_order=sort_order, sort_by=sort_by
+    )
     items = [_project_to_response(project) for project in projects]
 
     return ProjectListResponse(
@@ -256,86 +265,6 @@ async def export_project(
         path=path_obj,
         media_type="application/zip",
         filename=download_name,
-    )
-
-
-# ==================== Paper Endpoints ====================
-
-
-def _paper_to_response(
-    orchestrator: ProjectOrchestrator,
-    paper: Paper,
-) -> PaperResponse:
-    """将 Paper 模型转换为响应模型."""
-    return PaperResponse(
-        paper_id=paper.paper_id,
-        project_ids=orchestrator.list_paper_project_ids(paper.paper_id),
-        title=paper.title,
-        authors=paper.authors,
-        year=paper.year,
-        publication=paper.publication,
-        doi=paper.doi,
-        custom_meta=paper.custom_meta,
-        raw_pdf_path=paper.raw_pdf_path,
-        raw_pdf_sha256=paper.raw_pdf_sha256,
-        images_paths=paper.images_paths,
-        extraction_status=paper.extraction_status,
-        extraction_fact_check_status=paper.extraction_fact_check_status,
-        analysis_fact_check_status=paper.analysis_fact_check_status,
-        extraction_retry_count=paper.extraction_retry_count,
-        analysis_retry_count=paper.analysis_retry_count,
-        created_at=paper.created_at,
-        updated_at=paper.updated_at,
-    )
-
-
-@router.get(
-    "/{project_id}/papers",
-    response_model=PaperListResponse,
-    summary="列出项目论文",
-    responses={
-        404: {"description": "项目不存在"},
-    },
-)
-async def list_project_papers(
-    project_id: str,
-    db: DBDep,
-    offset: int = Query(0, ge=0, description="偏移量"),
-    limit: int = Query(20, ge=1, le=100, description="每页数量"),
-) -> PaperListResponse:
-    """获取项目的论文列表.
-
-    Args:
-        project_id: 项目 ID
-        db: 数据库实例
-        offset: 分页偏移量
-        limit: 每页数量
-
-    Returns:
-        PaperListResponse: 论文列表响应
-
-    Raises:
-        HTTPException: 项目不存在时抛出 404
-    """
-    orchestrator = _build_orchestrator(db)
-    try:
-        papers, total = orchestrator.list_papers(
-            project_id=project_id,
-            offset=offset,
-            limit=limit,
-        )
-    except ProjectDomainError as exc:
-        _raise_as_http(exc)
-
-    items = [
-        _paper_to_response(orchestrator=orchestrator, paper=paper) for paper in papers
-    ]
-
-    return PaperListResponse(
-        items=items,
-        total=total,
-        offset=offset,
-        limit=limit,
     )
 
 

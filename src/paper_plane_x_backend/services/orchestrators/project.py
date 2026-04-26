@@ -7,15 +7,22 @@ import zipfile
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 from uuid import uuid4
 
 from fastapi import status
 from fastapi.encoders import jsonable_encoder
 
-from paper_plane_x_backend.models import Paper, Project
+from paper_plane_x_backend.models import (
+    Paper,
+    PaperSortKey,
+    Project,
+    ProjectSortKey,
+    SortOrder,
+)
 from paper_plane_x_backend.services.database import Database
 from paper_plane_x_backend.services.paper.repository import PaperRepository
+from paper_plane_x_backend.utils.schema_utils import strip_citations_recursively
 
 logger = logging.getLogger(__name__)
 
@@ -115,13 +122,15 @@ class ProjectOrchestrator:
         *,
         offset: int,
         limit: int,
+        sort_order: SortOrder,
+        sort_by: ProjectSortKey,
     ) -> tuple[list[Project], int]:
         count_result = self.db.fetchone("SELECT COUNT(*) as count FROM projects")
         total = count_result["count"] if count_result else 0
         rows = self.db.fetchall(
-            """
+            f"""
             SELECT * FROM projects
-            ORDER BY created_at DESC
+            ORDER BY {sort_by.value} {sort_order.upper()}
             LIMIT ? OFFSET ?
             """,
             (limit, offset),
@@ -215,6 +224,8 @@ class ProjectOrchestrator:
         project_id: str,
         offset: int,
         limit: int,
+        sort_order: SortOrder,
+        sort_by: PaperSortKey,
     ) -> tuple[list[Paper], int]:
         self._ensure_project_exists(project_id)
         count_result = self.db.fetchone(
@@ -223,17 +234,17 @@ class ProjectOrchestrator:
         )
         total = count_result["count"] if count_result else 0
         rows = self.db.fetchall(
-            """
+            f"""
             SELECT p.*
             FROM papers p
             JOIN paper_projects pp ON pp.paper_id = p.paper_id
             WHERE pp.project_id = ?
-            ORDER BY p.created_at DESC
-            LIMIT ? OFFSET ?
+            ORDER BY p.{sort_by.value} {sort_order.upper()} LIMIT ? OFFSET ?
             """,
             (project_id, limit, offset),
         )
         papers = [Paper.from_db_row(row) for row in rows]
+        papers.sort(key=lambda p: p.created_at, reverse=(sort_order == "desc"))
         logger.info(
             "event=paper.listed project_id=%s offset=%s limit=%s returned=%s total=%s",
             project_id,
@@ -306,21 +317,6 @@ class ProjectOrchestrator:
         )
         return [Paper.from_db_row(row) for row in rows]
 
-    @staticmethod
-    def _strip_citations_recursively(value: Any) -> Any:
-        if isinstance(value, list):
-            return [
-                ProjectOrchestrator._strip_citations_recursively(item) for item in value
-            ]
-        if isinstance(value, dict):
-            cleaned: dict[str, Any] = {}
-            for key, raw in value.items():
-                if key == "citations":
-                    continue
-                cleaned[key] = ProjectOrchestrator._strip_citations_recursively(raw)
-            return cleaned
-        return value
-
     def _paper_detail_payload(self, paper: Paper) -> dict[str, Any]:
         return {
             "paper_id": paper.paper_id,
@@ -352,7 +348,7 @@ class ProjectOrchestrator:
         self,
         *,
         project_id: str,
-        fields: list[str],
+        fields: Sequence[str],
         citations_mode: str,
     ) -> tuple[str, str]:
         project = self.get_project(project_id)
@@ -369,11 +365,12 @@ class ProjectOrchestrator:
                 if field not in full_payload:
                     continue
                 value = full_payload[field]
-                if (
-                    citations_mode == "strip"
-                    and field in {"quick_scan", "synthesis_data", "analysis_report"}
-                ):
-                    value = self._strip_citations_recursively(value)
+                if citations_mode == "strip" and field in {
+                    "quick_scan",
+                    "synthesis_data",
+                    "analysis_report",
+                }:
+                    value = strip_citations_recursively(value)
                 item[field] = value
             export_items.append(jsonable_encoder(item))
 
@@ -451,9 +448,7 @@ class ProjectOrchestrator:
                     if not file_path.is_file() or file_path.is_symlink():
                         continue
                     relative_path = file_path.relative_to(candidate_dir)
-                    arcname = (
-                        f"{base_name}/paper_files/{paper.paper_id}/{relative_path.as_posix()}"
-                    )
+                    arcname = f"{base_name}/paper_files/{paper.paper_id}/{relative_path.as_posix()}"
                     zf.write(file_path, arcname=arcname)
 
         logger.info(

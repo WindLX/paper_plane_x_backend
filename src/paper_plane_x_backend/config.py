@@ -79,6 +79,17 @@ class DataProcessConfig(BaseModel):
     )
 
 
+class LibrarianConfig(BaseModel):
+    """Librarian 运行时配置。"""
+
+    top_tags_limit: int = Field(
+        default=8,
+        ge=1,
+        le=50,
+        description="Global Finder 返回的热门标签数量上限",
+    )
+
+
 class APIConfig(BaseModel):
     """FastAPI 运行时配置。"""
 
@@ -219,6 +230,7 @@ class Settings(BaseSettings):
 
     # Data Process 配置
     data_process: DataProcessConfig = Field(default_factory=DataProcessConfig)
+    librarian: LibrarianConfig = Field(default_factory=LibrarianConfig)
 
     def ensure_directories(self) -> None:
         """确保必要的目录存在."""

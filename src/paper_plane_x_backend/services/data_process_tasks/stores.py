@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator, MutableMapping
 from typing import Any, cast
 
-from paper_plane_x_backend.models import DataProcessTaskStatus
+from paper_plane_x_backend.models import DataProcessTaskStatus, SortOrder, TaskSortKey
 from paper_plane_x_backend.services.data_process_tasks.models import (
     DataProcessTaskState,
 )
@@ -29,7 +29,12 @@ class DataProcessTaskStateStore(ABC):
         """按 task_id 获取任务状态。"""
 
     @abstractmethod
-    def list(self, paper_id: str | None = None) -> list[DataProcessTaskState]:
+    def list(
+        self,
+        paper_id: str | None = None,
+        sort_order: SortOrder = SortOrder.DESC,
+        sort_by: TaskSortKey = TaskSortKey.CREATED_AT,
+    ) -> list[DataProcessTaskState]:
         """列出任务状态。"""
 
 
@@ -52,11 +57,19 @@ class InMemoryDataProcessTaskStateStore(DataProcessTaskStateStore):
     def get(self, task_id: str) -> DataProcessTaskState | None:
         return self._states.get(task_id)
 
-    def list(self, paper_id: str | None = None) -> list[DataProcessTaskState]:
+    def list(
+        self,
+        paper_id: str | None = None,
+        sort_order: SortOrder = SortOrder.DESC,
+        sort_by: TaskSortKey = TaskSortKey.CREATED_AT,
+    ) -> list[DataProcessTaskState]:
         values = list(self._states.values())
         if paper_id is not None:
             values = [state for state in values if state.paper_id == paper_id]
-        values.sort(key=lambda state: state.created_at, reverse=True)
+        values.sort(
+            key=lambda state: getattr(state, sort_by.value),
+            reverse=(sort_order == SortOrder.DESC),
+        )
         return values
 
 
@@ -120,17 +133,22 @@ class SQLiteDataProcessTaskStateStore(DataProcessTaskStateStore):
             return None
         return self._row_to_state(row)
 
-    def list(self, paper_id: str | None = None) -> list[DataProcessTaskState]:
+    def list(
+        self,
+        paper_id: str | None = None,
+        sort_order: SortOrder = SortOrder.DESC,
+        sort_by: TaskSortKey = TaskSortKey.CREATED_AT,
+    ) -> list[DataProcessTaskState]:
         if paper_id is None:
             rows = self._db.fetchall(
-                "SELECT * FROM data_process_tasks ORDER BY created_at DESC"
+                f"SELECT * FROM data_process_tasks ORDER BY {sort_by.value} {sort_order.upper()}",
             )
         else:
             rows = self._db.fetchall(
-                """
+                f"""
                 SELECT * FROM data_process_tasks
                 WHERE paper_id = ?
-                ORDER BY created_at DESC
+                ORDER BY {sort_by.value} {sort_order.upper()}
                 """,
                 (paper_id,),
             )

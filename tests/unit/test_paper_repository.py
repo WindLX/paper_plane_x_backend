@@ -158,7 +158,7 @@ class TestPaperRepository:
 
         paper_ids, total = query_repo.search_paper(
             project_id=None,
-            condition_group={
+            query_group={
                 "logic": "and",
                 "predicates": [
                     {"field": "meta.year", "op": "between", "value": [2023, 2025]},
@@ -208,7 +208,7 @@ class TestPaperRepository:
 
         paper_ids, total = query_repo.search_paper(
             project_id="proj-a",
-            condition_group={
+            query_group={
                 "logic": "or",
                 "predicates": [
                     {"field": "meta.year", "op": "between", "value": [2025, 2030]}
@@ -273,7 +273,7 @@ class TestPaperRepository:
 
         paper_ids, total = query_repo.search_paper(
             project_id=None,
-            condition_group={
+            query_group={
                 "logic": "and",
                 "predicates": [
                     {

@@ -48,6 +48,7 @@ class BaseAgent:
         short_memory_window: int = 50,
         llm_config: LLMConfig | None = None,
         agent_name: str | None = None,
+        tool_context: dict[str, Any] | None = None,
     ):
         if mode == "api" and output_schema is None:
             raise ValueError("output_schema is required when mode='api'")
@@ -58,6 +59,7 @@ class BaseAgent:
         self.save_trace = save_trace
         self.agent_name = agent_name or self.__class__.__name__
         self.trace_ids: list[str] = []
+        self.tool_context = tool_context or {}
 
         self.tool_registry = ToolRegistry()
         if tools:
@@ -79,6 +81,17 @@ class BaseAgent:
                 agent_name=self.agent_name,
             )
         return self.output_schema
+
+    def _get_messages_with_tool_guide(self) -> list[dict[str, Any]]:
+        messages = self.memory.get_messages()
+        shared_guide = self.tool_registry.build_shared_guide_message()
+        if not shared_guide:
+            return messages
+
+        guide_message = {"role": "system", "content": shared_guide}
+        if messages and messages[0].get("role") == "system":
+            return [messages[0], guide_message, *messages[1:]]
+        return [guide_message, *messages]
 
     @staticmethod
     def _sanitize_json_string_escapes(raw: str) -> str:
@@ -503,7 +516,7 @@ class BaseAgent:
                 self.max_steps,
             )
             try:
-                messages = self.memory.get_messages()
+                messages = self._get_messages_with_tool_guide()
                 tools = self.tool_registry.to_openai_format()
                 if tools:
                     response = await self.llm.generate_with_tools(messages, tools)
@@ -532,7 +545,10 @@ class BaseAgent:
                         len(response.tool_calls),
                     )
                     for tc in response.tool_calls:
-                        tool_msg = await self.tool_registry.execute_tool_call(tc)
+                        tool_msg = await self.tool_registry.execute_tool_call(
+                            tc,
+                            context=self.tool_context,
+                        )
                         self.memory.append_tool_message(tool_msg)
                     continue
 
