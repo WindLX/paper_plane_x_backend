@@ -18,25 +18,3 @@ to_file = false
 file_path = "./data/test/logs/backend.test.log"
 file_max_bytes = 1048576
 file_backup_count = 1
-
-[mineru]
-base_url = "http://localhost:7860"
-output_dir = "./data/test/papers"
-
-[data_process]
-max_retries = 1
-worker_count = 1
-shutdown_timeout = 1.0
-task_max_seconds = 60.0
-
-[librarian]
-top_tags_limit = 8
-
-[llm]
-model = "test-model"
-api_key = ""
-temperature = 0.0
-max_tokens = 2048
-timeout = 30.0
-thinking_enabled = false
-is_vlm = false

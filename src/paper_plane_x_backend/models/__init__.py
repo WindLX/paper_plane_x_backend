@@ -2,6 +2,7 @@
 
 from paper_plane_x_backend.models.core import (
     AgentTrace,
+    DataProcessTask,
     DataProcessTaskStatus,
     ExtractionStatus,
     FactCheckStatus,
@@ -17,6 +18,7 @@ from paper_plane_x_backend.models.sort import (
 
 __all__ = [
     "AgentTrace",
+    "DataProcessTask",
     "DataProcessTaskStatus",
     "ExtractionStatus",
     "FactCheckStatus",

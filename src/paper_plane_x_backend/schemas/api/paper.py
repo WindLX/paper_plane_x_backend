@@ -39,6 +39,7 @@ class PaperResponse(BaseModel):
         default=0, description="Extraction 分支重试次数"
     )
     analysis_retry_count: int = Field(default=0, description="Analysis 分支重试次数")
+    agent_note: str | None = Field(default=None, description="Agent 生成的论文笔记")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
 
@@ -52,6 +53,47 @@ class PaperListResponse(BaseModel):
     total: int = Field(..., description="总数")
     offset: int = Field(..., description="偏移量")
     limit: int = Field(..., description="每页数量")
+
+
+class PaperStatusCountResponse(BaseModel):
+    """论文状态统计响应。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    total: int = Field(..., description="论文总数")
+    extraction_pending: int = Field(default=0, description="提取状态 PENDING 数量")
+    extraction_processing: int = Field(
+        default=0, description="提取状态 PROCESSING 数量"
+    )
+    extraction_completed: int = Field(default=0, description="提取状态 COMPLETED 数量")
+    extraction_human_completed: int = Field(
+        default=0, description="提取状态 HUMAN_COMPLETED 数量"
+    )
+    extraction_failed: int = Field(default=0, description="提取状态 FAILED 数量")
+    extraction_fact_check_pending: int = Field(
+        default=0, description="Extraction 核查状态 PENDING 数量"
+    )
+    extraction_fact_check_passed: int = Field(
+        default=0, description="Extraction 核查状态 PASSED 数量"
+    )
+    extraction_fact_check_human_passed: int = Field(
+        default=0, description="Extraction 核查状态 HUMAN_PASSED 数量"
+    )
+    extraction_fact_check_failed: int = Field(
+        default=0, description="Extraction 核查状态 FAILED 数量"
+    )
+    analysis_fact_check_pending: int = Field(
+        default=0, description="Analysis 核查状态 PENDING 数量"
+    )
+    analysis_fact_check_passed: int = Field(
+        default=0, description="Analysis 核查状态 PASSED 数量"
+    )
+    analysis_fact_check_human_passed: int = Field(
+        default=0, description="Analysis 核查状态 HUMAN_PASSED 数量"
+    )
+    analysis_fact_check_failed: int = Field(
+        default=0, description="Analysis 核查状态 FAILED 数量"
+    )
 
 
 class PaperDetailResponse(PaperResponse):
@@ -73,3 +115,4 @@ class PaperDetailResponse(PaperResponse):
         default=None,
         description="Analysis 事实核查结果",
     )
+    agent_note: str | None = Field(default=None, description="Agent 生成的论文笔记")

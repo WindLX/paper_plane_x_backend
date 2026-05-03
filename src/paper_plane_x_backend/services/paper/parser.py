@@ -8,8 +8,8 @@ import logging
 from pathlib import Path
 from typing import Callable
 
-from paper_plane_x_backend.config import settings
 from paper_plane_x_backend.models import Paper
+from paper_plane_x_backend.services.app_settings import get_app_settings_repo
 from paper_plane_x_backend.services.mineru import MinerUClient
 
 logger = logging.getLogger(__name__)
@@ -27,14 +27,15 @@ class PaperParser:
     """论文内容解析器."""
 
     def __init__(self, mineru_client: MinerUClient | None = None) -> None:
+        app_settings = get_app_settings_repo().get()
         self.mineru = mineru_client or MinerUClient(
-            base_url=settings.mineru.base_url,
-            output_dir=settings.mineru.output_dir,
+            base_url=app_settings.mineru.base_url,
+            output_dir=app_settings.mineru.output_dir,
         )
 
     async def parse(self, pdf_path: Path, paper_id: str) -> tuple[str, list[Path]]:
         """使用 MinerU 解析 PDF，返回 markdown 内容和图片路径列表."""
-        output_dir = settings.mineru.output_dir / paper_id
+        output_dir = get_app_settings_repo().get().mineru.output_dir / paper_id
         output_dir.mkdir(parents=True, exist_ok=True)
         result = await self.mineru.parse_pdf(
             file_path=pdf_path,

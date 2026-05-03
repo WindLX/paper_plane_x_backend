@@ -12,13 +12,14 @@ from paper_plane_x_backend.models import (
     PaperSortKey,
     SortOrder,
 )
-from paper_plane_x_backend.schemas import (
+from paper_plane_x_backend.schemas.api import (
     DataProcessManualUpdateRequest,
     DataProcessSubmitResponse,
     MessageResponse,
     PaperDetailResponse,
     PaperListResponse,
     PaperResponse,
+    PaperStatusCountResponse,
 )
 from paper_plane_x_backend.services.orchestrators.paper import (
     PaperDomainError,
@@ -66,6 +67,7 @@ def _to_paper_response(orchestrator: PaperOrchestrator, paper: Paper) -> PaperRe
         analysis_fact_check_status=paper.analysis_fact_check_status,
         extraction_retry_count=paper.extraction_retry_count,
         analysis_retry_count=paper.analysis_retry_count,
+        agent_note=paper.agent_note,
         created_at=paper.created_at,
         updated_at=paper.updated_at,
     )
@@ -103,6 +105,11 @@ async def create_paper(
     doi: str | None = Form(default=None, description="DOI"),
     custom_meta: str | None = Form(default=None, description="自定义 JSON 字符串"),
 ) -> DataProcessSubmitResponse:
+    logger.info(
+        "event=paper.create_request_received filename=%s title=%s",
+        pdf_file.filename,
+        title,
+    )
     orchestrator = _build_orchestrator(db, task_manager)
     try:
         task_state, paper_id = await orchestrator.create_paper_and_start_processing(
@@ -131,20 +138,6 @@ async def create_paper(
     )
 
 
-@router.get("/{paper_id}", response_model=PaperDetailResponse, summary="获取论文详情")
-async def get_paper(
-    paper_id: str,
-    db: DBDep,
-    task_manager: TaskManagerDep,
-) -> PaperDetailResponse:
-    orchestrator = _build_orchestrator(db, task_manager)
-    try:
-        paper = orchestrator.get_paper(paper_id=paper_id)
-    except PaperDomainError as exc:
-        _raise_as_http(exc)
-    return _to_paper_detail_response(orchestrator, paper)
-
-
 @router.post("/batch-get", response_model=PaperListResponse, summary="批量获取论文详情")
 async def batch_get_papers(
     paper_ids: list[str],
@@ -158,6 +151,12 @@ async def batch_get_papers(
         description="排序字段，支持 created_at、updated_at、name",
     ),
 ) -> PaperListResponse:
+    logger.debug(
+        "event=paper.batch_get_request_received ids_count=%s offset=%s limit=%s",
+        len(paper_ids),
+        offset,
+        limit,
+    )
     orchestrator = _build_orchestrator(db, task_manager)
     papers, total = orchestrator.batch_get_papers(
         paper_ids=paper_ids,
@@ -174,6 +173,36 @@ async def batch_get_papers(
     )
 
 
+@router.get(
+    "/status-counts",
+    response_model=PaperStatusCountResponse,
+    summary="获取全部论文状态统计",
+)
+async def get_paper_status_counts(
+    db: DBDep,
+    task_manager: TaskManagerDep,
+) -> PaperStatusCountResponse:
+    logger.debug("event=paper.status_counts_request_received")
+    orchestrator = _build_orchestrator(db, task_manager)
+    counts = orchestrator.count_paper_statuses()
+    return PaperStatusCountResponse(**counts)
+
+
+@router.get("/{paper_id}", response_model=PaperDetailResponse, summary="获取论文详情")
+async def get_paper(
+    paper_id: str,
+    db: DBDep,
+    task_manager: TaskManagerDep,
+) -> PaperDetailResponse:
+    logger.debug("event=paper.get_request_received paper_id=%s", paper_id)
+    orchestrator = _build_orchestrator(db, task_manager)
+    try:
+        paper = orchestrator.get_paper(paper_id=paper_id)
+    except PaperDomainError as exc:
+        _raise_as_http(exc)
+    return _to_paper_detail_response(orchestrator, paper)
+
+
 @router.patch("/{paper_id}", response_model=PaperDetailResponse, summary="手动更新论文")
 async def manual_update_paper(
     paper_id: str,
@@ -181,6 +210,7 @@ async def manual_update_paper(
     db: DBDep,
     task_manager: TaskManagerDep,
 ) -> PaperDetailResponse:
+    logger.info("event=paper.manual_update_request_received paper_id=%s", paper_id)
     orchestrator = _build_orchestrator(db, task_manager)
     try:
         paper = orchestrator.update_paper(
@@ -199,6 +229,7 @@ async def manual_update_paper(
             extraction_fact_check_result=request.extraction_fact_check_result,
             analysis_fact_check_status=request.analysis_fact_check_status,
             analysis_fact_check_result=request.analysis_fact_check_result,
+            agent_note=request.agent_note,
         )
     except PaperDomainError as exc:
         _raise_as_http(exc)
@@ -217,6 +248,11 @@ async def reprocess_paper(
     task_manager: TaskManagerDep,
     pdf_file: UploadFile = File(..., description="重新上传的原始 PDF 文件"),
 ) -> DataProcessSubmitResponse:
+    logger.info(
+        "event=paper.reprocess_request_received paper_id=%s filename=%s",
+        paper_id,
+        pdf_file.filename,
+    )
     orchestrator = _build_orchestrator(db, task_manager)
     try:
         task_id = await orchestrator.reprocess_paper(
@@ -242,6 +278,7 @@ async def delete_paper(
     db: DBDep,
     task_manager: TaskManagerDep,
 ) -> MessageResponse:
+    logger.info("event=paper.delete_request_received paper_id=%s", paper_id)
     orchestrator = _build_orchestrator(db, task_manager)
     try:
         orchestrator.delete_paper(paper_id=paper_id)

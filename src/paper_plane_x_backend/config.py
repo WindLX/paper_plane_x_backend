@@ -2,7 +2,6 @@
 
 import os
 from pathlib import Path
-from typing import Any
 
 from dotenv import dotenv_values
 from pydantic import BaseModel, Field
@@ -53,43 +52,6 @@ class LogConfig(BaseModel):
     file_backup_count: int = Field(default=5, description="日志文件轮转数量")
 
 
-class MinerUConfig(BaseModel):
-    """MinerU 配置."""
-
-    base_url: str = Field(
-        default="http://localhost:7860", description="MinerU API 地址"
-    )
-    output_dir: Path = Field(
-        default=Path("./data/papers"), description="MinerU 服务端输出目录参数"
-    )
-
-
-class DataProcessConfig(BaseModel):
-    """Data Process 运行时配置."""
-
-    max_retries: int = Field(default=3, description="事实核查失败最大重试次数")
-    worker_count: int = Field(default=5, description="后台数据处理 worker 数量")
-    shutdown_timeout: float = Field(
-        default=5.0,
-        description="后台数据处理 worker 池关闭超时时间（秒）",
-    )
-    task_max_seconds: float = Field(
-        default=600.0,
-        description="单个 data-process 任务最大执行时长（秒）",
-    )
-
-
-class LibrarianConfig(BaseModel):
-    """Librarian 运行时配置。"""
-
-    top_tags_limit: int = Field(
-        default=8,
-        ge=1,
-        le=50,
-        description="Global Finder 返回的热门标签数量上限",
-    )
-
-
 class APIConfig(BaseModel):
     """FastAPI 运行时配置。"""
 
@@ -100,70 +62,19 @@ class APIConfig(BaseModel):
         default_factory=lambda: ["*"],
         description="允许的 CORS origins",
     )
+    ssl_certfile: Path | None = Field(
+        default=None, description="SSL 证书文件路径（启用 HTTPS）"
+    )
+    ssl_keyfile: Path | None = Field(
+        default=None, description="SSL 密钥文件路径（启用 HTTPS）"
+    )
     console_dist_dir: Path = Field(
         default=Path("./data/console"),
         description="前端构建产物目录",
     )
 
 
-class LLMConfig(BaseModel):
-    """LLM 配置模型.
-
-    支持为不同 Agent 配置不同的 LLM 参数。
-    """
-
-    model: str = Field(default="gpt-4o", description="模型名称")
-    api_key: str | None = Field(default=None, description="API 密钥")
-    base_url: str | None = Field(
-        default=None,
-        description="API 基础 URL (VLLM: http://localhost:8000/v1)",
-    )
-    temperature: float = Field(default=0.7, description="采样温度")
-    max_tokens: int | None = Field(default=8192, description="最大生成 token 数")
-    timeout: float = Field(default=180.0, description="请求超时时间（秒）")
-    custom_headers: dict[str, str] | None = Field(
-        default=None, description="自定义 HTTP 请求头"
-    )
-    thinking_enabled: bool = Field(
-        default=False,
-        description="是否启用模型思考模式（由 LLMClient 映射到兼容参数）",
-    )
-    reasoning_effort: str | None = Field(
-        default=None,
-        description="推理强度参数（如 OpenAI reasoning_effort，按模型能力生效）",
-    )
-    extra_body: dict[str, Any] | None = Field(
-        default=None,
-        description="额外请求体参数，用于透传厂商私有扩展",
-    )
-    is_vlm: bool = Field(
-        default=False,
-        description="是否为视觉模型（启用多模态消息处理）",
-    )
-
-
-class AgentLLMConfigs(BaseModel):
-    """各 Agent 的 LLM 配置.
-
-    每个 Agent 可以独立配置 LLM 参数，未配置则使用全局默认。
-    """
-
-    # Data Process Agents
-    extraction: LLMConfig | None = Field(
-        default=None, description="ExtractionAgent 配置"
-    )
-    analysis: LLMConfig | None = Field(default=None, description="AnalysisAgent 配置")
-    fact_check: LLMConfig | None = Field(
-        default=None, description="FactCheckAgent 配置"
-    )
-
-    # Survey Agents
-    planner: LLMConfig | None = Field(default=None, description="PlannerAgent 配置")
-    writer: LLMConfig | None = Field(default=None, description="WriterAgent 配置")
-    reviewer: LLMConfig | None = Field(default=None, description="ReviewerAgent 配置")
-
-
-class Settings(BaseSettings):
+class ServerConfig(BaseSettings):
     """应用配置类."""
 
     model_config = SettingsConfigDict(
@@ -219,25 +130,11 @@ class Settings(BaseSettings):
     database_path: Path = Path("./data/app.db")
     prompts_dir: Path = Path("./prompts")
 
-    # LLM 全局默认配置
-    llm: LLMConfig = Field(default_factory=LLMConfig)
-
-    # 各 Agent 独立 LLM 配置
-    agent_llm: AgentLLMConfigs = Field(default_factory=AgentLLMConfigs)
-
-    # MinerU 配置
-    mineru: MinerUConfig = Field(default_factory=MinerUConfig)
-
-    # Data Process 配置
-    data_process: DataProcessConfig = Field(default_factory=DataProcessConfig)
-    librarian: LibrarianConfig = Field(default_factory=LibrarianConfig)
-
     def ensure_directories(self) -> None:
         """确保必要的目录存在."""
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.api.console_dist_dir.mkdir(parents=True, exist_ok=True)
-        self.mineru.output_dir.mkdir(parents=True, exist_ok=True)
         self.log.file_path.parent.mkdir(parents=True, exist_ok=True)
 
     def get_prompt_path(self, group: str, filename: str) -> Path:
@@ -270,39 +167,7 @@ class Settings(BaseSettings):
             raise FileNotFoundError(f"Prompt file not found: {prompt_path}")
         return prompt_path.read_text(encoding="utf-8")
 
-    def get_agent_llm_config(self, agent_name: str) -> LLMConfig:
-        """获取指定 Agent 的 LLM 配置.
 
-        优先使用 Agent 特定配置，未设置则返回全局默认配置。
-
-        Args:
-            agent_name: Agent 名称 (extraction, analysis, fact_check, planner, writer, reviewer)
-
-        Returns:
-            LLMConfig: LLM 配置
-        """
-        agent_configs = {
-            "extraction": self.agent_llm.extraction,
-            "analysis": self.agent_llm.analysis,
-            "fact_check": self.agent_llm.fact_check,
-            "planner": self.agent_llm.planner,
-            "writer": self.agent_llm.writer,
-            "reviewer": self.agent_llm.reviewer,
-        }
-
-        agent_config = agent_configs.get(agent_name)
-        if agent_config is not None:
-            # 合并配置：Agent 特定值覆盖全局默认值
-            global_config = self.llm.model_dump()
-            # 仅使用显式设置的字段，避免 Agent 默认值覆盖全局 llm 配置。
-            agent_overrides = agent_config.model_dump(
-                exclude_unset=True,
-                exclude_none=True,
-            )
-            return LLMConfig(**{**global_config, **agent_overrides})
-
-        return self.llm
-
-
-# 全局配置实例
-settings = Settings()
+# 全局配置实例（向后兼容，仍导出为 settings）
+server_config = ServerConfig()
+settings = server_config

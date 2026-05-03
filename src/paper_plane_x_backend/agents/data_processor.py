@@ -12,8 +12,9 @@ from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel
 
-from paper_plane_x_backend.config import LLMConfig, settings
+from paper_plane_x_backend.config import settings
 from paper_plane_x_backend.core.agent_runtime import BaseAgent
+from paper_plane_x_backend.models.app_settings import LLMConfig
 from paper_plane_x_backend.schemas.agent_io.data_processor import (
     AnalysisAgentOutput,
     AnalysisAgentUserInput,
@@ -22,6 +23,7 @@ from paper_plane_x_backend.schemas.agent_io.data_processor import (
     FactCheckAgentOutput,
     FactCheckAgentUserInput,
 )
+from paper_plane_x_backend.services.app_settings import resolve_agent_llm_config
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +38,13 @@ class StructuredDataProcessorAgent(Generic[TOutput]):
     llm_config_name: str
     prompt_filename: str
 
-    def __init__(self, llm_config: LLMConfig | None = None) -> None:
-        self.llm_config = llm_config or settings.get_agent_llm_config(
-            self.llm_config_name
-        )
+    def __init__(
+        self,
+        llm_config: LLMConfig | None = None,
+        caller: str | None = None,
+        caller_id: str | None = None,
+    ) -> None:
+        self.llm_config = llm_config or resolve_agent_llm_config(self.llm_config_name)
 
         self._agent = BaseAgent(
             output_schema=self.output_schema,
@@ -49,6 +54,8 @@ class StructuredDataProcessorAgent(Generic[TOutput]):
             save_trace=True,
             llm_config=self.llm_config,
             agent_name=self.agent_name,
+            caller=caller,
+            caller_id=caller_id,
         )
 
     def _build_system_prompt(self) -> str:
@@ -159,11 +166,20 @@ class DataProcessorAgentGroup:
         fact_check_agent1: FactCheckAgent | None = None,
         analysis_agent: AnalysisAgent | None = None,
         fact_check_agent2: FactCheckAgent | None = None,
+        caller_id: str | None = None,
     ) -> None:
-        self.extraction_agent = extraction_agent or ExtractionAgent()
-        self.fact_check_agent1 = fact_check_agent1 or FactCheckAgent()
-        self.analysis_agent = analysis_agent or AnalysisAgent()
-        self.fact_check_agent2 = fact_check_agent2 or FactCheckAgent()
+        self.extraction_agent = extraction_agent or ExtractionAgent(
+            caller="data_process", caller_id=caller_id
+        )
+        self.fact_check_agent1 = fact_check_agent1 or FactCheckAgent(
+            caller="data_process", caller_id=caller_id
+        )
+        self.analysis_agent = analysis_agent or AnalysisAgent(
+            caller="data_process", caller_id=caller_id
+        )
+        self.fact_check_agent2 = fact_check_agent2 or FactCheckAgent(
+            caller="data_process", caller_id=caller_id
+        )
         self.extraction_trace_ids: list[str] = []
         self.analysis_trace_ids: list[str] = []
         self.extraction_fact_check_trace_ids: list[str] = []
@@ -217,7 +233,7 @@ class DataProcessorAgentGroup:
                 self.fact_check_agent1.trace_ids
             )
             if fact_check_result is None:
-                raise RuntimeError("Fact check result is empty during fact check loop")
+                raise RuntimeError("Fact check result is empty after fact check loop")
 
             fact_check_message = {"fact_check_result": fact_check_result.model_dump()}
             self.extraction_agent.append_assistant_message(
@@ -299,9 +315,7 @@ class DataProcessorAgentGroup:
             fact_check_result = await self.fact_check_agent2.run()
             self.analysis_fact_check_trace_ids.extend(self.fact_check_agent2.trace_ids)
             if fact_check_result is None:
-                raise RuntimeError(
-                    "Fact check result is empty during analysis fact check loop"
-                )
+                raise RuntimeError("Fact check result is empty after fact check loop")
 
             fact_check_message = {"fact_check_result": fact_check_result.model_dump()}
             self.analysis_agent.append_assistant_message(

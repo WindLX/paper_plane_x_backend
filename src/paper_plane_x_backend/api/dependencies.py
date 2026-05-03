@@ -9,6 +9,10 @@ from paper_plane_x_backend.services import (
     Database,
     get_db,
 )
+from paper_plane_x_backend.services.app_settings import (
+    AppSettingsRepository,
+    get_app_settings_repo,
+)
 from paper_plane_x_backend.services.data_process_tasks.lifecycle import (
     get_data_process_task_manager,
 )
@@ -37,6 +41,14 @@ def get_task_manager() -> DataProcessTaskManager:
     return task_manager
 
 
+def get_app_settings() -> AppSettingsRepository:
+    """获取应用动态配置仓库单例依赖。"""
+    repo = get_app_settings_repo()
+    logger.debug("event=api.app_settings_dependency_resolved")
+    return repo
+
+
 # 类型别名，用于路由函数参数注解
 DBDep = Annotated[Database, Depends(get_database)]
 TaskManagerDep = Annotated[DataProcessTaskManager, Depends(get_task_manager)]
+AppSettingsDep = Annotated[AppSettingsRepository, Depends(get_app_settings)]

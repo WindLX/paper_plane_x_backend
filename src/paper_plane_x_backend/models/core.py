@@ -52,6 +52,7 @@ class Project(BaseModel):
     project_id: str = Field(..., description="唯一标识 (UUID)")
     name: str = Field(..., min_length=1, max_length=200, description="项目名称")
     description: str | None = Field(default=None, description="项目描述")
+    agent_summary: str | None = Field(default=None, description="Agent 生成的项目总结")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
     operation_logs: list[dict[str, Any]] = Field(
@@ -175,6 +176,12 @@ class Paper(BaseModel):
         description="Analysis 分支事实核查结果 (FactCheckAgentOutput 结构)",
     )
 
+    # Agent 笔记
+    agent_note: str | None = Field(
+        default=None,
+        description="Agent 生成的论文笔记",
+    )
+
     # 重试计数
     extraction_retry_count: int = Field(
         default=0,
@@ -201,18 +208,6 @@ class Paper(BaseModel):
         # SQLite 返回字符串，需要在 strict 模式下显式转换为枚举
         if isinstance(data.get("extraction_status"), str):
             data["extraction_status"] = ExtractionStatus(data["extraction_status"])
-
-        # 兼容旧列名: fact_check_* -> extraction_fact_check_*
-        if (
-            data.get("extraction_fact_check_status") is None
-            and data.get("fact_check_status") is not None
-        ):
-            data["extraction_fact_check_status"] = data["fact_check_status"]
-        if (
-            data.get("extraction_fact_check_result") is None
-            and data.get("fact_check_result") is not None
-        ):
-            data["extraction_fact_check_result"] = data["fact_check_result"]
 
         if isinstance(data.get("extraction_fact_check_status"), str):
             data["extraction_fact_check_status"] = FactCheckStatus(
@@ -245,9 +240,6 @@ class Paper(BaseModel):
             ):
                 data[field] = []
 
-        data.pop("fact_check_status", None)
-        data.pop("fact_check_result", None)
-
         return cls.model_validate(data)
 
     def to_db_dict(self) -> dict[str, Any]:
@@ -276,8 +268,8 @@ class AgentTrace(BaseModel):
 
     trace_id: str = Field(..., description="唯一标识 (UUID)")
     agent_name: str = Field(..., description="Agent 名称")
-    messages: list[dict[str, Any]] | None = Field(
-        default=None, description="完整消息历史"
+    messages: list[dict[str, Any]] = Field(
+        default_factory=list, description="完整消息历史"
     )
     llm_model: str | None = Field(default=None, description="本次调用的模型标识")
     prompt_tokens: int | None = Field(default=None, description="输入 token 用量")
@@ -287,7 +279,34 @@ class AgentTrace(BaseModel):
         default=None,
         description="原始 usage 信息（兼容不同 provider 字段）",
     )
+    caller: str | None = Field(default=None, description="调用方标识")
+    caller_id: str | None = Field(default=None, description="调用方业务 ID")
     created_at: datetime = Field(..., description="创建时间")
+
+    @classmethod
+    def from_db_row(cls, row: dict[str, Any]) -> "AgentTrace":
+        """从数据库行创建模型实例."""
+        data = dict(row)
+
+        messages_value = data.get("messages")
+        if messages_value and isinstance(messages_value, str):
+            parsed_messages = json.loads(messages_value)
+            if isinstance(parsed_messages, list):
+                parsed_items = cast(list[object], parsed_messages)
+                data["messages"] = [
+                    item for item in parsed_items if isinstance(item, dict)
+                ]
+            else:
+                data["messages"] = []
+        usage_payload_value = data.get("usage_payload")
+        if usage_payload_value and isinstance(usage_payload_value, str):
+            parsed_usage_payload = json.loads(usage_payload_value)
+            if isinstance(parsed_usage_payload, dict):
+                data["usage_payload"] = parsed_usage_payload
+            else:
+                data["usage_payload"] = None
+
+        return cls.model_validate(data)
 
     def to_db_dict(self) -> dict[str, Any]:
         """转换为数据库插入格式."""
@@ -296,6 +315,96 @@ class AgentTrace(BaseModel):
         for field in [
             "messages",
             "usage_payload",
+        ]:
+            if data.get(field) is not None:
+                data[field] = json.dumps(data[field], ensure_ascii=False)
+        return data
+
+
+class DataProcessTask(BaseModel):
+    """后台 data-process 任务模型."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    task_id: str = Field(..., description="唯一标识 (UUID)")
+    paper_id: str | None = Field(default=None, description="相关论文 ID")
+    payload: dict[str, Any] | None = Field(
+        default=None,
+        description="任务相关的任意数据负载",
+    )
+    status: DataProcessTaskStatus = Field(
+        default=DataProcessTaskStatus.QUEUED,
+        description="任务状态",
+    )
+    created_at: datetime = Field(..., description="创建时间")
+    started_at: datetime | None = Field(default=None, description="开始时间")
+    finished_at: datetime | None = Field(default=None, description="结束时间")
+    error: str | None = Field(default=None, description="错误信息（如果有）")
+    retry_of_task_id: str | None = Field(
+        default=None,
+        description="如果是重试任务，则指向被重试的原任务 ID",
+    )
+    extraction_trace_ids: list[str] | None = Field(
+        default=None,
+        description="与 Extraction 分支相关的 AgentTrace ID 列表",
+    )
+    analysis_trace_ids: list[str] | None = Field(
+        default=None,
+        description="与 Analysis 分支相关的 AgentTrace ID 列表",
+    )
+    extraction_fact_check_trace_ids: list[str] | None = Field(
+        default=None,
+        description="与 Extraction 分支事实核查相关的 AgentTrace ID 列表",
+    )
+    analysis_fact_check_trace_ids: list[str] | None = Field(
+        default=None,
+        description="与 Analysis 分支事实核查相关的 AgentTrace ID 列表",
+    )
+
+    @classmethod
+    def from_db_row(cls, row: dict[str, Any]) -> "DataProcessTask":
+        """从数据库行创建模型实例."""
+        data = dict(row)
+
+        # SQLite 返回字符串，需要在 strict 模式下显式转换为枚举
+        if isinstance(data.get("status"), str):
+            data["status"] = DataProcessTaskStatus(data["status"])
+
+        # 解析 JSON 字段
+        json_fields = [
+            "payload",
+            "extraction_trace_ids",
+            "analysis_trace_ids",
+            "extraction_fact_check_trace_ids",
+            "analysis_fact_check_trace_ids",
+        ]
+        for field in json_fields:
+            if data.get(field) and isinstance(data[field], str):
+                data[field] = json.loads(data[field])
+            elif (
+                field
+                in {
+                    "extraction_trace_ids",
+                    "analysis_trace_ids",
+                    "extraction_fact_check_trace_ids",
+                    "analysis_fact_check_trace_ids",
+                }
+                and data.get(field) is None
+            ):
+                data[field] = None
+
+        return cls.model_validate(data)
+
+    def to_db_dict(self) -> dict[str, Any]:
+        """转换为数据库插入格式."""
+        data = self.model_dump()
+        # 序列化 JSON 字段
+        for field in [
+            "payload",
+            "extraction_trace_ids",
+            "analysis_trace_ids",
+            "extraction_fact_check_trace_ids",
+            "analysis_fact_check_trace_ids",
         ]:
             if data.get(field) is not None:
                 data[field] = json.dumps(data[field], ensure_ascii=False)

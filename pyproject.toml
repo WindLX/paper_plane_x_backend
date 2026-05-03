@@ -7,11 +7,14 @@ authors = [{ name = "windlx", email = "1418043337@qq.com" }]
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.12.5",
-    "uvicorn>=0.44.0",
-    "fastapi[standard]>=0.135.3",
-    "chromadb>=1.5.7",
-    "litellm>=1.83.4",
-    "pydantic-settings>=2.13.1",
+    "uvicorn>=0.46.0",
+    "fastapi[standard]>=0.136.1",
+    "chromadb>=1.5.8",
+    "litellm>=1.83.14",
+    "pydantic-settings>=2.14.0",
+    "jinja2>=3.1.6",
+    "httpx>=0.28.1",
+    "rtoml>=0.13.0",
 ]
 
 [dependency-groups]

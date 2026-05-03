@@ -158,12 +158,12 @@ class ExtractionAgentUserInput(BaseModel):
 
 
 class ExtractionAgentOutput(BaseModel):
-    quick_scan: QuickScan
-    synthesis_data: SynthesisData
+    quick_scan: QuickScan = Field(..., description="快速扫描结果")
+    synthesis_data: SynthesisData = Field(..., description="深度综述数据")
 
 
 class AnalysisAgentUserInput(BaseModel):
-    md_content: str
+    md_content: str = Field(..., description="原始 Markdown 文本内容")
     images: list[str] = Field(
         default_factory=list,
         description="原始 Markdown 中提取的图片数据列表，元素是 base64 编码的图片数据",
@@ -171,11 +171,11 @@ class AnalysisAgentUserInput(BaseModel):
 
 
 class AnalysisAgentOutput(BaseModel):
-    analysis_report: AnalysisReport
+    analysis_report: AnalysisReport = Field(..., description="理论分析报告")
 
 
 class FactCheckAgentUserInput(BaseModel):
-    md_content: str
+    md_content: str = Field(..., description="原始 Markdown 文本内容")
     images: list[str] = Field(
         default_factory=list,
         description="原始 Markdown 中提取的图片数据列表，元素是 base64 编码的图片数据",

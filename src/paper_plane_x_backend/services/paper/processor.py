@@ -67,10 +67,11 @@ class PaperProcessor:
         repo: PaperRepository,
         parser: PaperParser | None = None,
         agent_group: DataProcessorAgentGroup | None = None,
+        caller_id: str | None = None,
     ) -> None:
         self.repo = repo
         self.parser = parser or PaperParser()
-        self.agent_group = agent_group or DataProcessorAgentGroup()
+        self.agent_group = agent_group or DataProcessorAgentGroup(caller_id=caller_id)
 
     def _log_stage(self, paper_id: str, stage: str, detail: str) -> None:
         logger.info(

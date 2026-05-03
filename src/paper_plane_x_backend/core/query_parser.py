@@ -5,7 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from paper_plane_x_backend.services.paper.repository import PaperRepositoryError
+
+class LibrarianQueryError(Exception):
+    """Query 表达式解析异常。"""
+
+    def __init__(self, message: str, error_code: str = "invalid_query_expr") -> None:
+        super().__init__(message)
+        self.message = message
+        self.error_code = error_code
 
 
 @dataclass(frozen=True)
@@ -62,9 +69,8 @@ class _Tokenizer:
             if ch.isalpha() or ch == "_":
                 tokens.append(self._consume_identifier())
                 continue
-            raise PaperRepositoryError(
+            raise LibrarianQueryError(
                 f"Unexpected character '{ch}' at position {self.index}",
-                error_code="invalid_query_expr",
             )
 
         tokens.append(Token("EOF", "", self.length))
@@ -92,9 +98,8 @@ class _Tokenizer:
             chars.append(ch)
             self.index += 1
 
-        raise PaperRepositoryError(
+        raise LibrarianQueryError(
             f"Unterminated string starting at position {start}",
-            error_code="invalid_query_expr",
         )
 
     def _consume_number(self) -> Token:
@@ -198,9 +203,8 @@ class _Parser:
     def _expect(self, kind: str) -> Token:
         token = self._current()
         if token.kind != kind:
-            raise PaperRepositoryError(
+            raise LibrarianQueryError(
                 f"Expected {kind} at position {token.position}, got {token.kind}",
-                error_code="invalid_query_expr",
             )
         self.index += 1
         return token
@@ -209,9 +213,8 @@ class _Parser:
         token = self._current()
         if token.kind not in kinds:
             kinds_text = ", ".join(sorted(kinds))
-            raise PaperRepositoryError(
+            raise LibrarianQueryError(
                 f"Expected one of [{kinds_text}] at position {token.position}, got {token.kind}",
-                error_code="invalid_query_expr",
             )
         self.index += 1
         return token
@@ -258,11 +261,41 @@ def _ast_to_query_group(node: AstNode) -> dict[str, Any]:
 def parse_librarian_query_expr(query_expr: str) -> dict[str, Any]:
     normalized = query_expr.strip()
     if not normalized:
-        raise PaperRepositoryError(
-            "query_expr cannot be empty",
-            error_code="invalid_query_expr",
-        )
+        raise LibrarianQueryError("query_expr cannot be empty")
 
     tokens = _Tokenizer(normalized).tokenize()
     ast = _Parser(tokens).parse()
     return _ast_to_query_group(ast)
+
+
+def parse_librarian_query_expr_or_fallback(query_expr: str) -> dict[str, Any]:
+    """尝试解析 DSL 查询表达式；失败时退化为简单模式搜索。
+
+    简单模式会在所有高级搜索支持的文本字段中执行 CONTAINS 匹配，
+    任意字段包含用户输入字符串即视为命中（OR 逻辑）。
+    """
+    try:
+        return parse_librarian_query_expr(query_expr)
+    except LibrarianQueryError:
+        text = query_expr.strip()
+        return {
+            "logic": "OR",
+            "predicates": [
+                {
+                    "field": field,
+                    "op": "CONTAINS",
+                    "value": text,
+                }
+                for field in [
+                    "meta.title",
+                    "meta.authors",
+                    "meta.publication",
+                    "meta.doi",
+                    "md_content",
+                    "quick_scan",
+                    "synthesis_data",
+                    "analysis_report",
+                ]
+            ],
+            "groups": [],
+        }

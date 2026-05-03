@@ -13,6 +13,7 @@ class ProjectCreateRequest(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=200, description="项目名称")
     description: str | None = Field(default=None, description="项目描述")
+    agent_summary: str | None = Field(default=None, description="Agent 生成的项目总结")
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -24,6 +25,7 @@ class ProjectUpdateRequest(BaseModel):
         default=None, min_length=1, max_length=200, description="项目名称"
     )
     description: str | None = Field(default=None, description="项目描述")
+    agent_summary: str | None = Field(default=None, description="Agent 生成的项目总结")
 
 
 class ProjectResponse(BaseModel):
@@ -34,6 +36,7 @@ class ProjectResponse(BaseModel):
     project_id: str = Field(..., description="项目 ID")
     name: str = Field(..., description="项目名称")
     description: str | None = Field(default=None, description="项目描述")
+    agent_summary: str | None = Field(default=None, description="Agent 生成的项目总结")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
     operation_logs: list[dict[str, Any]] = Field(

@@ -150,7 +150,7 @@ class PaperQueryRepository:
     def search_paper(
         self,
         *,
-        project_id: str | None,
+        project_id: str | None = None,
         paper_id: str | None = None,
         query_group: dict[str, object] | None = None,
         limit: int,
@@ -653,6 +653,7 @@ class PaperRepository:
         extraction_fact_check_result: dict[str, object] | None = None,
         analysis_fact_check_status: FactCheckStatus | None = None,
         analysis_fact_check_result: dict[str, object] | None = None,
+        agent_note: str | None = None,
     ) -> Paper:
         """人工更新 Paper 元数据和处理结果（仅数据库操作）."""
         paper = self.get(paper_id)
@@ -696,6 +697,8 @@ class PaperRepository:
             update_data["analysis_fact_check_result"] = json.dumps(
                 analysis_fact_check_result, ensure_ascii=False
             )
+        if agent_note is not None:
+            update_data["agent_note"] = agent_note
 
         self.update(paper_id, update_data)
         updated = self.get(paper_id)
@@ -787,3 +790,321 @@ class PaperRepository:
             (paper_id,),
         )
         return [str(row["project_id"]) for row in rows]
+
+    def get_agent_note(self, paper_id: str) -> str | None:
+        """获取 paper 的 agent_note."""
+        paper = self.get(paper_id)
+        if paper is None:
+            raise PaperRepositoryError(f"Paper {paper_id} not found", paper_id=paper_id)
+        return paper.agent_note
+
+    def set_agent_note(self, paper_id: str, content: str) -> None:
+        """设置 paper 的 agent_note."""
+        paper = self.get(paper_id)
+        if paper is None:
+            raise PaperRepositoryError(f"Paper {paper_id} not found", paper_id=paper_id)
+        self.update(
+            paper_id,
+            {
+                "agent_note": content,
+                "updated_at": datetime.now(),
+            },
+        )
+        logger.info(
+            "event=paper.agent_note_updated paper_id=%s",
+            paper_id,
+        )
+
+    def delete_agent_note(self, paper_id: str) -> None:
+        """删除 paper 的 agent_note（置为 NULL）."""
+        self.set_agent_note(paper_id, "")
+
+    def exists(self, paper_id: str) -> bool:
+        """检查论文是否存在."""
+        row = self.db.fetchone(
+            "SELECT 1 FROM papers WHERE paper_id = ?",
+            (paper_id,),
+        )
+        return row is not None
+
+    def count_all(self) -> int:
+        """全局论文总数."""
+        count_result = self.db.fetchone("SELECT COUNT(*) AS count FROM papers")
+        return int(count_result["count"]) if count_result else 0
+
+    def batch_get(
+        self,
+        *,
+        paper_ids: list[str],
+        offset: int = 0,
+        limit: int = 20,
+        sort_by: PaperSortKey = PaperSortKey.CREATED_AT,
+        sort_order: SortOrder = SortOrder.DESC,
+    ) -> list[Paper]:
+        """批量获取论文."""
+        if not paper_ids:
+            return []
+        placeholders = ",".join(["?"] * len(paper_ids))
+        rows = self.db.fetchall(
+            f"""SELECT * FROM papers
+            WHERE paper_id IN ({placeholders})
+            ORDER BY {sort_by.value} {sort_order.upper()}
+            LIMIT ? OFFSET ?""",
+            tuple(paper_ids) + (limit, offset),
+        )
+        return [Paper.from_db_row(row) for row in rows]
+
+    def count_by_ids(self, paper_ids: list[str]) -> int:
+        """统计指定 paper_ids 的数量."""
+        if not paper_ids:
+            return 0
+        placeholders = ",".join(["?"] * len(paper_ids))
+        count_result = self.db.fetchone(
+            f"""SELECT COUNT(*) AS count FROM papers
+            WHERE paper_id IN ({placeholders})""",
+            tuple(paper_ids),
+        )
+        return int(count_result["count"]) if count_result else 0
+
+    def count_global_statuses(self) -> dict[str, int]:
+        """全局论文状态统计."""
+        counts = self._empty_status_counts()
+        total_result = self.db.fetchone("SELECT COUNT(*) AS count FROM papers")
+        counts["total"] = int(total_result["count"]) if total_result else 0
+
+        extraction_rows = self.db.fetchall("""
+            SELECT extraction_status AS status, COUNT(*) AS count
+            FROM papers
+            GROUP BY extraction_status
+            """)
+        extraction_map = {
+            ExtractionStatus.PENDING.value: "extraction_pending",
+            ExtractionStatus.PROCESSING.value: "extraction_processing",
+            ExtractionStatus.COMPLETED.value: "extraction_completed",
+            ExtractionStatus.HUMAN_COMPLETED.value: "extraction_human_completed",
+            ExtractionStatus.FAILED.value: "extraction_failed",
+        }
+        for row in extraction_rows:
+            status = row.get("status")
+            if isinstance(status, str):
+                key = extraction_map.get(status)
+                if key:
+                    counts[key] = int(row.get("count") or 0)
+
+        extraction_fc_rows = self.db.fetchall("""
+            SELECT extraction_fact_check_status AS status, COUNT(*) AS count
+            FROM papers
+            GROUP BY extraction_fact_check_status
+            """)
+        fact_check_map = {
+            FactCheckStatus.PENDING.value: "extraction_fact_check_pending",
+            FactCheckStatus.PASSED.value: "extraction_fact_check_passed",
+            FactCheckStatus.HUMAN_PASSED.value: "extraction_fact_check_human_passed",
+            FactCheckStatus.FAILED.value: "extraction_fact_check_failed",
+        }
+        for row in extraction_fc_rows:
+            status = row.get("status")
+            if isinstance(status, str):
+                key = fact_check_map.get(status)
+                if key:
+                    counts[key] = int(row.get("count") or 0)
+
+        analysis_fc_rows = self.db.fetchall("""
+            SELECT analysis_fact_check_status AS status, COUNT(*) AS count
+            FROM papers
+            GROUP BY analysis_fact_check_status
+            """)
+        analysis_map = {
+            FactCheckStatus.PENDING.value: "analysis_fact_check_pending",
+            FactCheckStatus.PASSED.value: "analysis_fact_check_passed",
+            FactCheckStatus.HUMAN_PASSED.value: "analysis_fact_check_human_passed",
+            FactCheckStatus.FAILED.value: "analysis_fact_check_failed",
+        }
+        for row in analysis_fc_rows:
+            status = row.get("status")
+            if isinstance(status, str):
+                key = analysis_map.get(status)
+                if key:
+                    counts[key] = int(row.get("count") or 0)
+
+        return counts
+
+    @staticmethod
+    def _empty_status_counts() -> dict[str, int]:
+        return {
+            "total": 0,
+            "extraction_pending": 0,
+            "extraction_processing": 0,
+            "extraction_completed": 0,
+            "extraction_human_completed": 0,
+            "extraction_failed": 0,
+            "extraction_fact_check_pending": 0,
+            "extraction_fact_check_passed": 0,
+            "extraction_fact_check_human_passed": 0,
+            "extraction_fact_check_failed": 0,
+            "analysis_fact_check_pending": 0,
+            "analysis_fact_check_passed": 0,
+            "analysis_fact_check_human_passed": 0,
+            "analysis_fact_check_failed": 0,
+        }
+
+    def list_by_project(
+        self,
+        *,
+        project_id: str,
+        offset: int = 0,
+        limit: int = 20,
+        sort_by: PaperSortKey = PaperSortKey.CREATED_AT,
+        sort_order: SortOrder = SortOrder.DESC,
+    ) -> list[Paper]:
+        """列出项目下的论文."""
+        rows = self.db.fetchall(
+            f"""
+            SELECT p.*
+            FROM papers p
+            JOIN paper_projects pp ON pp.paper_id = p.paper_id
+            WHERE pp.project_id = ?
+            ORDER BY p.{sort_by.value} {sort_order.upper()}
+            LIMIT ? OFFSET ?
+            """,
+            (project_id, limit, offset),
+        )
+        return [Paper.from_db_row(row) for row in rows]
+
+    def count_by_project(self, project_id: str) -> int:
+        """统计项目下论文数量."""
+        count_result = self.db.fetchone(
+            "SELECT COUNT(*) AS count FROM paper_projects WHERE project_id = ?",
+            (project_id,),
+        )
+        return int(count_result["count"]) if count_result else 0
+
+    def count_statuses_by_project(self, project_id: str) -> dict[str, int]:
+        """统计项目下论文的状态分布."""
+        counts = self._empty_status_counts()
+
+        total_result = self.db.fetchone(
+            """
+            SELECT COUNT(*) AS count
+            FROM papers p
+            JOIN paper_projects pp ON pp.paper_id = p.paper_id
+            WHERE pp.project_id = ?
+            """,
+            (project_id,),
+        )
+        counts["total"] = int(total_result["count"]) if total_result else 0
+
+        extraction_rows = self.db.fetchall(
+            """
+            SELECT p.extraction_status AS status, COUNT(*) AS count
+            FROM papers p
+            JOIN paper_projects pp ON pp.paper_id = p.paper_id
+            WHERE pp.project_id = ?
+            GROUP BY p.extraction_status
+            """,
+            (project_id,),
+        )
+        extraction_map = {
+            ExtractionStatus.PENDING.value: "extraction_pending",
+            ExtractionStatus.PROCESSING.value: "extraction_processing",
+            ExtractionStatus.COMPLETED.value: "extraction_completed",
+            ExtractionStatus.HUMAN_COMPLETED.value: "extraction_human_completed",
+            ExtractionStatus.FAILED.value: "extraction_failed",
+        }
+        for row in extraction_rows:
+            status = row.get("status")
+            if isinstance(status, str):
+                key = extraction_map.get(status)
+                if key:
+                    counts[key] = int(row.get("count") or 0)
+
+        extraction_fc_rows = self.db.fetchall(
+            """
+            SELECT p.extraction_fact_check_status AS status, COUNT(*) AS count
+            FROM papers p
+            JOIN paper_projects pp ON pp.paper_id = p.paper_id
+            WHERE pp.project_id = ?
+            GROUP BY p.extraction_fact_check_status
+            """,
+            (project_id,),
+        )
+        fact_check_map = {
+            FactCheckStatus.PENDING.value: "extraction_fact_check_pending",
+            FactCheckStatus.PASSED.value: "extraction_fact_check_passed",
+            FactCheckStatus.HUMAN_PASSED.value: "extraction_fact_check_human_passed",
+            FactCheckStatus.FAILED.value: "extraction_fact_check_failed",
+        }
+        for row in extraction_fc_rows:
+            status = row.get("status")
+            if isinstance(status, str):
+                key = fact_check_map.get(status)
+                if key:
+                    counts[key] = int(row.get("count") or 0)
+
+        analysis_fc_rows = self.db.fetchall(
+            """
+            SELECT p.analysis_fact_check_status AS status, COUNT(*) AS count
+            FROM papers p
+            JOIN paper_projects pp ON pp.paper_id = p.paper_id
+            WHERE pp.project_id = ?
+            GROUP BY p.analysis_fact_check_status
+            """,
+            (project_id,),
+        )
+        analysis_map = {
+            FactCheckStatus.PENDING.value: "analysis_fact_check_pending",
+            FactCheckStatus.PASSED.value: "analysis_fact_check_passed",
+            FactCheckStatus.HUMAN_PASSED.value: "analysis_fact_check_human_passed",
+            FactCheckStatus.FAILED.value: "analysis_fact_check_failed",
+        }
+        for row in analysis_fc_rows:
+            status = row.get("status")
+            if isinstance(status, str):
+                key = analysis_map.get(status)
+                if key:
+                    counts[key] = int(row.get("count") or 0)
+
+        return counts
+
+    def get_extraction_status(self, paper_id: str) -> ExtractionStatus | None:
+        """获取论文的提取状态."""
+        row = self.db.fetchone(
+            "SELECT extraction_status FROM papers WHERE paper_id = ?",
+            (paper_id,),
+        )
+        if not row:
+            return None
+        status_value = row.get("extraction_status")
+        if isinstance(status_value, str):
+            return ExtractionStatus(status_value)
+        return None
+
+    def list_all_by_project(
+        self,
+        *,
+        project_id: str,
+        sort_by: PaperSortKey = PaperSortKey.CREATED_AT,
+        sort_order: SortOrder = SortOrder.DESC,
+    ) -> list[Paper]:
+        """列出项目下所有论文（无分页）."""
+        rows = self.db.fetchall(
+            f"""
+            SELECT p.*
+            FROM papers p
+            JOIN paper_projects pp ON pp.paper_id = p.paper_id
+            WHERE pp.project_id = ?
+            ORDER BY p.{sort_by.value} {sort_order.upper()}
+            """,
+            (project_id,),
+        )
+        return [Paper.from_db_row(row) for row in rows]
+
+    def delete(self, paper_id: str) -> None:
+        """删除论文（含 unlink 所有项目关联）."""
+        paper = self.get(paper_id)
+        if paper is None:
+            raise PaperRepositoryError(f"Paper {paper_id} not found", paper_id=paper_id)
+        for project_id in self.list_project_ids(paper_id):
+            self.unlink_from_project(paper_id=paper_id, project_id=project_id)
+        self.db.delete("papers", "paper_id = ?", (paper_id,))
+        logger.info("event=paper.deleted paper_id=%s", paper_id)

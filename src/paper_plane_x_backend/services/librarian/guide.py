@@ -7,12 +7,12 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
-from paper_plane_x_backend.config import settings
 from paper_plane_x_backend.schemas.agent_io.data_processor import (
     AnalysisReport,
     QuickScan,
     SynthesisData,
 )
+from paper_plane_x_backend.services.app_settings import get_app_settings_repo
 
 
 def _unwrap_type(annotation: Any) -> Any:
@@ -303,6 +303,6 @@ def build_librarian_guide_payload() -> dict[str, object]:
         "global_finder_tips": [
             "Global Finder 聚合指定 project 下全部已关联论文的基础信息，用于快速建立整体感觉。",
             "年份统计仅基于 year 有值的论文计算；缺失年份会单独计入 missing_count。",
-            f"热门标签默认返回前 {settings.librarian.top_tags_limit} 个，可通过配置修改。",
+            f"热门标签默认返回前 {get_app_settings_repo().get().librarian.top_tags_limit} 个，可通过配置修改。",
         ],
     }

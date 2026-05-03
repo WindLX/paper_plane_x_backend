@@ -6,15 +6,14 @@ from collections.abc import MutableMapping
 from datetime import datetime
 from pathlib import Path
 
-from paper_plane_x_backend.config import settings
 from paper_plane_x_backend.models import DataProcessTaskStatus, SortOrder, TaskSortKey
+from paper_plane_x_backend.services.app_settings import get_app_settings_repo
 from paper_plane_x_backend.services.data_process_tasks.models import (
     DataProcessQueueTask,
     DataProcessTaskState,
 )
 from paper_plane_x_backend.services.data_process_tasks.stores import (
     DataProcessTaskStateStore,
-    SQLiteDataProcessTaskStateStore,
     TaskStateStoreView,
 )
 from paper_plane_x_backend.services.database import get_db
@@ -45,7 +44,7 @@ class DataProcessTaskManager:
         if state_store is None:
             db = get_db()
             db.init_tables()
-            self._state_store = SQLiteDataProcessTaskStateStore(db)
+            self._state_store = DataProcessTaskStateStore(db)
         else:
             self._state_store = state_store
         self._running_jobs: dict[str, asyncio.Task[object]] = {}
@@ -226,15 +225,30 @@ class DataProcessTaskManager:
         self,
         *,
         paper_id: str | None = None,
+        offset: int = 0,
+        limit: int = 20,
         sort_order: SortOrder = SortOrder.DESC,
         sort_by: TaskSortKey = TaskSortKey.CREATED_AT,
     ) -> list[DataProcessTaskState]:
         return self._state_store.list(
-            paper_id=paper_id, sort_order=sort_order, sort_by=sort_by
+            paper_id=paper_id,
+            offset=offset,
+            limit=limit,
+            sort_order=sort_order,
+            sort_by=sort_by,
         )
+
+    def count_total_tasks(self, paper_id: str | None = None) -> int:
+        return self._state_store.count_total(paper_id=paper_id)
+
+    def count_task_statuses(self) -> dict[str, int]:
+        return self._state_store.count_statuses()
 
     def get_task(self, task_id: str) -> DataProcessTaskState | None:
         return self._state_store.get(task_id)
+
+    def delete_task(self, task_id: str) -> None:
+        self._state_store.delete(task_id)
 
     def cancel_task(self, task_id: str) -> DataProcessTaskState:
         state = self._state_store.get(task_id)
@@ -405,9 +419,13 @@ class DataProcessTaskManager:
             pdf_path,
         )
         repo = PaperRepository(get_db())
-        processor = PaperProcessor(repo=repo, parser=PaperParser())
+        processor = PaperProcessor(
+            repo=repo,
+            parser=PaperParser(),
+            caller_id=task.task_id,
+        )
         return await processor.process(
             paper_id=paper_id,
             pdf_path=Path(pdf_path),
-            max_retries=settings.data_process.max_retries,
+            max_retries=get_app_settings_repo().get().data_process.max_retries,
         )

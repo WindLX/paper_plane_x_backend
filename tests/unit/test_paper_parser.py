@@ -41,7 +41,7 @@ async def test_prepare_inputs_uses_existing_markdown(db) -> None:
     paper = repo.create(md_content="# existing", images_paths=["/tmp/old.png"])
     repo.link_to_project(paper.paper_id, project.project_id)
 
-    parser = PaperParser(mineru_client=_FakeMinerUClient())
+    parser = PaperParser(mineru_client=_FakeMinerUClient())  # type: ignore
     md_content, image_paths = await parser.prepare_inputs(
         paper_id=paper.paper_id,
         paper=paper,
@@ -56,7 +56,7 @@ async def test_prepare_inputs_uses_existing_markdown(db) -> None:
 async def test_prepare_inputs_requires_pdf_when_no_markdown(db) -> None:
     repo = PaperRepository(db)
     paper = repo.create(md_content="", images_paths=[])
-    parser = PaperParser(mineru_client=_FakeMinerUClient())
+    parser = PaperParser(mineru_client=_FakeMinerUClient())  # type: ignore
 
     with pytest.raises(PaperParserError):
         await parser.prepare_inputs(

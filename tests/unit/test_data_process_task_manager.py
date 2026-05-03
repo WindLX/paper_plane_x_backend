@@ -9,33 +9,34 @@ from types import SimpleNamespace
 import pytest
 
 from paper_plane_x_backend.models import DataProcessTaskStatus
+from paper_plane_x_backend.services import Database
 from paper_plane_x_backend.services.data_process_tasks.models import (
     DataProcessQueueTask,
     DataProcessTaskState,
 )
 from paper_plane_x_backend.services.data_process_tasks.stores import (
-    InMemoryDataProcessTaskStateStore,
-    SQLiteDataProcessTaskStateStore,
+    DataProcessTaskStateStore,
 )
 from paper_plane_x_backend.services.data_process_tasks.task_manager import (
     DataProcessTaskManager,
 )
 
 
-def _new_in_memory_manager() -> DataProcessTaskManager:
+def _new_manager(db: Database) -> DataProcessTaskManager:
     return DataProcessTaskManager(
         worker_count=1,
-        state_store=InMemoryDataProcessTaskStateStore(),
+        state_store=DataProcessTaskStateStore(db),
         shutdown_timeout=0.2,
     )
 
 
 @pytest.mark.asyncio
 async def test_stop_cancels_running_job_quickly(
+    db: Database,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """验证 stop 会取消运行中任务，避免关闭阻塞。"""
-    manager = _new_in_memory_manager()
+    manager = _new_manager(db)
     started = asyncio.Event()
 
     async def fake_run(self, task):  # type: ignore[no-untyped-def]
@@ -63,12 +64,13 @@ async def test_stop_cancels_running_job_quickly(
 
 @pytest.mark.asyncio
 async def test_stop_returns_when_running_job_cancels_slowly(
+    db: Database,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """验证运行任务取消较慢时 stop 仍会在超时后返回。"""
     manager = DataProcessTaskManager(
         worker_count=1,
-        state_store=InMemoryDataProcessTaskStateStore(),
+        state_store=DataProcessTaskStateStore(db),
         shutdown_timeout=0.1,
     )
     started = asyncio.Event()
@@ -102,12 +104,13 @@ async def test_stop_returns_when_running_job_cancels_slowly(
 
 @pytest.mark.asyncio
 async def test_task_fails_when_exceeding_max_execution_seconds(
+    db: Database,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """验证任务执行超过上限时会被标记为 FAILED。"""
     manager = DataProcessTaskManager(
         worker_count=1,
-        state_store=InMemoryDataProcessTaskStateStore(),
+        state_store=DataProcessTaskStateStore(db),
         shutdown_timeout=0.2,
         task_max_seconds=0.05,
     )
@@ -142,9 +145,12 @@ async def test_task_fails_when_exceeding_max_execution_seconds(
 
 
 @pytest.mark.asyncio
-async def test_stop_is_idempotent() -> None:
+@pytest.mark.asyncio
+async def test_stop_is_idempotent(
+    db: Database,
+) -> None:
     """验证 stop 可重复调用。"""
-    manager = _new_in_memory_manager()
+    manager = _new_manager(db)
 
     await manager.start()
     await manager.stop()
@@ -153,10 +159,11 @@ async def test_stop_is_idempotent() -> None:
 
 @pytest.mark.asyncio
 async def test_cancel_running_task_transitions_to_canceled(
+    db: Database,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """验证运行中任务取消后最终状态为 CANCELED。"""
-    manager = _new_in_memory_manager()
+    manager = _new_manager(db)
     started = asyncio.Event()
 
     async def fake_run(self, task):  # type: ignore[no-untyped-def]
@@ -193,11 +200,12 @@ async def test_cancel_running_task_transitions_to_canceled(
 
 @pytest.mark.asyncio
 async def test_cleanup_path_is_removed_after_task_finishes(
+    db: Database,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """验证任务结束后 cleanup_path 会被清理。"""
-    manager = _new_in_memory_manager()
+    manager = _new_manager(db)
 
     async def fake_run(self, task):  # type: ignore[no-untyped-def]
         return None
@@ -229,9 +237,10 @@ async def test_cleanup_path_is_removed_after_task_finishes(
 
 @pytest.mark.asyncio
 async def test_completed_task_copies_trace_ids_from_processor_result(
+    db: Database,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    manager = _new_in_memory_manager()
+    manager = _new_manager(db)
 
     async def fake_run(self, task):  # type: ignore[no-untyped-def]
         return SimpleNamespace(
@@ -269,9 +278,11 @@ async def test_completed_task_copies_trace_ids_from_processor_result(
 
 
 @pytest.mark.asyncio
-async def test_cancel_already_canceled_task_raises_value_error() -> None:
+async def test_cancel_already_canceled_task_raises_value_error(
+    db: Database,
+) -> None:
     """验证重复取消已结束任务会报冲突。"""
-    manager = _new_in_memory_manager()
+    manager = _new_manager(db)
 
     await manager.start()
     task_state = await manager.submit_task(
@@ -297,7 +308,7 @@ async def test_start_recovers_queued_tasks_from_database(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """验证服务重启后可从数据库恢复排队任务。"""
-    state_store = SQLiteDataProcessTaskStateStore(db)
+    state_store = DataProcessTaskStateStore(db)
     queued_state = DataProcessTaskState(
         task_id="task-recover-1",
         paper_id="paper-1",
@@ -334,7 +345,7 @@ async def test_start_recovers_queued_tasks_from_database(
 
 
 def test_sqlite_task_state_store_round_trips_trace_ids(db) -> None:
-    store = SQLiteDataProcessTaskStateStore(db)
+    store = DataProcessTaskStateStore(db)
     state = DataProcessTaskState(
         task_id="task-traces",
         paper_id="paper-traces",

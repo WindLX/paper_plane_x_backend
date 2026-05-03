@@ -12,13 +12,14 @@ from paper_plane_x_backend.api.dependencies import (
     get_database,
     get_task_manager,
 )
-from paper_plane_x_backend.config import settings
+from paper_plane_x_backend.config import server_config
 from paper_plane_x_backend.services import Database, init_database
+from paper_plane_x_backend.services.app_settings import AppSettingsRepository
 from paper_plane_x_backend.services.data_process_tasks import (
     lifecycle as task_manager_module,
 )
 from paper_plane_x_backend.services.data_process_tasks.stores import (
-    InMemoryDataProcessTaskStateStore,
+    DataProcessTaskStateStore,
 )
 from paper_plane_x_backend.services.data_process_tasks.task_manager import (
     DataProcessTaskManager,
@@ -26,11 +27,14 @@ from paper_plane_x_backend.services.data_process_tasks.task_manager import (
 
 # 在导入 app 之前切换测试运行目录，避免生命周期初始化写入 ./data。
 _TEST_RUNTIME_DIR = Path(tempfile.mkdtemp(prefix="ppx-tests-"))
-settings.data_dir = _TEST_RUNTIME_DIR
-settings.database_path = _TEST_RUNTIME_DIR / "app.test.db"
-settings.mineru.output_dir = _TEST_RUNTIME_DIR / "papers"
-settings.log.file_path = _TEST_RUNTIME_DIR / "logs" / "backend.log"
-settings.api.console_dist_dir = _TEST_RUNTIME_DIR / "console"
+server_config.data_dir = _TEST_RUNTIME_DIR
+server_config.database_path = _TEST_RUNTIME_DIR / "app.test.db"
+server_config.log.file_path = _TEST_RUNTIME_DIR / "logs" / "backend.log"
+server_config.api.console_dist_dir = _TEST_RUNTIME_DIR / "console"
+
+# 初始化动态配置仓库到测试目录，并覆盖 mineru output_dir
+_app_settings_repo = AppSettingsRepository(_TEST_RUNTIME_DIR / "app_settings.toml")
+_app_settings_repo.update_mineru({"output_dir": str(_TEST_RUNTIME_DIR / "papers")})
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -68,7 +72,7 @@ def client(db: Database) -> Generator[TestClient, None, None]:
 
     test_task_manager = DataProcessTaskManager(
         worker_count=1,
-        state_store=InMemoryDataProcessTaskStateStore(),
+        state_store=DataProcessTaskStateStore(db),
     )
 
     def override_get_task_manager() -> DataProcessTaskManager:

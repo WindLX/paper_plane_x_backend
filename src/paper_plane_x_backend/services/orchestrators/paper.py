@@ -9,8 +9,12 @@ from typing import Any
 
 from fastapi import UploadFile, status
 
-from paper_plane_x_backend.config import settings
-from paper_plane_x_backend.models import Paper, PaperSortKey, SortOrder
+from paper_plane_x_backend.models import (
+    Paper,
+    PaperSortKey,
+    SortOrder,
+)
+from paper_plane_x_backend.services.app_settings import get_app_settings_repo
 from paper_plane_x_backend.services.data_process_tasks.models import (
     DataProcessTaskState,
 )
@@ -43,7 +47,6 @@ class PaperOrchestrator:
         db: Database,
         task_manager: DataProcessTaskManager,
     ) -> None:
-        self.db = db
         self.repo = PaperRepository(db)
         self.data_process_orchestrator = DataProcessOrchestrator(
             db=db,
@@ -53,8 +56,7 @@ class PaperOrchestrator:
     def list_papers(
         self, *, offset: int, limit: int, sort_order: SortOrder, sort_by: PaperSortKey
     ) -> tuple[list[Paper], int]:
-        count_result = self.db.fetchone("SELECT COUNT(*) AS count FROM papers")
-        total = int(count_result["count"]) if count_result else 0
+        total = self.repo.count_all()
         papers = self.repo.list_all(
             offset=offset, limit=limit, sort_by=sort_by, sort_order=sort_order
         )
@@ -85,20 +87,17 @@ class PaperOrchestrator:
         sort_order: SortOrder,
         sort_by: PaperSortKey,
     ) -> tuple[list[Paper], int]:
-        count_result = self.db.fetchone(
-            f"""SELECT COUNT(*) AS count FROM papers
-            WHERE paper_id IN ({','.join(['?'] *len(paper_ids))})""",
-            tuple(paper_ids),
+        if not paper_ids:
+            return [], 0
+
+        total = self.repo.count_by_ids(paper_ids)
+        papers = self.repo.batch_get(
+            paper_ids=paper_ids,
+            offset=offset,
+            limit=limit,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
-        total = int(count_result["count"]) if count_result else 0
-        rows = self.db.fetchall(
-            f"""SELECT * FROM papers
-            WHERE paper_id IN ({','.join(['?'] *len(paper_ids))})
-            ORDER BY {sort_by.value} {sort_order.upper()}
-            LIMIT ? OFFSET ?""",
-            tuple(paper_ids) + (limit, offset),
-        )
-        papers = [Paper.from_db_row(row) for row in rows]
         logger.info(
             "event=paper.batch_fetched requested_ids=%s offset=%s limit=%s returned=%s total=%s",
             paper_ids,
@@ -108,6 +107,9 @@ class PaperOrchestrator:
             total,
         )
         return papers, total
+
+    def count_paper_statuses(self) -> dict[str, int]:
+        return self.repo.count_global_statuses()
 
     def list_paper_project_ids(self, paper_id: str) -> list[str]:
         logger.info("event=paper.list_project_ids paper_id=%s", paper_id)
@@ -185,6 +187,7 @@ class PaperOrchestrator:
         extraction_fact_check_result: dict[str, Any] | None,
         analysis_fact_check_status: Any,
         analysis_fact_check_result: dict[str, Any] | None,
+        agent_note: str | None = None,
     ) -> Paper:
         if custom_meta is not None:
             self._validate_custom_meta_json(custom_meta)
@@ -206,6 +209,7 @@ class PaperOrchestrator:
                 extraction_fact_check_result=extraction_fact_check_result,
                 analysis_fact_check_status=analysis_fact_check_status,
                 analysis_fact_check_result=analysis_fact_check_result,
+                agent_note=agent_note,
             )
             logger.info("event=paper.updated paper_id=%s", paper_id)
         except PaperRepositoryError as exc:
@@ -246,13 +250,10 @@ class PaperOrchestrator:
                 f"Paper {paper_id} is being processed and cannot be deleted",
             )
 
-        for project_id in self.repo.list_project_ids(paper_id):
-            self.repo.unlink_from_project(paper_id=paper_id, project_id=project_id)
-
-        self.db.delete("papers", "paper_id = ?", (paper_id,))
+        self.repo.delete(paper_id)
         logger.info("event=paper.deleted paper_id=%s", paper_id)
 
-        paper_dir = settings.mineru.output_dir / paper_id
+        paper_dir = get_app_settings_repo().get().mineru.output_dir / paper_id
         if paper_dir.exists():
             try:
                 shutil.rmtree(paper_dir)

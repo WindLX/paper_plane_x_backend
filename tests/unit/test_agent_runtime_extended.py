@@ -11,7 +11,6 @@ from typing import Annotated, Any
 import pytest
 from pydantic import BaseModel
 
-from paper_plane_x_backend.config import LLMConfig
 from paper_plane_x_backend.core.agent_runtime import (
     AgentExecutionError,
     AgentValidationError,
@@ -22,6 +21,7 @@ from paper_plane_x_backend.core.agent_runtime import (
     ToolRegistry,
     tool,
 )
+from paper_plane_x_backend.models.app_settings import LLMConfig
 from paper_plane_x_backend.schemas.agent_io.base import (
     ToolCallFunction,
     ToolCallMessage,
@@ -539,3 +539,190 @@ class TestToolSchemaExtended:
 
         with pytest.raises(RuntimeError, match="has no bound function"):
             await t.execute(x=1)
+
+
+class TestLLMClientStream:
+    """LLMClient chat_stream 流式调用测试."""
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_sets_stream_flag(
+        self, capture_llm_request: dict[str, Any]
+    ) -> None:
+        """验证 chat_stream 在请求中设置 stream=True."""
+        client = LLMClient(model="m")
+
+        # 需要一个模拟的流式响应
+        async def fake_stream():
+            yield SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content="ok"), finish_reason="stop"
+                    )
+                ],
+                model="m",
+            )
+
+        import paper_plane_x_backend.core.agent_runtime.llm_client as llm_mod
+
+        original_acompletion = llm_mod.acompletion
+
+        async def mock_acompletion(**kwargs):
+            capture_llm_request.update(kwargs)
+            return fake_stream()
+
+        llm_mod.acompletion = mock_acompletion
+        try:
+            chunks = []
+            async for chunk in client.chat_stream(
+                messages=[{"role": "user", "content": "hi"}]
+            ):
+                chunks.append(chunk)
+            assert capture_llm_request["stream"] is True
+            assert len(chunks) == 1
+            assert chunks[0].content_delta == "ok"
+            assert chunks[0].is_finished is True
+        finally:
+            llm_mod.acompletion = original_acompletion
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_yields_content_deltas(self) -> None:
+        """验证 chat_stream 逐块 yield content_delta."""
+        client = LLMClient(model="m")
+
+        async def fake_stream():
+            deltas = ["Hel", "lo"]
+            for i, d in enumerate(deltas):
+                yield SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content=d),
+                            finish_reason="stop" if i == len(deltas) - 1 else None,
+                        )
+                    ],
+                    model="m",
+                )
+
+        import paper_plane_x_backend.core.agent_runtime.llm_client as llm_mod
+
+        original_acompletion = llm_mod.acompletion
+
+        async def mock_acompletion(**kwargs):
+            return fake_stream()
+
+        llm_mod.acompletion = mock_acompletion
+        try:
+            chunks = []
+            async for chunk in client.chat_stream(
+                messages=[{"role": "user", "content": "hi"}]
+            ):
+                chunks.append(chunk)
+            assert len(chunks) == 2
+            assert chunks[0].content_delta == "Hel"
+            assert chunks[0].is_finished is False
+            assert chunks[1].content_delta == "lo"
+            assert chunks[1].is_finished is True
+        finally:
+            llm_mod.acompletion = original_acompletion
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_yields_reasoning_content_deltas(self) -> None:
+        """验证 chat_stream 能解析 reasoning_content_delta."""
+        client = LLMClient(model="m")
+
+        async def fake_stream():
+            yield SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content="ok", reasoning_content="think"),
+                        finish_reason="stop",
+                    )
+                ],
+                model="m",
+            )
+
+        import paper_plane_x_backend.core.agent_runtime.llm_client as llm_mod
+
+        original_acompletion = llm_mod.acompletion
+
+        async def mock_acompletion(**kwargs):
+            return fake_stream()
+
+        llm_mod.acompletion = mock_acompletion
+        try:
+            chunks = []
+            async for chunk in client.chat_stream(
+                messages=[{"role": "user", "content": "hi"}]
+            ):
+                chunks.append(chunk)
+            assert chunks[0].content_delta == "ok"
+            assert chunks[0].reasoning_content_delta == "think"
+        finally:
+            llm_mod.acompletion = original_acompletion
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_accumulates_tool_calls(self) -> None:
+        """验证 chat_stream 能按 index 累积流式 tool_calls."""
+        client = LLMClient(model="m")
+
+        async def fake_stream():
+            # 分两段返回同一个 tool_call
+            yield SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            content=None,
+                            tool_calls=[
+                                SimpleNamespace(
+                                    index=0,
+                                    id="tc-1",
+                                    function=SimpleNamespace(
+                                        name="g", arguments='{"a":'
+                                    ),
+                                )
+                            ],
+                        ),
+                        finish_reason=None,
+                    )
+                ],
+                model="m",
+            )
+            yield SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            content=None,
+                            tool_calls=[
+                                SimpleNamespace(
+                                    index=0,
+                                    function=SimpleNamespace(name="", arguments="1}"),
+                                )
+                            ],
+                        ),
+                        finish_reason="stop",
+                    )
+                ],
+                model="m",
+            )
+
+        import paper_plane_x_backend.core.agent_runtime.llm_client as llm_mod
+
+        original_acompletion = llm_mod.acompletion
+
+        async def mock_acompletion(**kwargs):
+            return fake_stream()
+
+        llm_mod.acompletion = mock_acompletion
+        try:
+            chunks = []
+            async for chunk in client.chat_stream(
+                messages=[{"role": "user", "content": "hi"}]
+            ):
+                chunks.append(chunk)
+            # 非 finish 块不携带 tool_calls
+            assert chunks[0].tool_calls == []
+            # finish 块携带累积后的 tool_calls
+            assert len(chunks[1].tool_calls) == 1
+            assert chunks[1].tool_calls[0].function.name == "g"
+            assert chunks[1].tool_calls[0].function.arguments == '{"a":1}'
+        finally:
+            llm_mod.acompletion = original_acompletion

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections import Counter
 from math import floor
-from typing import cast
+from typing import Any, cast
 
 from paper_plane_x_backend.services.paper.repository import PaperQueryRepository
+from paper_plane_x_backend.services.project.repository import ProjectRepository
 
 
 def _compute_percentile(sorted_values: list[int], percentile: float) -> float | None:
@@ -27,21 +28,25 @@ def _compute_percentile(sorted_values: list[int], percentile: float) -> float | 
 def _build_year_distribution(
     years: list[int],
     total_paper_count: int,
-) -> dict[str, object]:
+) -> tuple[dict[str, object], int, int]:
     if not years:
-        return {
-            "available_count": 0,
-            "missing_count": total_paper_count,
-            "mean": None,
-            "variance": None,
-            "median": None,
-            "mode_years": [],
-            "q25": None,
-            "q75": None,
-            "outlier_count": 0,
-            "low_outlier_count": 0,
-            "high_outlier_count": 0,
-        }
+        return (
+            {
+                "available_count": 0,
+                "missing_count": total_paper_count,
+                "mean": None,
+                "variance": None,
+                "median": None,
+                "mode_years": [],
+                "q25": None,
+                "q75": None,
+                "outlier_count": 0,
+                "low_outlier_count": 0,
+                "high_outlier_count": 0,
+            },
+            0,
+            0,
+        )
 
     sorted_years = sorted(years)
     count = len(sorted_years)
@@ -52,6 +57,8 @@ def _build_year_distribution(
     q75 = _compute_percentile(sorted_years, 0.75)
     p05 = _compute_percentile(sorted_years, 0.05)
     p95 = _compute_percentile(sorted_years, 0.95)
+    min_year = sorted_years[0]
+    max_year = sorted_years[-1]
 
     counter = Counter(sorted_years)
     top_mode_count = max(counter.values())
@@ -59,39 +66,37 @@ def _build_year_distribution(
         [year for year, freq in counter.items() if freq == top_mode_count]
     )
 
-    low_outlier_count = (
-        sum(1 for year in sorted_years if p05 is not None and year < p05)
-        if p05 is not None
-        else 0
-    )
-    high_outlier_count = (
-        sum(1 for year in sorted_years if p95 is not None and year > p95)
-        if p95 is not None
-        else 0
-    )
+    assert p05 is not None and p95 is not None
+    low_outlier_count = sum(1 for year in sorted_years if year < p05)
+    high_outlier_count = sum(1 for year in sorted_years if year > p95)
 
-    return {
-        "available_count": count,
-        "missing_count": max(0, total_paper_count - count),
-        "mean": mean,
-        "variance": variance,
-        "median": median,
-        "mode_years": mode_years,
-        "q25": q25,
-        "q75": q75,
-        "outlier_count": low_outlier_count + high_outlier_count,
-        "low_outlier_count": low_outlier_count,
-        "high_outlier_count": high_outlier_count,
-    }
+    return (
+        {
+            "available_count": count,
+            "missing_count": max(0, total_paper_count - count),
+            "mean": mean,
+            "variance": variance,
+            "median": median,
+            "mode_years": mode_years,
+            "q25": q25,
+            "q75": q75,
+            "outlier_count": low_outlier_count + high_outlier_count,
+            "low_outlier_count": low_outlier_count,
+            "high_outlier_count": high_outlier_count,
+        },
+        min_year,
+        max_year,
+    )
 
 
 def global_finder_by_project(
-    repo: PaperQueryRepository,
+    paper_repo: PaperQueryRepository,
+    project_repo: ProjectRepository | None,
     project_id: str,
     top_tags_limit: int,
 ) -> dict[str, object]:
     """按 project 聚合基础论文概览与全局统计。"""
-    rows = repo.list_project_paper_overview(project_id=project_id)
+    rows = paper_repo.list_project_paper_overview(project_id=project_id)
 
     papers: list[dict[str, object]] = []
     years: list[int] = []
@@ -103,14 +108,19 @@ def global_finder_by_project(
             years.append(year_value)
 
         quick_scan_value = row.get("quick_scan")
-        quick_scan_dict = (
-            dict(quick_scan_value) if isinstance(quick_scan_value, dict) else None
+        quick_scan_dict: dict[str, Any] | None = (
+            cast(dict[str, Any], quick_scan_value)
+            if isinstance(quick_scan_value, dict)
+            else None
         )
         tags: list[str] = []
         if quick_scan_dict is not None:
             raw_tags = quick_scan_dict.get("tags")
             if isinstance(raw_tags, list):
-                tags = [tag for tag in raw_tags if isinstance(tag, str) and tag.strip()]
+                raw_tags_list = cast(list[Any], raw_tags)
+                tags = [
+                    tag for tag in raw_tags_list if isinstance(tag, str) and tag.strip()
+                ]
                 tag_counter.update(tags)
 
         papers.append(
@@ -120,11 +130,7 @@ def global_finder_by_project(
                     row.get("title") if isinstance(row.get("title"), str) else None
                 ),
                 "authors": (
-                    [
-                        author
-                        for author in cast(list, row.get("authors", []))
-                        if isinstance(author, str)
-                    ]
+                    [author for author in cast(list[str], row.get("authors", []))]
                     if isinstance(row.get("authors"), list)
                     else []
                 ),
@@ -161,13 +167,27 @@ def global_finder_by_project(
         )[:top_tags_limit]
     ]
 
+    agent_summary: str | None = None
+    if project_repo is not None:
+        agent_summary = project_repo.get_agent_summary(project_id)
+
+    year_dist, min_year, max_year = _build_year_distribution(
+        years, total_paper_count=len(rows)
+    )
+
     return {
         "project_id": project_id,
         "papers": papers,
+        "agent_summary": agent_summary,
         "stats": {
             "paper_count": len(papers),
             "top_tags_limit": top_tags_limit,
-            "year_distribution": _build_year_distribution(years, len(papers)),
+            "year_range": (
+                f"{min_year}-{max_year}"
+                if min_year is not None and max_year is not None
+                else None
+            ),
+            "year_distribution": year_dist,
             "top_tags": top_tags,
         },
     }

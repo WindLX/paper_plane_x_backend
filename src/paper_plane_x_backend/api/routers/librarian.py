@@ -5,61 +5,47 @@ from typing import NoReturn
 
 from fastapi import APIRouter, HTTPException
 
+from paper_plane_x_backend.agents.query_builder import QueryBuilderAgent
 from paper_plane_x_backend.api.dependencies import DBDep
-from paper_plane_x_backend.config import settings
-from paper_plane_x_backend.schemas import (
+from paper_plane_x_backend.core.query_parser import (
+    LibrarianQueryError,
+    parse_librarian_query_expr,
+)
+from paper_plane_x_backend.schemas.agent_io.librarian import QueryBuilderAgentInput
+from paper_plane_x_backend.schemas.api import (
     LibrarianGlobalFinderRequest,
     LibrarianGlobalFinderResponse,
     LibrarianGuideResponse,
     LibrarianMatrixRequest,
     LibrarianMatrixResponse,
-    LibrarianProjectionRequest,
-    LibrarianProjectionResponse,
+    LibrarianQueryBuilderRequest,
+    LibrarianQueryBuilderResponse,
     LibrarianUnifiedSearchRequest,
     LibrarianUnifiedSearchResponse,
 )
-from paper_plane_x_backend.services.librarian import (
-    build_librarian_guide_payload,
-    global_finder_by_project,
-    matrix_fetch_by_paths,
-)
-from paper_plane_x_backend.services.librarian.query_parser import (
-    parse_librarian_query_expr,
-)
-from paper_plane_x_backend.services.paper.repository import (
-    PaperQueryRepository,
-    PaperRepositoryError,
+from paper_plane_x_backend.services.app_settings import get_app_settings_repo
+from paper_plane_x_backend.services.orchestrators.librarian import (
+    LibrarianDomainError,
+    LibrarianOrchestrator,
 )
 
 router = APIRouter(prefix="/librarian", tags=["librarian"])
 logger = logging.getLogger(__name__)
 
 
-def _raise_repo_error(exc: PaperRepositoryError) -> NoReturn:
-    error_map = {
-        "not_found": 404,
-        "invalid_field": 422,
-        "invalid_sort": 422,
-        "invalid_operator": 422,
-        "invalid_value": 422,
-        "invalid_query_expr": 422,
-        "invalid_query_group": 422,
-        "invalid_fts_query": 400,
-        "bad_request": 400,
-    }
-    status_code = error_map.get(exc.error_code, 400)
+def _build_orchestrator(db: DBDep) -> LibrarianOrchestrator:
+    return LibrarianOrchestrator(db)
+
+
+def _raise_as_http(exc: LibrarianDomainError) -> NoReturn:
     logger.warning(
-        "event=librarian.repository_error status=%s code=%s detail=%s",
-        status_code,
-        exc.error_code,
-        exc.message,
+        "event=librarian.domain_error status=%s detail=%s",
+        exc.status_code,
+        exc.detail,
     )
     raise HTTPException(
-        status_code=status_code,
-        detail={
-            "code": exc.error_code,
-            "message": exc.message,
-        },
+        status_code=exc.status_code,
+        detail=exc.detail,
     )
 
 
@@ -68,33 +54,9 @@ def _raise_repo_error(exc: PaperRepositoryError) -> NoReturn:
     response_model=LibrarianGuideResponse,
     summary="获取 Librarian 字段说明与查询示例",
 )
-def get_librarian_guide() -> LibrarianGuideResponse:
-    return LibrarianGuideResponse.model_validate(build_librarian_guide_payload())
-
-
-@router.post(
-    "/projection",
-    response_model=LibrarianProjectionResponse,
-    summary="按路径获取单篇论文字段",
-)
-def project_paper_field(
-    request: LibrarianProjectionRequest,
-    db: DBDep,
-) -> LibrarianProjectionResponse:
-    repo = PaperQueryRepository(db)
-    try:
-        value = repo.fetch_by_path(
-            paper_id=request.paper_id,
-            field_path=request.field_path,
-        )
-    except PaperRepositoryError as exc:
-        _raise_repo_error(exc)
-
-    return LibrarianProjectionResponse(
-        paper_id=request.paper_id,
-        field_path=request.field_path,
-        value=value,
-    )
+def get_librarian_guide(db: DBDep) -> LibrarianGuideResponse:
+    orchestrator = _build_orchestrator(db)
+    return LibrarianGuideResponse.model_validate(orchestrator.build_guide())
 
 
 @router.post(
@@ -106,24 +68,19 @@ def run_search_paper(
     request: LibrarianUnifiedSearchRequest,
     db: DBDep,
 ) -> LibrarianUnifiedSearchResponse:
-    repo = PaperQueryRepository(db)
+    orchestrator = _build_orchestrator(db)
     try:
-        query_group = (
-            parse_librarian_query_expr(request.query_expr)
-            if request.query_expr
-            else None
-        )
-        paper_ids, total = repo.search_paper(
+        paper_ids, total = orchestrator.run_search(
             project_id=request.project_id,
             paper_id=request.paper_id,
-            query_group=query_group,
+            query_expr=request.query_expr,
             limit=request.limit,
             offset=request.offset,
             sort_by=request.sort_by,
             sort_order=request.sort_order,
         )
-    except PaperRepositoryError as exc:
-        _raise_repo_error(exc)
+    except LibrarianDomainError as exc:
+        _raise_as_http(exc)
 
     return LibrarianUnifiedSearchResponse(
         project_id=request.project_id,
@@ -139,19 +96,20 @@ def run_search_paper(
     response_model=LibrarianGlobalFinderResponse,
     summary="按项目生成文献全局总览",
 )
-def run_global_finder(
+async def run_global_finder(
     request: LibrarianGlobalFinderRequest,
     db: DBDep,
 ) -> LibrarianGlobalFinderResponse:
-    repo = PaperQueryRepository(db)
+    orchestrator = _build_orchestrator(db)
     try:
-        payload = global_finder_by_project(
-            repo=repo,
+        payload = await orchestrator.run_global_finder(
             project_id=request.project_id,
-            top_tags_limit=settings.librarian.top_tags_limit,
+            top_tags_limit=get_app_settings_repo().get().librarian.top_tags_limit,
+            caller="api",
+            caller_id=None,
         )
-    except PaperRepositoryError as exc:
-        _raise_repo_error(exc)
+    except LibrarianDomainError as exc:
+        _raise_as_http(exc)
 
     return LibrarianGlobalFinderResponse.model_validate(payload)
 
@@ -165,18 +123,63 @@ def matrix_project_papers(
     request: LibrarianMatrixRequest,
     db: DBDep,
 ) -> LibrarianMatrixResponse:
-    repo = PaperQueryRepository(db)
+    orchestrator = _build_orchestrator(db)
     try:
-        matrix = matrix_fetch_by_paths(
-            repo=repo,
+        matrix = orchestrator.run_matrix(
             paper_ids=request.paper_ids,
             field_paths=request.field_paths,
         )
-    except PaperRepositoryError as exc:
-        _raise_repo_error(exc)
+    except LibrarianDomainError as exc:
+        _raise_as_http(exc)
 
     return LibrarianMatrixResponse(
         paper_ids=request.paper_ids,
         field_paths=request.field_paths,
         items=matrix,
+    )
+
+
+@router.post(
+    "/query-builder",
+    response_model=LibrarianQueryBuilderResponse,
+    summary="自然语言转 DSL 查询表达式",
+)
+async def run_query_builder(
+    request: LibrarianQueryBuilderRequest,
+) -> LibrarianQueryBuilderResponse:
+    """将用户自然语言查询转换为 Librarian DSL 条件表达式。"""
+    agent = QueryBuilderAgent()
+    agent.append_user_message(
+        QueryBuilderAgentInput(
+            query=request.query,
+            project_context=request.project_context,
+        )
+    )
+    try:
+        result = await agent.run()
+    except Exception as exc:
+        logger.exception("event=query_builder.failed query=%s", request.query)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Query builder failed: {exc}",
+        ) from exc
+
+    # 验证生成的 query_expr 语法合法性
+    try:
+        parse_librarian_query_expr(result.query_expr)
+    except LibrarianQueryError as exc:
+        logger.warning(
+            "event=query_builder.invalid_expr query=%s expr=%s error=%s",
+            request.query,
+            result.query_expr,
+            exc.message,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=f"Generated invalid query_expr: {exc.message}",
+        ) from exc
+
+    return LibrarianQueryBuilderResponse(
+        query_expr=result.query_expr,
+        explanation=result.explanation,
     )

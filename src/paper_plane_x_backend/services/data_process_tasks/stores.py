@@ -1,79 +1,21 @@
 """Data process task state stores."""
 
-import builtins
-import json
-from abc import ABC, abstractmethod
 from collections.abc import Iterator, MutableMapping
-from typing import Any, cast
+from typing import Any
 
-from paper_plane_x_backend.models import DataProcessTaskStatus, SortOrder, TaskSortKey
+from paper_plane_x_backend.models import (
+    DataProcessTask,
+    DataProcessTaskStatus,
+    SortOrder,
+    TaskSortKey,
+)
 from paper_plane_x_backend.services.data_process_tasks.models import (
     DataProcessTaskState,
 )
 from paper_plane_x_backend.services.database import Database
 
 
-class DataProcessTaskStateStore(ABC):
-    """任务状态存储抽象接口。"""
-
-    @abstractmethod
-    def clear(self) -> None:
-        """清空状态存储。"""
-
-    @abstractmethod
-    def upsert(self, state: DataProcessTaskState) -> None:
-        """写入或更新任务状态。"""
-
-    @abstractmethod
-    def get(self, task_id: str) -> DataProcessTaskState | None:
-        """按 task_id 获取任务状态。"""
-
-    @abstractmethod
-    def list(
-        self,
-        paper_id: str | None = None,
-        sort_order: SortOrder = SortOrder.DESC,
-        sort_by: TaskSortKey = TaskSortKey.CREATED_AT,
-    ) -> list[DataProcessTaskState]:
-        """列出任务状态。"""
-
-
-class InMemoryDataProcessTaskStateStore(DataProcessTaskStateStore):
-    """内存版任务状态存储实现。"""
-
-    def __init__(self) -> None:
-        self._states: dict[str, DataProcessTaskState] = {}
-
-    @property
-    def states(self) -> dict[str, DataProcessTaskState]:
-        return self._states
-
-    def clear(self) -> None:
-        self._states.clear()
-
-    def upsert(self, state: DataProcessTaskState) -> None:
-        self._states[state.task_id] = state
-
-    def get(self, task_id: str) -> DataProcessTaskState | None:
-        return self._states.get(task_id)
-
-    def list(
-        self,
-        paper_id: str | None = None,
-        sort_order: SortOrder = SortOrder.DESC,
-        sort_by: TaskSortKey = TaskSortKey.CREATED_AT,
-    ) -> list[DataProcessTaskState]:
-        values = list(self._states.values())
-        if paper_id is not None:
-            values = [state for state in values if state.paper_id == paper_id]
-        values.sort(
-            key=lambda state: getattr(state, sort_by.value),
-            reverse=(sort_order == SortOrder.DESC),
-        )
-        return values
-
-
-class SQLiteDataProcessTaskStateStore(DataProcessTaskStateStore):
+class DataProcessTaskStateStore:
     """SQLite 版任务状态存储实现。"""
 
     def __init__(self, db: Database) -> None:
@@ -83,7 +25,24 @@ class SQLiteDataProcessTaskStateStore(DataProcessTaskStateStore):
         self._db.execute("DELETE FROM data_process_tasks")
 
     def upsert(self, state: DataProcessTaskState) -> None:
-        payload_json = json.dumps(state.payload, ensure_ascii=False)
+        task = DataProcessTask(
+            task_id=state.task_id,
+            paper_id=state.paper_id or "",
+            payload=state.payload or {},
+            status=state.status,
+            created_at=state.created_at,
+            started_at=state.started_at,
+            finished_at=state.finished_at,
+            error=state.error,
+            retry_of_task_id=state.retry_of_task_id,
+            extraction_trace_ids=state.extraction_trace_ids or None,
+            analysis_trace_ids=state.analysis_trace_ids or None,
+            extraction_fact_check_trace_ids=state.extraction_fact_check_trace_ids
+            or None,
+            analysis_fact_check_trace_ids=state.analysis_fact_check_trace_ids
+            or None,
+        )
+        db_dict = task.to_db_dict()
         self._db.execute(
             """
             INSERT INTO data_process_tasks (
@@ -108,19 +67,19 @@ class SQLiteDataProcessTaskStateStore(DataProcessTaskStateStore):
                 analysis_fact_check_trace_ids=excluded.analysis_fact_check_trace_ids
             """,
             (
-                state.task_id,
-                state.paper_id,
-                payload_json,
-                state.status.value,
-                state.created_at,
-                state.started_at,
-                state.finished_at,
-                state.error,
-                state.retry_of_task_id,
-                json.dumps(state.extraction_trace_ids, ensure_ascii=False),
-                json.dumps(state.analysis_trace_ids, ensure_ascii=False),
-                json.dumps(state.extraction_fact_check_trace_ids, ensure_ascii=False),
-                json.dumps(state.analysis_fact_check_trace_ids, ensure_ascii=False),
+                db_dict["task_id"],
+                db_dict["paper_id"],
+                db_dict["payload"],
+                db_dict["status"],
+                db_dict["created_at"],
+                db_dict["started_at"],
+                db_dict["finished_at"],
+                db_dict["error"],
+                db_dict["retry_of_task_id"],
+                db_dict["extraction_trace_ids"],
+                db_dict["analysis_trace_ids"],
+                db_dict["extraction_fact_check_trace_ids"],
+                db_dict["analysis_fact_check_trace_ids"],
             ),
         )
 
@@ -133,99 +92,107 @@ class SQLiteDataProcessTaskStateStore(DataProcessTaskStateStore):
             return None
         return self._row_to_state(row)
 
+    def delete(self, task_id: str) -> None:
+        self._db.delete("data_process_tasks", "task_id = ?", (task_id,))
+
     def list(
         self,
         paper_id: str | None = None,
+        offset: int = 0,
+        limit: int | None = None,
         sort_order: SortOrder = SortOrder.DESC,
         sort_by: TaskSortKey = TaskSortKey.CREATED_AT,
     ) -> list[DataProcessTaskState]:
-        if paper_id is None:
-            rows = self._db.fetchall(
-                f"SELECT * FROM data_process_tasks ORDER BY {sort_by.value} {sort_order.upper()}",
-            )
-        else:
-            rows = self._db.fetchall(
-                f"""
-                SELECT * FROM data_process_tasks
-                WHERE paper_id = ?
-                ORDER BY {sort_by.value} {sort_order.upper()}
-                """,
-                (paper_id,),
-            )
+        params: list[Any] = []
+        where_clause = ""
+        if paper_id is not None:
+            where_clause = "WHERE paper_id = ?"
+            params.append(paper_id)
+
+        limit_clause = ""
+        if limit is not None:
+            limit_clause = "LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+
+        rows = self._db.fetchall(
+            f"""
+            SELECT * FROM data_process_tasks
+            {where_clause}
+            ORDER BY {sort_by.value} {sort_order.upper()}
+            {limit_clause}
+            """,
+            tuple(params),
+        )
         return [self._row_to_state(row) for row in rows]
 
-    @staticmethod
-    def _parse_trace_ids(value: Any) -> builtins.list[str]:
-        if isinstance(value, str):
-            try:
-                parsed = json.loads(value)
-            except json.JSONDecodeError:
-                return []
-            if isinstance(parsed, builtins.list):
-                return [item for item in parsed if isinstance(item, str)]
-            return []
-        if isinstance(value, builtins.list):
-            return [
-                item
-                for item in cast(builtins.list[Any], value)
-                if isinstance(item, str)
-            ]
-        return []
+    def count_total(self, paper_id: str | None = None) -> int:
+        if paper_id is None:
+            row = self._db.fetchone(
+                "SELECT COUNT(*) AS count FROM data_process_tasks"
+            )
+        else:
+            row = self._db.fetchone(
+                "SELECT COUNT(*) AS count FROM data_process_tasks WHERE paper_id = ?",
+                (paper_id,),
+            )
+        return int(row["count"]) if row else 0
+
+    def count_statuses(self) -> dict[str, int]:
+        counts: dict[str, int] = {
+            "queued": 0,
+            "running": 0,
+            "completed": 0,
+            "failed": 0,
+            "canceled": 0,
+        }
+        status_map = {
+            DataProcessTaskStatus.QUEUED.value: "queued",
+            DataProcessTaskStatus.RUNNING.value: "running",
+            DataProcessTaskStatus.CANCELING.value: "running",
+            DataProcessTaskStatus.COMPLETED.value: "completed",
+            DataProcessTaskStatus.FAILED.value: "failed",
+            DataProcessTaskStatus.CANCELED.value: "canceled",
+        }
+        rows = self._db.fetchall(
+            """
+            SELECT status, COUNT(*) AS count
+            FROM data_process_tasks
+            GROUP BY status
+            """
+        )
+        for row in rows:
+            status = row.get("status")
+            if not isinstance(status, str):
+                continue
+            key = status_map.get(status)
+            if key:
+                counts[key] = int(row.get("count") or 0)
+        return counts
 
     @staticmethod
     def _row_to_state(row: dict[str, Any]) -> DataProcessTaskState:
-        payload_raw = row.get("payload")
-        payload: dict[str, Any]
-        if isinstance(payload_raw, str):
-            parsed_payload = json.loads(payload_raw)
-            if isinstance(parsed_payload, dict):
-                payload = {
-                    key: value
-                    for key, value in cast(dict[Any, Any], parsed_payload).items()
-                    if isinstance(key, str)
-                }
-            else:
-                payload = {}
-        elif isinstance(payload_raw, dict):
-            payload = {
-                key: value
-                for key, value in cast(dict[Any, Any], payload_raw).items()
-                if isinstance(key, str)
-            }
-        else:
-            payload = {}
+        task = DataProcessTask.from_db_row(row)
 
-        paper_id = row.get("paper_id")
-        if not isinstance(paper_id, str) or not paper_id:
-            payload_paper_id = payload.get("paper_id")
+        paper_id = task.paper_id
+        if not paper_id:
+            payload_paper_id = task.payload.get("paper_id") if task.payload else None
             paper_id = payload_paper_id if isinstance(payload_paper_id, str) else ""
 
         return DataProcessTaskState(
-            task_id=row["task_id"],
+            task_id=task.task_id,
             paper_id=paper_id,
-            payload=payload,
-            status=DataProcessTaskStatus(row["status"]),
-            created_at=row["created_at"],
-            started_at=row.get("started_at"),
-            finished_at=row.get("finished_at"),
-            error=row.get("error"),
-            retry_of_task_id=row.get("retry_of_task_id"),
-            extraction_trace_ids=SQLiteDataProcessTaskStateStore._parse_trace_ids(
-                row.get("extraction_trace_ids")
-            ),
-            analysis_trace_ids=SQLiteDataProcessTaskStateStore._parse_trace_ids(
-                row.get("analysis_trace_ids")
-            ),
-            extraction_fact_check_trace_ids=(
-                SQLiteDataProcessTaskStateStore._parse_trace_ids(
-                    row.get("extraction_fact_check_trace_ids")
-                )
-            ),
-            analysis_fact_check_trace_ids=(
-                SQLiteDataProcessTaskStateStore._parse_trace_ids(
-                    row.get("analysis_fact_check_trace_ids")
-                )
-            ),
+            payload=task.payload or {},
+            status=task.status,
+            created_at=task.created_at,
+            started_at=task.started_at,
+            finished_at=task.finished_at,
+            error=task.error,
+            retry_of_task_id=task.retry_of_task_id,
+            extraction_trace_ids=task.extraction_trace_ids or [],
+            analysis_trace_ids=task.analysis_trace_ids or [],
+            extraction_fact_check_trace_ids=task.extraction_fact_check_trace_ids
+            or [],
+            analysis_fact_check_trace_ids=task.analysis_fact_check_trace_ids or [],
         )
 
 
@@ -254,4 +221,4 @@ class TaskStateStoreView(MutableMapping[str, DataProcessTaskState]):
             yield state.task_id
 
     def __len__(self) -> int:
-        return len(self._store.list())
+        return self._store.count_total()

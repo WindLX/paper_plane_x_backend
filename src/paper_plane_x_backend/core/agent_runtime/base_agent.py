@@ -7,13 +7,14 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
 from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
-from paper_plane_x_backend.config import LLMConfig, settings
 from paper_plane_x_backend.core.agent_runtime.exceptions import (
     AgentExecutionError,
     AgentValidationError,
@@ -22,11 +23,28 @@ from paper_plane_x_backend.core.agent_runtime.llm_client import LLMClient
 from paper_plane_x_backend.core.agent_runtime.memory import MemoryManager
 from paper_plane_x_backend.core.agent_runtime.tooling import Tool, ToolRegistry
 from paper_plane_x_backend.models import AgentTrace
+from paper_plane_x_backend.models.app_settings import LLMConfig
 from paper_plane_x_backend.services import get_db
+from paper_plane_x_backend.services.agent_trace.repository import (
+    AgentTraceRepository,
+)
+from paper_plane_x_backend.services.app_settings import get_app_settings_repo
 
 logger = logging.getLogger(__name__)
 
 AgentMode = Literal["api", "normal"]
+
+
+@dataclass
+class AgentStreamChunk:
+    """Agent 流式执行输出块."""
+
+    delta: str = ""
+    reasoning_delta: str = ""
+    tool_call_name: str | None = None
+    is_complete: bool = False
+    content: str = ""
+    step: int = 0
 
 
 class BaseAgent:
@@ -49,6 +67,8 @@ class BaseAgent:
         llm_config: LLMConfig | None = None,
         agent_name: str | None = None,
         tool_context: dict[str, Any] | None = None,
+        caller: str | None = None,
+        caller_id: str | None = None,
     ):
         if mode == "api" and output_schema is None:
             raise ValueError("output_schema is required when mode='api'")
@@ -60,13 +80,15 @@ class BaseAgent:
         self.agent_name = agent_name or self.__class__.__name__
         self.trace_ids: list[str] = []
         self.tool_context = tool_context or {}
+        self.caller = caller
+        self.caller_id = caller_id
 
         self.tool_registry = ToolRegistry()
         if tools:
             for tool in tools:
                 self.tool_registry.register(tool)
 
-        config = llm_config or settings.llm
+        config = llm_config or get_app_settings_repo().get().llm
         self.llm = LLMClient.from_config(config)
         self.memory = MemoryManager(
             system_prompt=system_prompt or "",
@@ -357,6 +379,7 @@ class BaseAgent:
     ) -> None:
         try:
             db = get_db()
+            repo = AgentTraceRepository(db)
             usage = usage or {}
             trace_id = str(uuid4())
             trace = AgentTrace(
@@ -368,9 +391,11 @@ class BaseAgent:
                 completion_tokens=usage.get("completion_tokens"),
                 total_tokens=usage.get("total_tokens"),
                 usage_payload=usage or None,
+                caller=self.caller,
+                caller_id=self.caller_id,
                 created_at=datetime.now(),
             )
-            db.insert("agent_traces", trace.to_db_dict())
+            repo.create(trace)
             self.trace_ids.append(trace_id)
         except Exception as e:
             logger.warning(
@@ -544,10 +569,17 @@ class BaseAgent:
                         step + 1,
                         len(response.tool_calls),
                     )
+                    tool_ctx = {
+                        **self.tool_context,
+                        "_caller_agent_name": self.agent_name,
+                        "_caller_trace_id": (
+                            self.trace_ids[-1] if self.trace_ids else None
+                        ),
+                    }
                     for tc in response.tool_calls:
                         tool_msg = await self.tool_registry.execute_tool_call(
                             tc,
-                            context=self.tool_context,
+                            context=tool_ctx,
                         )
                         self.memory.append_tool_message(tool_msg)
                     continue
@@ -592,3 +624,175 @@ class BaseAgent:
         if self.mode == "api":
             return await self._run_api()
         return await self._run_normal()
+
+    async def run_stream(self) -> AsyncGenerator[AgentStreamChunk, None]:
+        """流式执行 agent（仅支持 normal 模式）.
+
+        Yields:
+            AgentStreamChunk: 每块增量内容；最终块 is_complete=True。
+        """
+        self.trace_ids = []
+        if self.mode == "api":
+            raise AgentExecutionError(
+                message="run_stream only supports normal mode",
+                agent_name=self.agent_name,
+            )
+        async for chunk in self._run_normal_stream():
+            yield chunk
+
+    async def _run_normal_stream(self) -> AsyncGenerator[AgentStreamChunk, None]:
+        """normal 模式流式执行（内部 ReAct 循环，逐 token 透传）."""
+        logger.info(
+            "event=agent.run_stream_started agent=%s mode=normal",
+            self.agent_name,
+        )
+        if not self.memory.has_role_message("user"):
+            raise AgentExecutionError(
+                message="No user message in memory. Append user input before run_stream().",
+                agent_name=self.agent_name,
+            )
+
+        if len(self.tool_registry) == 0:
+            # 无工具时直接流式调用 LLM
+            full_content = ""
+            full_reasoning = ""
+            last_model: str | None = None
+            async for chunk in self.llm.chat_stream(self.memory.get_messages()):
+                if chunk.content_delta:
+                    full_content += chunk.content_delta
+                if chunk.reasoning_content_delta:
+                    full_reasoning += chunk.reasoning_content_delta
+                last_model = chunk.model or last_model
+                yield AgentStreamChunk(
+                    delta=chunk.content_delta or "",
+                    reasoning_delta=chunk.reasoning_content_delta or "",
+                )
+            self.memory.append_assistant_message(
+                content=full_content,
+                name=self.agent_name,
+                reasoning_content=full_reasoning or None,
+            )
+            if self.save_trace:
+                self._save_trace(
+                    messages=self.memory.dump_messages(),
+                    llm_model=last_model,
+                )
+            yield AgentStreamChunk(
+                delta="",
+                is_complete=True,
+                content=full_content,
+            )
+            logger.info(
+                "event=agent.run_stream_completed agent=%s mode=normal step=1",
+                self.agent_name,
+            )
+            return
+
+        for step in range(self.max_steps):
+            logger.debug(
+                "event=agent.stream_step_started agent=%s step=%s max_steps=%s",
+                self.agent_name,
+                step + 1,
+                self.max_steps,
+            )
+            try:
+                messages = self._get_messages_with_tool_guide()
+                tools = self.tool_registry.to_openai_format()
+                stream = self.llm.chat_stream(messages, tools=tools)
+
+                full_content = ""
+                full_reasoning = ""
+                final_tool_calls: list = []
+                last_model: str | None = None
+
+                async for chunk in stream:
+                    if chunk.content_delta:
+                        full_content += chunk.content_delta
+                    if chunk.reasoning_content_delta:
+                        full_reasoning += chunk.reasoning_content_delta
+                    last_model = chunk.model or last_model
+                    if chunk.is_finished:
+                        final_tool_calls = chunk.tool_calls
+                    yield AgentStreamChunk(
+                        delta=chunk.content_delta or "",
+                        reasoning_delta=chunk.reasoning_content_delta or "",
+                        step=step + 1,
+                    )
+
+                self.memory.append_assistant_message(
+                    content=full_content,
+                    name=self.agent_name,
+                    tool_calls=final_tool_calls or None,
+                    reasoning_content=full_reasoning or None,
+                )
+
+                if self.save_trace:
+                    self._save_trace(
+                        messages=self.memory.dump_messages(),
+                        llm_model=last_model,
+                    )
+
+                if final_tool_calls:
+                    logger.debug(
+                        "event=agent.stream_tool_calls_received agent=%s step=%s tool_call_count=%s",
+                        self.agent_name,
+                        step + 1,
+                        len(final_tool_calls),
+                    )
+                    tool_ctx = {
+                        **self.tool_context,
+                        "_caller_agent_name": self.agent_name,
+                        "_caller_trace_id": (
+                            self.trace_ids[-1] if self.trace_ids else None
+                        ),
+                    }
+                    for tc in final_tool_calls:
+                        tool_msg = await self.tool_registry.execute_tool_call(
+                            tc,
+                            context=tool_ctx,
+                        )
+                        self.memory.append_tool_message(tool_msg)
+                        yield AgentStreamChunk(
+                            delta="",
+                            tool_call_name=tc.function.name,
+                            step=step + 1,
+                        )
+                    continue
+
+                logger.info(
+                    "event=agent.run_stream_completed agent=%s mode=normal step=%s",
+                    self.agent_name,
+                    step + 1,
+                )
+                yield AgentStreamChunk(
+                    delta="",
+                    is_complete=True,
+                    content=full_content,
+                    step=step + 1,
+                )
+                return
+            except asyncio.CancelledError:
+                logger.info(
+                    "event=agent.run_stream_canceled agent=%s step=%s",
+                    self.agent_name,
+                    step + 1,
+                )
+                raise
+            except Exception as e:
+                logger.exception(
+                    "event=agent.run_stream_failed agent=%s step=%s max_steps=%s",
+                    self.agent_name,
+                    step + 1,
+                    self.max_steps,
+                )
+                raise AgentExecutionError(
+                    message=f"Stream step execution failed: {e}",
+                    agent_name=self.agent_name,
+                    step_count=step + 1,
+                ) from e
+
+        raise AgentExecutionError(
+            message=f"Exceeded maximum steps ({self.max_steps})",
+            agent_name=self.agent_name,
+            step_count=self.max_steps,
+        )

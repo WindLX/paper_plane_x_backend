@@ -33,12 +33,7 @@ Paper Plane X 后端负责整个数据处理主链路：
 
 4. **控制台与检索 API**
    - 控制台所需的项目、任务、导出接口
-   - Librarian 字段投影、矩阵对比、项目内搜索
-
-5. **论文对话学习**
-   - Teacher 会话式学习 Agent
-   - 单篇论文上下文注入
-   - 会话历史与 trace 追踪
+   - Librarian 字段投影、矩阵对比、项目内搜索、Deep Diver 深挖论文细节
 
 ## 2. 快速开始
 
@@ -113,6 +108,7 @@ uv run pyright
 - `PATCH /api/v1/projects/{project_id}`
 - `DELETE /api/v1/projects/{project_id}`
 - `GET /api/v1/projects/{project_id}/papers`
+- `GET /api/v1/projects/{project_id}/papers/status-counts`
 - `POST /api/v1/projects/{project_id}/papers/{paper_id}`
 - `DELETE /api/v1/projects/{project_id}/papers/{paper_id}`
 - `POST /api/v1/projects/{project_id}/search`
@@ -121,7 +117,8 @@ uv run pyright
 ### 4.2 Paper
 
 - `POST /api/v1/papers`
-- `GET /api/v1/papers`
+- `POST /api/v1/papers/batch-get`
+- `GET /api/v1/papers/status-counts`
 - `GET /api/v1/papers/{paper_id}`
 - `PATCH /api/v1/papers/{paper_id}`
 - `POST /api/v1/papers/{paper_id}/reprocess`

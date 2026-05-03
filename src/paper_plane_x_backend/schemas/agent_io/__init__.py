@@ -20,6 +20,18 @@ from paper_plane_x_backend.schemas.agent_io.data_processor import (
     ResearchGap,
     SynthesisData,
 )
+from paper_plane_x_backend.schemas.agent_io.librarian import (
+    DeepDiverAgentInput,
+    DeepDiverAgentOutput,
+    GlobalFinderAgentInput,
+    GlobalFinderAgentOutput,
+    GlobalFinderPaperSummary,
+    GlobalFinderStats,
+    QueryBuilderAgentInput,
+    QueryBuilderAgentOutput,
+    TagCount,
+    YearDistribution,
+)
 
 __all__ = [
     # Base schemas
@@ -40,4 +52,15 @@ __all__ = [
     "ExtractionAgentOutput",
     "FactCheckAgentUserInput",
     "FactCheckAgentOutput",
+    # Librarian agent schemas
+    "DeepDiverAgentInput",
+    "DeepDiverAgentOutput",
+    "GlobalFinderPaperSummary",
+    "GlobalFinderStats",
+    "GlobalFinderAgentInput",
+    "GlobalFinderAgentOutput",
+    "QueryBuilderAgentInput",
+    "QueryBuilderAgentOutput",
+    "YearDistribution",
+    "TagCount",
 ]

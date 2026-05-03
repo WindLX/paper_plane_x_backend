@@ -1,12 +1,14 @@
 """FastAPI 应用主入口."""
 
+import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
 
 from paper_plane_x_backend.api.routers import (
     agent_traces,
@@ -16,8 +18,12 @@ from paper_plane_x_backend.api.routers import (
     paper,
     project,
 )
+from paper_plane_x_backend.api.routers import (
+    settings as settings_router,
+)
 from paper_plane_x_backend.config import settings
 from paper_plane_x_backend.services import init_database
+from paper_plane_x_backend.services.app_settings import AppSettingsRepository
 from paper_plane_x_backend.services.data_process_tasks.lifecycle import (
     start_worker_pool,
     stop_worker_pool,
@@ -49,12 +55,13 @@ app.add_middleware(
 )
 
 # 注册路由
-app.include_router(project.router, prefix="/api/v1")
 app.include_router(paper.router, prefix="/api/v1")
+app.include_router(project.router, prefix="/api/v1")
 app.include_router(agent_traces.router, prefix="/api/v1")
 app.include_router(librarian.router, prefix="/api/v1")
 app.include_router(data_process.router, prefix="/api/v1")
 app.include_router(hitl.router, prefix="/api/v1")
+app.include_router(settings_router.router, prefix="/api/v1")
 
 
 def _resolve_console_dist_dir() -> Path | None:
@@ -69,20 +76,66 @@ def _resolve_console_dist_dir() -> Path | None:
     return None
 
 
-def _serve_console_file(resource_path: str | None = None) -> FileResponse:
+_templates: Jinja2Templates | None = None
+
+
+def _get_templates() -> Jinja2Templates | None:
+    global _templates
+    if _templates is not None:
+        return _templates
+    console_dist_dir = _resolve_console_dist_dir()
+    if console_dist_dir is None:
+        return None
+    _templates = Jinja2Templates(directory=str(console_dist_dir))
+    return _templates
+
+
+def _get_public_base_url(request: Request) -> str:
+    """获取客户端实际访问的 Base URL（支持 Nginx 等反向代理）."""
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    forwarded_port = request.headers.get("x-forwarded-port")
+
+    if forwarded_host:
+        proto = forwarded_proto or "https"
+        host = forwarded_host
+        if forwarded_port and forwarded_port not in ("80", "443"):
+            return f"{proto}://{host}:{forwarded_port}"
+        return f"{proto}://{host}"
+
+    return str(request.base_url).rstrip("/")
+
+
+def _build_app_config_json(request: Request) -> str:
+    """构造前端运行时配置 JSON 字符串."""
+    base_url = _get_public_base_url(request)
+    config = {
+        "apiBaseUrl": f"{base_url}/api/v1",
+        "appVersion": get_app_version(),
+    }
+    return json.dumps(config, ensure_ascii=False)
+
+
+def _serve_index(request: Request) -> Response:
+    """通过 Jinja2 模板渲染 index.html，注入运行时配置."""
+    templates = _get_templates()
+    if templates is None:
+        raise HTTPException(status_code=404, detail="Console build not found")
+    app_config = _build_app_config_json(request)
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {"request": request, "app_config": app_config},
+    )
+
+
+def _serve_console_file(request: Request, resource_path: str | None = None) -> Response:
     console_dist_dir = _resolve_console_dist_dir()
     if console_dist_dir is None:
         raise HTTPException(status_code=404, detail="Console build not found")
 
-    index_path = console_dist_dir / "index.html"
     if not resource_path:
-        return FileResponse(index_path)
-
-    # Backward compatibility for previously-built console assets with `/console/*` base.
-    if resource_path == "console":
-        return FileResponse(index_path)
-    if resource_path.startswith("console/"):
-        resource_path = resource_path[len("console/") :]
+        return _serve_index(request)
 
     candidate = (console_dist_dir / resource_path).resolve()
     try:
@@ -93,7 +146,7 @@ def _serve_console_file(resource_path: str | None = None) -> FileResponse:
     if candidate.is_file():
         return FileResponse(candidate)
 
-    return FileResponse(index_path)
+    return _serve_index(request)
 
 
 @asynccontextmanager
@@ -101,6 +154,33 @@ async def lifespan(app: FastAPI):
     """应用启动事件（Lifespan）."""
     settings.ensure_directories()
     init_database()
+
+    # 若 Provider 池为空，从全局 LLM 配置创建默认 Provider
+    from paper_plane_x_backend.models.app_settings import LLMProvider
+    from paper_plane_x_backend.services.app_settings import (
+        get_app_settings_repo,
+        init_app_settings_repo,
+    )
+
+    app_settings_repo = init_app_settings_repo()
+    app_settings = app_settings_repo.get()
+    get_app_settings_repo().ensure_default_provider(
+        LLMProvider(
+            name="default",
+            model=app_settings.llm.model,
+            api_key=app_settings.llm.api_key,
+            base_url=app_settings.llm.base_url,
+            temperature=app_settings.llm.temperature,
+            max_tokens=app_settings.llm.max_tokens,
+            timeout=app_settings.llm.timeout,
+            custom_headers=app_settings.llm.custom_headers,
+            thinking_enabled=app_settings.llm.thinking_enabled,
+            reasoning_effort=app_settings.llm.reasoning_effort,
+            extra_body=app_settings.llm.extra_body,
+            is_vlm=app_settings.llm.is_vlm,
+        )
+    )
+
     await start_worker_pool()
     logger.info(
         "event=app.startup_completed log_file=%s",
@@ -130,10 +210,10 @@ async def root_redirect() -> RedirectResponse:
 
 
 @app.get("/{resource_path:path}", include_in_schema=False)
-async def console_fallback(resource_path: str) -> FileResponse:
+async def console_fallback(resource_path: str, request: Request) -> Response:
     if resource_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="Not found")
-    return _serve_console_file(resource_path)
+    return _serve_console_file(request, resource_path)
 
 
 def run():
@@ -144,6 +224,8 @@ def run():
         host=settings.api.host,
         port=settings.api.port,
         reload=settings.api.reload,
+        ssl_certfile=settings.api.ssl_certfile,
+        ssl_keyfile=settings.api.ssl_keyfile,
     )
 
 

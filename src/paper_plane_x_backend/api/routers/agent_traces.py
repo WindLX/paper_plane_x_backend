@@ -1,72 +1,41 @@
 """Agent trace 路由。"""
 
-import json
-from typing import Any
+import logging
 
 from fastapi import APIRouter, HTTPException, status
 
 from paper_plane_x_backend.api.dependencies import DBDep
-from paper_plane_x_backend.schemas import (
+from paper_plane_x_backend.schemas.api import (
+    AgentTraceListRequest,
+    AgentTraceListResponse,
     AgentTraceQueryRequest,
     AgentTraceQueryResponse,
     AgentTraceResponse,
+    AgentTraceStats,
     MessageResponse,
+)
+from paper_plane_x_backend.services.agent_trace.repository import (
+    AgentTraceRepository,
+    AgentTraceRepositoryError,
 )
 
 router = APIRouter(prefix="/agent-traces", tags=["agent-traces"])
+logger = logging.getLogger(__name__)
 
 
-def _parse_messages(value: object) -> list[dict[str, Any]]:
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return []
-        if isinstance(parsed, list):
-            result: list[dict[str, Any]] = []
-            for item in parsed:
-                if isinstance(item, dict):
-                    result.append({k: v for k, v in item.items() if isinstance(k, str)})
-            return result
-        return []
-
-    if isinstance(value, list):
-        result: list[dict[str, Any]] = []
-        for item in value:
-            if isinstance(item, dict):
-                result.append({k: v for k, v in item.items() if isinstance(k, str)})
-        return result
-
-    return []
-
-
-def _parse_usage_payload(value: object) -> dict[str, Any] | None:
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return None
-        if isinstance(parsed, dict):
-            return {k: v for k, v in parsed.items() if isinstance(k, str)}
-        return None
-
-    if isinstance(value, dict):
-        return {k: v for k, v in value.items() if isinstance(k, str)}
-
-    return None
-
-
-def _row_to_trace(row: dict[str, Any]) -> AgentTraceResponse:
+def _trace_dict_to_response(trace_dict: dict) -> AgentTraceResponse:
     return AgentTraceResponse(
-        trace_id=row["trace_id"],
-        agent_name=row["agent_name"],
-        messages=_parse_messages(row.get("messages")),
-        llm_model=row.get("llm_model"),
-        prompt_tokens=row.get("prompt_tokens"),
-        completion_tokens=row.get("completion_tokens"),
-        total_tokens=row.get("total_tokens"),
-        usage_payload=_parse_usage_payload(row.get("usage_payload")),
-        created_at=row["created_at"],
+        trace_id=trace_dict["trace_id"],
+        agent_name=trace_dict["agent_name"],
+        messages=trace_dict.get("messages", []),
+        llm_model=trace_dict.get("llm_model"),
+        prompt_tokens=trace_dict.get("prompt_tokens"),
+        completion_tokens=trace_dict.get("completion_tokens"),
+        total_tokens=trace_dict.get("total_tokens"),
+        usage_payload=trace_dict.get("usage_payload"),
+        created_at=trace_dict["created_at"],
+        caller=trace_dict.get("caller"),
+        caller_id=trace_dict.get("caller_id"),
     )
 
 
@@ -83,19 +52,14 @@ async def query_agent_traces(
     if not trace_ids:
         return AgentTraceQueryResponse(items=[])
 
-    placeholders = ", ".join(["?"] * len(trace_ids))
-    rows = db.fetchall(
-        f"""
-        SELECT
-            trace_id, agent_name, messages, llm_model,
-            prompt_tokens, completion_tokens, total_tokens, usage_payload, created_at
-        FROM agent_traces
-        WHERE trace_id IN ({placeholders})
-        """,
-        tuple(trace_ids),
+    logger.debug(
+        "event=agent_trace.query_request_received trace_count=%s",
+        len(trace_ids),
     )
+    repo = AgentTraceRepository(db)
+    trace_dicts = repo.batch_get(trace_ids)
 
-    trace_map = {row["trace_id"]: _row_to_trace(row) for row in rows}
+    trace_map = {t["trace_id"]: _trace_dict_to_response(t) for t in trace_dicts}
     items: list[AgentTraceResponse] = []
     seen: set[str] = set()
     for trace_id in trace_ids:
@@ -106,6 +70,11 @@ async def query_agent_traces(
             items.append(trace)
             seen.add(trace_id)
 
+    logger.info(
+        "event=agent_trace.query_completed requested=%s found=%s",
+        len(trace_ids),
+        len(items),
+    )
     return AgentTraceQueryResponse(items=items)
 
 
@@ -121,12 +90,75 @@ async def delete_agent_trace(
     trace_id: str,
     db: DBDep,
 ) -> MessageResponse:
-    row = db.fetchone("SELECT 1 FROM agent_traces WHERE trace_id = ?", (trace_id,))
-    if row is None:
+    logger.info("event=agent_trace.delete_request_received trace_id=%s", trace_id)
+    repo = AgentTraceRepository(db)
+    try:
+        repo.delete(trace_id)
+    except AgentTraceRepositoryError as exc:
+        logger.warning(
+            "event=agent_trace.delete_failed trace_id=%s error=%s",
+            trace_id,
+            exc.message,
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Trace {trace_id} not found",
-        )
-
-    db.delete("agent_traces", "trace_id = ?", (trace_id,))
+            detail=exc.message,
+        ) from exc
+    logger.info("event=agent_trace.deleted trace_id=%s", trace_id)
     return MessageResponse(message=f"Trace {trace_id} deleted")
+
+
+@router.post(
+    "/list",
+    response_model=AgentTraceListResponse,
+    summary="分页列式查询 Agent traces",
+)
+async def list_agent_traces(
+    request: AgentTraceListRequest,
+    db: DBDep,
+) -> AgentTraceListResponse:
+    logger.debug(
+        "event=agent_trace.list_request_received offset=%s limit=%s",
+        request.offset,
+        request.limit,
+    )
+    repo = AgentTraceRepository(db)
+
+    trace_dicts = repo.list(
+        offset=request.offset,
+        limit=request.limit,
+        sort_by=request.sort_by,
+        sort_order=request.sort_order,
+        agent_name=request.agent_name,
+        caller=request.caller,
+        caller_id=request.caller_id,
+        llm_model=request.llm_model,
+        created_at_from=request.created_at_from,
+        created_at_to=request.created_at_to,
+    )
+    total = repo.count(
+        agent_name=request.agent_name,
+        caller=request.caller,
+        caller_id=request.caller_id,
+        llm_model=request.llm_model,
+        created_at_from=request.created_at_from,
+        created_at_to=request.created_at_to,
+    )
+    agent_name_counts = repo.count_by_agent_name()
+
+    items = [_trace_dict_to_response(t) for t in trace_dicts]
+
+    logger.info(
+        "event=agent_trace.list_completed offset=%s limit=%s returned=%s total=%s",
+        request.offset,
+        request.limit,
+        len(items),
+        total,
+    )
+    return AgentTraceListResponse(
+        offset=request.offset,
+        limit=request.limit,
+        total=total,
+        items=items,
+        stats=AgentTraceStats(agent_name_counts=agent_name_counts),
+    )

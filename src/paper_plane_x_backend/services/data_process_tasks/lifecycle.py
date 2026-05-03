@@ -2,7 +2,7 @@
 
 import logging
 
-from paper_plane_x_backend.config import settings
+from paper_plane_x_backend.services.app_settings import get_app_settings_repo
 from paper_plane_x_backend.services.data_process_tasks.task_manager import (
     DataProcessTaskManager,
 )
@@ -15,10 +15,11 @@ _task_manager_instance: DataProcessTaskManager | None = None
 def get_data_process_task_manager() -> DataProcessTaskManager:
     global _task_manager_instance
     if _task_manager_instance is None:
+        app_settings = get_app_settings_repo().get()
         _task_manager_instance = DataProcessTaskManager(
-            worker_count=settings.data_process.worker_count,
-            shutdown_timeout=settings.data_process.shutdown_timeout,
-            task_max_seconds=settings.data_process.task_max_seconds,
+            worker_count=app_settings.data_process.worker_count,
+            shutdown_timeout=app_settings.data_process.shutdown_timeout,
+            task_max_seconds=app_settings.data_process.task_max_seconds,
         )
     return _task_manager_instance
 

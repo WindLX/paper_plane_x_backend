@@ -13,7 +13,7 @@
 ## 1. User Input (原始论文信息)
 role 为 user 的消息。
 - `md_content`: 原始论文的全文 Markdown 文本。
-- `images`: 原始 Markdown 中提取的图片数据， 元素是 base64 编码的图片数据。
+- `images`: 原始 Markdown 中提取的图片数据， 元素是 base64 编码的图片数据，可能为空。
 
 ## 2. FactCheckAgent Input (事实核查 Agent 反馈)
 role 为 assistant，name 为 FactCheckAgent 的 消息。

@@ -14,10 +14,11 @@ from paper_plane_x_backend.models import (
     ProjectSortKey,
     SortOrder,
 )
-from paper_plane_x_backend.schemas import (
+from paper_plane_x_backend.schemas.api import (
     LibrarianUnifiedSearchRequest,
     LibrarianUnifiedSearchResponse,
     MessageResponse,
+    PaperStatusCountResponse,
     ProjectCreateRequest,
     ProjectExportRequest,
     ProjectListResponse,
@@ -52,6 +53,7 @@ def _project_to_response(project: Project) -> ProjectResponse:
         project_id=project.project_id,
         name=project.name,
         description=project.description,
+        agent_summary=project.agent_summary,
         created_at=project.created_at,
         updated_at=project.updated_at,
         operation_logs=project.operation_logs,
@@ -77,10 +79,12 @@ async def create_project(
     Returns:
         ProjectResponse: 创建的项目
     """
+    logger.info("event=project.create_request_received name=%s", request.name)
     orchestrator = _build_orchestrator(db)
     project = orchestrator.create_project(
         name=request.name,
         description=request.description,
+        agent_summary=request.agent_summary,
     )
     return _project_to_response(project)
 
@@ -110,6 +114,9 @@ async def list_projects(
     Returns:
         ProjectListResponse: 项目列表响应
     """
+    logger.debug(
+        "event=project.list_request_received offset=%s limit=%s", offset, limit
+    )
     orchestrator = _build_orchestrator(db)
     projects, total = orchestrator.list_projects(
         offset=offset, limit=limit, sort_order=sort_order, sort_by=sort_by
@@ -148,6 +155,7 @@ async def get_project(
     Raises:
         HTTPException: 项目不存在时抛出 404
     """
+    logger.debug("event=project.get_request_received project_id=%s", project_id)
     orchestrator = _build_orchestrator(db)
     try:
         project = orchestrator.get_project(project_id)
@@ -183,12 +191,14 @@ async def update_project(
     Raises:
         HTTPException: 项目不存在时抛出 404
     """
+    logger.info("event=project.update_request_received project_id=%s", project_id)
     orchestrator = _build_orchestrator(db)
     try:
         project = orchestrator.update_project(
             project_id=project_id,
             name=request.name,
             description=request.description,
+            agent_summary=request.agent_summary,
         )
     except ProjectDomainError as exc:
         _raise_as_http(exc)
@@ -220,6 +230,7 @@ async def delete_project(
     Raises:
         HTTPException: 项目不存在时抛出 404
     """
+    logger.info("event=project.delete_request_received project_id=%s", project_id)
     orchestrator = _build_orchestrator(db)
     try:
         orchestrator.delete_project(project_id)
@@ -227,6 +238,63 @@ async def delete_project(
         _raise_as_http(exc)
 
     return MessageResponse(message=f"Project {project_id} deleted successfully")
+
+
+@router.put(
+    "/{project_id}/agent-summary",
+    response_model=ProjectResponse,
+    summary="设置项目的 agent_summary",
+    responses={
+        404: {"description": "项目不存在"},
+    },
+)
+async def set_project_agent_summary(
+    project_id: str,
+    content: str,
+    db: DBDep,
+) -> ProjectResponse:
+    """设置项目的 agent_summary（覆盖写入）。"""
+    logger.info(
+        "event=project.set_agent_summary_request_received project_id=%s",
+        project_id,
+    )
+    orchestrator = _build_orchestrator(db)
+    try:
+        project = orchestrator.update_project(
+            project_id=project_id,
+            name=None,
+            description=None,
+            agent_summary=content,
+        )
+    except ProjectDomainError as exc:
+        _raise_as_http(exc)
+    return _project_to_response(project)
+
+
+@router.delete(
+    "/{project_id}/agent-summary",
+    response_model=ProjectResponse,
+    summary="删除项目的 agent_summary",
+    responses={
+        404: {"description": "项目不存在"},
+    },
+)
+async def delete_project_agent_summary(
+    project_id: str,
+    db: DBDep,
+) -> ProjectResponse:
+    """删除项目的 agent_summary（置为 null）。"""
+    logger.info(
+        "event=project.delete_agent_summary_request_received project_id=%s",
+        project_id,
+    )
+    orchestrator = _build_orchestrator(db)
+    try:
+        orchestrator.project_repo.delete_agent_summary(project_id)
+        project = orchestrator.get_project(project_id)
+    except ProjectDomainError as exc:
+        _raise_as_http(exc)
+    return _project_to_response(project)
 
 
 @router.post(
@@ -242,6 +310,11 @@ async def export_project(
     db: DBDep,
     background_tasks: BackgroundTasks,
 ) -> FileResponse:
+    logger.info(
+        "event=project.export_request_received project_id=%s fields_count=%s",
+        project_id,
+        len(request.fields),
+    )
     orchestrator = _build_orchestrator(db)
     try:
         zip_path, download_name = orchestrator.export_project_bundle(
@@ -279,6 +352,11 @@ async def link_paper(
     paper_id: str,
     db: DBDep,
 ) -> MessageResponse:
+    logger.info(
+        "event=project.link_paper_request_received project_id=%s paper_id=%s",
+        project_id,
+        paper_id,
+    )
     orchestrator = _build_orchestrator(db)
     try:
         orchestrator.link_paper(project_id=project_id, paper_id=paper_id)
@@ -301,6 +379,11 @@ async def unlink_paper(
     db: DBDep,
 ) -> MessageResponse:
     """从项目中移除论文关联，不删除论文实体。"""
+    logger.info(
+        "event=project.unlink_paper_request_received project_id=%s paper_id=%s",
+        project_id,
+        paper_id,
+    )
     orchestrator = _build_orchestrator(db)
     try:
         orchestrator.unlink_paper(project_id=project_id, paper_id=paper_id)
@@ -310,6 +393,42 @@ async def unlink_paper(
     return MessageResponse(
         message=f"Paper {paper_id} unlinked from project {project_id}"
     )
+
+
+@router.get(
+    "/{project_id}/papers/status-counts",
+    response_model=PaperStatusCountResponse,
+    summary="获取项目下论文状态统计",
+    responses={
+        404: {"description": "项目不存在"},
+    },
+)
+async def get_project_paper_status_counts(
+    project_id: str,
+    db: DBDep,
+) -> PaperStatusCountResponse:
+    """获取指定项目下所有论文的状态统计。
+
+    Args:
+        project_id: 项目 ID
+        db: 数据库实例
+
+    Returns:
+        PaperStatusCountResponse: 论文状态统计
+
+    Raises:
+        HTTPException: 项目不存在时抛出 404
+    """
+    logger.debug(
+        "event=project.paper_status_counts_request_received project_id=%s",
+        project_id,
+    )
+    orchestrator = _build_orchestrator(db)
+    try:
+        counts = orchestrator.count_project_paper_statuses(project_id=project_id)
+    except ProjectDomainError as exc:
+        _raise_as_http(exc)
+    return PaperStatusCountResponse(**counts)
 
 
 @router.post(
@@ -325,6 +444,11 @@ async def search_project(
     request: LibrarianUnifiedSearchRequest,
     db: DBDep,
 ) -> LibrarianUnifiedSearchResponse:
+    logger.debug(
+        "event=project.search_request_received project_id=%s query_expr=%s",
+        project_id,
+        request.query_expr,
+    )
     orchestrator = _build_orchestrator(db)
     try:
         orchestrator.get_project(project_id)

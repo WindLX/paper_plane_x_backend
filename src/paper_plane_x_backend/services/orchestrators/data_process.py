@@ -13,7 +13,6 @@ from uuid import uuid4
 
 from fastapi import UploadFile, status
 
-from paper_plane_x_backend.config import settings
 from paper_plane_x_backend.models import (
     DataProcessTaskStatus,
     ExtractionStatus,
@@ -22,6 +21,10 @@ from paper_plane_x_backend.models import (
     SortOrder,
     TaskSortKey,
 )
+from paper_plane_x_backend.services.agent_trace.repository import (
+    AgentTraceRepository,
+)
+from paper_plane_x_backend.services.app_settings import get_app_settings_repo
 from paper_plane_x_backend.services.data_process_tasks.models import (
     DataProcessQueueTask,
     DataProcessTaskState,
@@ -57,9 +60,9 @@ class DataProcessOrchestrator:
         db: Database,
         task_manager: DataProcessTaskManager,
     ) -> None:
-        self.db = db
         self.task_manager = task_manager
         self.paper_repo = PaperRepository(db)
+        self.agent_trace_repo = AgentTraceRepository(db)
 
     def build_metadata(
         self,
@@ -107,15 +110,8 @@ class DataProcessOrchestrator:
         return custom_meta
 
     def _ensure_retryable_paper(self, paper_id: str) -> None:
-        existing_paper = self.db.fetchone(
-            """
-            SELECT extraction_status
-            FROM papers
-            WHERE paper_id = ?
-            """,
-            (paper_id,),
-        )
-        if not existing_paper:
+        status_value = self.paper_repo.get_extraction_status(paper_id)
+        if status_value is None:
             logger.warning(
                 "event=data_process.retry_paper_not_found paper_id=%s",
                 paper_id,
@@ -125,14 +121,14 @@ class DataProcessOrchestrator:
                 f"Paper {paper_id} not found",
             )
 
-        if existing_paper["extraction_status"] in {
+        if status_value in {
             ExtractionStatus.PENDING,
             ExtractionStatus.PROCESSING,
         }:
             logger.info(
                 "event=data_process.retry_blocked paper_id=%s status=%s",
                 paper_id,
-                existing_paper["extraction_status"],
+                status_value,
             )
             raise DataProcessDomainError(
                 status.HTTP_409_CONFLICT,
@@ -140,7 +136,7 @@ class DataProcessOrchestrator:
             )
 
     async def _save_upload_file(self, upload_file: UploadFile, paper_id: str) -> Path:
-        upload_dir = settings.mineru.output_dir / paper_id
+        upload_dir = get_app_settings_repo().get().mineru.output_dir / paper_id
         upload_dir.mkdir(parents=True, exist_ok=True)
 
         suffix = Path(upload_file.filename or "original.pdf").suffix or ".pdf"
@@ -226,7 +222,7 @@ class DataProcessOrchestrator:
                         "event=data_process.metadata_ignored_due_to_hash_reuse source_paper_id=%s",
                         reusable_paper.paper_id,
                     )
-                self.db.delete("papers", "paper_id = ?", (paper.paper_id,))
+                self.paper_repo.delete(paper.paper_id)
 
                 if reusable_paper.extraction_status in {
                     ExtractionStatus.COMPLETED,
@@ -424,10 +420,7 @@ class DataProcessOrchestrator:
         analysis_fact_check_status: FactCheckStatus | None = None,
         analysis_fact_check_result: dict[str, object] | None = None,
     ) -> Paper:
-        paper_row = self.db.fetchone(
-            "SELECT 1 FROM papers WHERE paper_id = ?", (paper_id,)
-        )
-        if not paper_row:
+        if not self.paper_repo.exists(paper_id):
             raise DataProcessDomainError(
                 status.HTTP_404_NOT_FOUND,
                 f"Paper {paper_id} not found",
@@ -467,35 +460,19 @@ class DataProcessOrchestrator:
     def list_tasks(
         self,
         *,
+        offset: int = 0,
+        limit: int = 20,
         sort_order: SortOrder = SortOrder.DESC,
         sort_by: TaskSortKey = TaskSortKey.CREATED_AT,
-    ) -> tuple[list[DataProcessTaskState], dict[str, int]]:
+    ) -> tuple[list[DataProcessTaskState], dict[str, int], int]:
         logger.debug("event=data_process.tasks_list_requested")
 
-        states = self.task_manager.list_tasks(sort_order=sort_order, sort_by=sort_by)
-        counts = {
-            "queued": 0,
-            "running": 0,
-            "completed": 0,
-            "failed": 0,
-            "canceled": 0,
-        }
-        for state in states:
-            if state.status == DataProcessTaskStatus.QUEUED:
-                counts["queued"] += 1
-            elif state.status in {
-                DataProcessTaskStatus.RUNNING,
-                DataProcessTaskStatus.CANCELING,
-            }:
-                counts["running"] += 1
-            elif state.status == DataProcessTaskStatus.COMPLETED:
-                counts["completed"] += 1
-            elif state.status == DataProcessTaskStatus.FAILED:
-                counts["failed"] += 1
-            elif state.status == DataProcessTaskStatus.CANCELED:
-                counts["canceled"] += 1
-
-        return states, counts
+        states = self.task_manager.list_tasks(
+            offset=offset, limit=limit, sort_order=sort_order, sort_by=sort_by
+        )
+        counts = self.task_manager.count_task_statuses()
+        total = self.task_manager.count_total_tasks()
+        return states, counts, total
 
     def cancel(
         self,
@@ -523,7 +500,7 @@ class DataProcessOrchestrator:
             raise DataProcessDomainError(status.HTTP_409_CONFLICT, str(exc))
 
     def delete_task_record(self, task_id: str) -> None:
-        """删除单条已结束任务记录（仅删 data_process_tasks 表）."""
+        """删除单条已结束任务记录及其关联 traces。"""
         logger.info(
             "event=data_process.delete_task_record_requested task_id=%s", task_id
         )
@@ -544,7 +521,24 @@ class DataProcessOrchestrator:
                 f"Task {task_id} is still active, cannot delete record",
             )
 
-        self.db.delete("data_process_tasks", "task_id = ?", (task_id,))
+        trace_ids = list(
+            {
+                *state.extraction_trace_ids,
+                *state.analysis_trace_ids,
+                *state.extraction_fact_check_trace_ids,
+                *state.analysis_fact_check_trace_ids,
+            }
+        )
+        for trace_id in trace_ids:
+            try:
+                self.agent_trace_repo.delete(trace_id)
+            except Exception:
+                logger.warning(
+                    "event=data_process.trace_delete_failed task_id=%s trace_id=%s",
+                    task_id,
+                    trace_id,
+                )
+        self.task_manager.delete_task(task_id)
         logger.info("event=data_process.task_record_deleted task_id=%s", task_id)
 
     async def retry_failed_task(
@@ -580,14 +574,7 @@ class DataProcessOrchestrator:
 
         paper_id = state.paper_id
 
-        paper = self.db.fetchone(
-            """
-            SELECT paper_id, raw_pdf_path
-            FROM papers
-            WHERE paper_id = ?
-            """,
-            (paper_id,),
-        )
+        paper = self.paper_repo.get(paper_id)
         if paper is None:
             logger.warning(
                 "event=data_process.retry_task_paper_not_found task_id=%s paper_id=%s",
@@ -599,7 +586,7 @@ class DataProcessOrchestrator:
                 f"Paper {paper_id} not found",
             )
 
-        raw_pdf_path = paper.get("raw_pdf_path")
+        raw_pdf_path = paper.raw_pdf_path
         if not raw_pdf_path:
             logger.warning(
                 "event=data_process.retry_task_missing_raw_pdf_path task_id=%s paper_id=%s",

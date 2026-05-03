@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from paper_plane_x_backend.api.dependencies import DBDep, TaskManagerDep
 from paper_plane_x_backend.models import SortOrder, TaskSortKey
-from paper_plane_x_backend.schemas import (
+from paper_plane_x_backend.schemas.api import (
     DataProcessTaskListResponse,
     DataProcessTaskResponse,
     MessageResponse,
@@ -82,13 +82,13 @@ async def list_data_process_tasks(
     logger.debug("event=data_process.tasks_list_request_received")
     orchestrator = _build_orchestrator(db, task_manager)
     try:
-        states, counts = orchestrator.list_tasks(sort_order=sort_order, sort_by=sort_by)
+        states, counts, total = orchestrator.list_tasks(
+            offset=offset, limit=limit, sort_order=sort_order, sort_by=sort_by
+        )
     except DataProcessDomainError as exc:
         _raise_as_http(exc)
 
-    total = len(states)
-    page_states = states[offset : offset + limit]
-    items = [_to_task_response(state) for state in page_states]
+    items = [_to_task_response(state) for state in states]
 
     return DataProcessTaskListResponse(
         queued=counts["queued"],
@@ -114,9 +114,11 @@ async def get_data_process_task(
     db: DBDep,
     task_manager: TaskManagerDep,
 ) -> DataProcessTaskResponse:
+    logger.debug("event=data_process.task_get_request_received task_id=%s", task_id)
     orchestrator = _build_orchestrator(db, task_manager)
     state = orchestrator.task_manager.get_task(task_id)
     if state is None:
+        logger.warning("event=data_process.task_not_found task_id=%s", task_id)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Task {task_id} not found",

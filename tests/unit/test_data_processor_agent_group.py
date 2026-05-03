@@ -136,8 +136,8 @@ class _FakeAnalysisAgent:
 @pytest.mark.asyncio
 async def test_group_raises_when_fact_check_result_missing() -> None:
     group = DataProcessorAgentGroup(
-        extraction_agent=_FakeExtractionAgent(),
-        fact_check_agent1=_FakeFactCheckAgent(result=None),
+        extraction_agent=_FakeExtractionAgent(),  # type: ignore
+        fact_check_agent1=_FakeFactCheckAgent(result=None),  # type: ignore
     )
 
     with pytest.raises(RuntimeError) as exc:
@@ -153,8 +153,8 @@ async def test_group_raises_when_fact_check_result_missing() -> None:
 @pytest.mark.asyncio
 async def test_group_does_not_raise_when_fact_check_failed_with_result() -> None:
     group = DataProcessorAgentGroup(
-        extraction_agent=_FakeExtractionAgent(),
-        fact_check_agent1=_FakeFactCheckAgent(result=_FakeFactCheckResult(False)),
+        extraction_agent=_FakeExtractionAgent(),  # type: ignore
+        fact_check_agent1=_FakeFactCheckAgent(result=_FakeFactCheckResult(False)),  # type: ignore
     )
 
     extraction, fact_check, retry_count = await group.run_extraction_fact_check_loop(
@@ -171,10 +171,10 @@ async def test_group_does_not_raise_when_fact_check_failed_with_result() -> None
 @pytest.mark.asyncio
 async def test_group_run_parallel_loops_returns_both_branches_and_trace_ids() -> None:
     group = DataProcessorAgentGroup(
-        extraction_agent=_FakeExtractionAgent(),
-        fact_check_agent1=_FakeFactCheckAgent(result=_FakeFactCheckResult(True)),
-        analysis_agent=_FakeAnalysisAgent(),
-        fact_check_agent2=_FakeFactCheckAgent(result=_FakeFactCheckResult(True)),
+        extraction_agent=_FakeExtractionAgent(),  # type: ignore
+        fact_check_agent1=_FakeFactCheckAgent(result=_FakeFactCheckResult(True)),  # type: ignore
+        analysis_agent=_FakeAnalysisAgent(),  # type: ignore
+        fact_check_agent2=_FakeFactCheckAgent(result=_FakeFactCheckResult(True)),  # type: ignore
     )
 
     (

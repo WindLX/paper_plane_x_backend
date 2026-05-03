@@ -2,32 +2,13 @@
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from paper_plane_x_backend.models import PaperSortKey, SortOrder
-from paper_plane_x_backend.schemas import QuickScan
-from paper_plane_x_backend.services.librarian.query_parser import (
-    parse_librarian_query_expr,
+from paper_plane_x_backend.schemas.agent_io import (
+    GlobalFinderPaperSummary,
+    GlobalFinderStats,
 )
-
-
-class LibrarianProjectionRequest(BaseModel):
-    """单 paper 单路径精确投影请求。"""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    paper_id: str = Field(..., min_length=1)
-    field_path: str = Field(..., min_length=1)
-
-
-class LibrarianProjectionResponse(BaseModel):
-    """单 paper 单路径精确投影响应。"""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    paper_id: str
-    field_path: str
-    value: Any | None = None
 
 
 class LibrarianMatrixRequest(BaseModel):
@@ -57,64 +38,18 @@ class LibrarianGlobalFinderRequest(BaseModel):
     project_id: str = Field(..., min_length=1, description="项目 ID")
 
 
-class LibrarianGlobalFinderPaperSummary(BaseModel):
-    """Global Finder 中的论文基础摘要。"""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    paper_id: str
-    title: str | None = None
-    authors: list[str] = Field(default_factory=list)
-    year: int | None = None
-    quick_scan: QuickScan | None = None
-
-
-class LibrarianYearDistributionStats(BaseModel):
-    """年份分布统计。"""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    available_count: int = 0
-    missing_count: int = 0
-    mean: float | None = None
-    variance: float | None = None
-    median: float | None = None
-    mode_years: list[int] = Field(default_factory=list)
-    q25: float | None = None
-    q75: float | None = None
-    outlier_count: int = 0
-    low_outlier_count: int = 0
-    high_outlier_count: int = 0
-
-
-class LibrarianTagCount(BaseModel):
-    """标签统计项。"""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    tag: str
-    count: int
-
-
-class LibrarianGlobalFinderStats(BaseModel):
-    """Global Finder 统计信息。"""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    paper_count: int
-    top_tags_limit: int
-    year_distribution: LibrarianYearDistributionStats
-    top_tags: list[LibrarianTagCount] = Field(default_factory=list)
-
-
 class LibrarianGlobalFinderResponse(BaseModel):
     """项目级文献总览响应。"""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
     project_id: str
-    papers: list[LibrarianGlobalFinderPaperSummary] = Field(default_factory=list)
-    stats: LibrarianGlobalFinderStats
+    papers: list[GlobalFinderPaperSummary] = Field(
+        default_factory=list[GlobalFinderPaperSummary],
+        description="项目下的论文基础摘要列表",
+    )
+    stats: GlobalFinderStats = Field(..., description="全局查找统计信息")
+    agent_summary: str | None = Field(default=None)
 
 
 class LibrarianUnifiedSearchRequest(BaseModel):
@@ -137,11 +72,8 @@ class LibrarianUnifiedSearchRequest(BaseModel):
         default=SortOrder.DESC, description="排序方向，asc 或 desc"
     )
 
-    @model_validator(mode="after")
-    def validate_query_expr(self) -> "LibrarianUnifiedSearchRequest":
-        if self.query_expr:
-            parse_librarian_query_expr(self.query_expr)
-        return self
+    # query_expr 不再在 schema 层强制验证语法合法性；
+    # 运行时若 DSL 解析失败会自动退化为简单模式搜索（全字段 CONTAINS）。
 
 
 class LibrarianUnifiedSearchResponse(BaseModel):
@@ -154,6 +86,37 @@ class LibrarianUnifiedSearchResponse(BaseModel):
     offset: int = Field(..., description="偏移量")
     total: int = Field(..., description="命中总数")
     paper_ids: list[str] = Field(..., description="命中论文 ID 列表")
+
+
+class LibrarianQueryBuilderRequest(BaseModel):
+    """自然语言转 DSL 查询请求。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    query: str = Field(
+        ...,
+        min_length=1,
+        description="用户输入的自然语言查询描述",
+    )
+    project_context: str | None = Field(
+        default=None,
+        description="可选的项目上下文信息",
+    )
+
+
+class LibrarianQueryBuilderResponse(BaseModel):
+    """自然语言转 DSL 查询响应。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    query_expr: str = Field(
+        ...,
+        description="生成的 DSL 条件表达式字符串",
+    )
+    explanation: str = Field(
+        ...,
+        description="对生成查询的简要说明",
+    )
 
 
 class LibrarianGuideResponse(BaseModel):

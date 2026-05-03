@@ -1,5 +1,9 @@
 """Librarian hybrid retrieval tests."""
 
+from typing import Any
+
+import pytest
+
 from paper_plane_x_backend.services.librarian import build_field_paths_guide
 from paper_plane_x_backend.services.paper.repository import PaperRepositoryError
 from paper_plane_x_backend.tools import librarian
@@ -105,3 +109,108 @@ def test_matrix_compare_description_contains_field_paths_guide() -> None:
     shared_guide = librarian.matrix_compare.shared_guides
     assert "跨多篇论文按 field_paths 读取结构化字段" in desc
     assert "custom_meta.<key>" in shared_guide["Librarian Field Paths"]
+
+
+@pytest.mark.asyncio
+async def test_deep_dive_tool_strips_citations(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_deep_dive(*, repo, paper_id: str, question: str, **kwargs: Any):
+        _ = repo, paper_id, question, kwargs
+        return {
+            "result": {
+                "is_answered": True,
+                "answer": {
+                    "text": "核心回答",
+                    "citations": [{"quote": "Q1", "source_header": "§1"}],
+                },
+            },
+            "trace_id": "trace-1",
+        }
+
+    monkeypatch.setattr(librarian, "get_db", lambda: object())
+    monkeypatch.setattr(librarian, "PaperRepository", lambda _db: object())
+    monkeypatch.setattr(librarian, "deep_dive", fake_deep_dive)
+
+    assert librarian.deep_dive_tool.function is not None
+    payload = await librarian.deep_dive_tool.function(
+        paper_id="paper-1",
+        question="What is new?",
+    )
+    assert payload["paper_id"] == "paper-1"
+    assert payload["answer"]["is_answered"] is True
+    assert payload["answer"]["answer"]["text"] == "核心回答"
+    assert "citations" not in payload["answer"]["answer"]
+
+
+@pytest.mark.asyncio
+async def test_deep_dive_tool_passes_caller_and_caller_id_via_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """验证 deep_dive_tool 通过 context_params 接收并传递 caller/caller_id."""
+    captured_kwargs: dict[str, Any] = {}
+
+    async def fake_deep_dive(*, repo, paper_id: str, question: str, **kwargs: Any):
+        captured_kwargs.update(kwargs)
+        return {
+            "result": {
+                "is_answered": True,
+                "answer": {
+                    "text": "captured",
+                    "citations": [],
+                },
+            },
+            "trace_id": "trace-ctx",
+        }
+
+    monkeypatch.setattr(librarian, "get_db", lambda: object())
+    monkeypatch.setattr(librarian, "PaperRepository", lambda _db: object())
+    monkeypatch.setattr(librarian, "deep_dive", fake_deep_dive)
+
+    assert librarian.deep_dive_tool.function is not None
+    # 通过 tool.execute 模拟 Agent 传递的 context
+    result = await librarian.deep_dive_tool.execute(
+        paper_id="paper-ctx",
+        question="q",
+        context={
+            "_caller_agent_name": "ParentAgent",
+            "_caller_trace_id": "parent-trace-123",
+        },
+    )
+    assert result["paper_id"] == "paper-ctx"
+    assert captured_kwargs.get("caller") == "ParentAgent"
+    assert captured_kwargs.get("caller_id") == "parent-trace-123"
+
+
+@pytest.mark.asyncio
+async def test_deep_dive_tool_without_caller_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """验证直接调用 function 时 caller/caller_id 为 None，工具仍可正常执行."""
+    captured_kwargs: dict[str, Any] = {}
+
+    async def fake_deep_dive(*, repo, paper_id: str, question: str, **kwargs: Any):
+        captured_kwargs.update(kwargs)
+        return {
+            "result": {
+                "is_answered": True,
+                "answer": {
+                    "text": "no caller",
+                    "citations": [],
+                },
+            },
+            "trace_id": "trace-none",
+        }
+
+    monkeypatch.setattr(librarian, "get_db", lambda: object())
+    monkeypatch.setattr(librarian, "PaperRepository", lambda _db: object())
+    monkeypatch.setattr(librarian, "deep_dive", fake_deep_dive)
+
+    assert librarian.deep_dive_tool.function is not None
+    # 直接调用 function 不通过 execute，不经过 context_params 注入
+    result = await librarian.deep_dive_tool.function(
+        paper_id="paper-2",
+        question="q2",
+    )
+    # function 层面 caller/caller_id 为 None
+    assert result["paper_id"] == "paper-2"
+    assert captured_kwargs.get("caller") is None
+    assert captured_kwargs.get("caller_id") is None

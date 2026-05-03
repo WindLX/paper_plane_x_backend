@@ -75,6 +75,10 @@ class DataProcessManualUpdateRequest(BaseModel):
         default=None,
         description="Analysis 事实核查结果",
     )
+    agent_note: str | None = Field(
+        default=None,
+        description="Agent 生成的论文笔记",
+    )
 
     @field_validator("custom_meta")
     @classmethod

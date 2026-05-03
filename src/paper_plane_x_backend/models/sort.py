@@ -20,4 +20,13 @@ class ProjectSortKey(str, Enum):
 
 class TaskSortKey(str, Enum):
     CREATED_AT = "created_at"
+    STARTED_AT = "started_at"
+    FINISHED_AT = "finished_at"
     STATUS = "status"
+
+
+class AgentTraceSortKey(str, Enum):
+    CREATED_AT = "created_at"
+    AGENT_NAME = "agent_name"
+    LLM_MODEL = "llm_model"
+    TOTAL_TOKENS = "total_tokens"

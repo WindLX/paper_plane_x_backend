@@ -101,8 +101,10 @@ Unified Filter Engine 在任意查询下都会自动追加以下过滤条件：
 **能力**：聚合指定 project 下全部已关联论文的最基础信息，帮助 Agent 先建立对整批文献的整体感觉。
 
 *   **返回内容**：
-    *   每篇论文的 `paper_id / title / authors / year / quick_scan`
-    *   全体统计信息：
+    *   `project_id`：项目 ID
+    *   `papers`：每篇论文的 `paper_id / title / authors / year / quick_scan`
+    *   `agent_summary`：项目级 AI 总结（如已写入）
+    *   `stats`：全体统计信息
         *   `paper_count`
         *   `year_distribution`
         *   `top_tags`
@@ -150,10 +152,25 @@ Unified Filter Engine 在任意查询下都会自动追加以下过滤条件：
 
 `projection` 仍主要通过 API 路由提供；`search_paper` 则同时支持 API 与 Agent Tool。
 
-### 规划中能力说明（未实现）
+### Agent 工具扩展（Project / Paper 作用域）
 
-- 深潜器（Deep Diver）当前仍处于规划阶段，属于“尚未实现”。
-- 当前已落地能力包括 `global_finder`、`projection`、`search`、`matrix`，其中 `global_finder` / `search_paper` / `matrix_compare` 也可供 Agent 调用。
+除 Librarian 核心工具外，系统还提供 project 与 paper 作用域的 Agent 笔记工具：
+
+- **Project 工具**（`tools/project.py`）：project_id 通过 context 自动注入
+  - `get_project_agent_summary` — 查看当前项目的 agent_summary
+  - `write_project_agent_summary` — 写入项目总结（覆盖）
+  - `update_project_agent_summary` — 更新项目总结
+  - `delete_project_agent_summary` — 删除项目总结
+
+- **Paper 工具**（`tools/paper.py`）：paper_id 作为参数显式传入
+  - `get_paper_agent_note` — 查看指定论文的 agent_note
+  - `write_paper_agent_note` — 写入论文笔记（覆盖）
+  - `update_paper_agent_note` — 更新论文笔记
+  - `delete_paper_agent_note` — 删除论文笔记
+
+### 当前已落地能力
+
+- 当前已落地能力包括 `global_finder`、`projection`、`search`、`matrix`、`deep_dive`，其中 `global_finder` / `search_paper` / `matrix_compare` / `deep_dive` 也可供 Agent 调用。
 
 ---
 

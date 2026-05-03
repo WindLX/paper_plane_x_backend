@@ -3,7 +3,6 @@
 不使用 ORM，直接使用 sqlite3 模块进行数据库操作。
 """
 
-import json
 import logging
 import sqlite3
 from contextlib import contextmanager
@@ -33,6 +32,7 @@ CREATE TABLE IF NOT EXISTS projects (
     project_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     description TEXT,
+    agent_summary TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     operation_logs TEXT
@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS papers (
     extraction_fact_check_result TEXT,
     analysis_fact_check_status TEXT DEFAULT 'PENDING',
     analysis_fact_check_result TEXT,
+    agent_note TEXT,
     extraction_retry_count INTEGER DEFAULT 0,
     analysis_retry_count INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -82,6 +83,8 @@ CREATE TABLE IF NOT EXISTS agent_traces (
     completion_tokens INTEGER,
     total_tokens INTEGER,
     usage_payload TEXT,
+    caller TEXT,
+    caller_id TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -155,7 +158,6 @@ class Database:
 
     def init_tables(self) -> None:
         with self.get_connection() as conn:
-            self._configure_connection_pragmas(conn)
             conn.executescript(CREATE_TABLES_SQL)
             if self._needs_schema_migration(conn):
                 self._backup_database_before_migration(conn)
@@ -165,28 +167,18 @@ class Database:
         logger.info("event=database.tables_initialized")
 
     def _needs_schema_migration(self, conn: sqlite3.Connection) -> bool:
-        venue_exists = self._has_column(conn, "papers", "venue")
-        publication_exists = self._has_column(conn, "papers", "publication")
-        custom_meta_exists = self._has_column(conn, "papers", "custom_meta")
-        legacy_fact_check_exists = any(
-            self._has_column(conn, "papers", legacy_column)
-            for legacy_column in [
-                "fact_check_status",
-                "fact_check_result",
-                "final_fact_check_trace_id",
-                "extraction_final_fact_check_trace_id",
-                "analysis_final_fact_check_trace_id",
-            ]
-        )
-        new_columns_ready = all(
-            self._has_column(conn, "papers", column)
+        agent_trace_columns_ready = all(
+            self._has_column(conn, "agent_traces", column)
             for column in [
-                "analysis_report",
-                "extraction_fact_check_status",
-                "extraction_fact_check_result",
-                "analysis_fact_check_status",
-                "analysis_fact_check_result",
-                "analysis_retry_count",
+                "messages",
+                "llm_model",
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+                "usage_payload",
+                "caller",
+                "caller_id",
+                "created_at",
             ]
         )
         task_trace_columns_ready = all(
@@ -198,35 +190,7 @@ class Database:
                 "analysis_fact_check_trace_ids",
             ]
         )
-        agent_traces_legacy = any(
-            self._has_column(conn, "agent_traces", col)
-            for col in [
-                "latest_input_message",
-                "output_message",
-                "reasoning_content",
-                "message_history",
-            ]
-        )
-        papers_trace_legacy = any(
-            self._has_column(conn, "papers", col)
-            for col in [
-                "extraction_trace_ids",
-                "extraction_fact_check_trace_ids",
-                "analysis_trace_ids",
-                "analysis_fact_check_trace_ids",
-            ]
-        )
-        return (
-            venue_exists
-            or (not publication_exists)
-            or (not custom_meta_exists)
-            or legacy_fact_check_exists
-            or (not new_columns_ready)
-            or (not task_trace_columns_ready)
-            or agent_traces_legacy
-            or papers_trace_legacy
-            or self._has_column(conn, "teacher_history", "conversation_id")
-        )
+        return not agent_trace_columns_ready or not task_trace_columns_ready
 
     def _backup_database_before_migration(self, conn: sqlite3.Connection) -> None:
         backup_dir = self.db_path.parent / "backups"
@@ -278,8 +242,7 @@ class Database:
         conn.execute("DROP TABLE IF EXISTS papers_fts")
 
     def _ensure_papers_fts_objects(self, conn: sqlite3.Connection) -> None:
-        conn.executescript(
-            """
+        conn.executescript("""
             CREATE VIRTUAL TABLE IF NOT EXISTS papers_fts USING fts5(
                 paper_id,
                 title,
@@ -307,8 +270,7 @@ class Database:
                 INSERT INTO papers_fts(paper_id, title, md_content, quick_scan, synthesis_data, analysis_report)
                 VALUES (NEW.paper_id, NEW.title, NEW.md_content, NEW.quick_scan, NEW.synthesis_data, NEW.analysis_report);
             END;
-            """
-        )
+            """)
 
     def _rebuild_papers_fts(self, conn: sqlite3.Connection) -> None:
         self._drop_papers_fts_objects(conn)
@@ -347,230 +309,9 @@ class Database:
 
     def _ensure_schema_migrations(self, conn: sqlite3.Connection) -> None:
         self._drop_papers_fts_objects(conn)
-        venue_exists = self._has_column(conn, "papers", "venue")
-        publication_exists = self._has_column(conn, "papers", "publication")
-        if not publication_exists:
-            self._ensure_column(conn, "papers", "publication", "TEXT")
-
-        for fts_column in [
-            "title",
-            "md_content",
-            "quick_scan",
-            "synthesis_data",
-            "analysis_report",
-        ]:
-            self._ensure_column(conn, "papers", fts_column, "TEXT")
-
-        if venue_exists:
-            conn.execute(
-                """
-                UPDATE papers
-                SET publication = venue
-                WHERE publication IS NULL AND venue IS NOT NULL
-                """
-            )
-            try:
-                conn.execute("ALTER TABLE papers DROP COLUMN venue")
-            except sqlite3.OperationalError as exc:
-                logger.warning(
-                    "event=database.drop_legacy_column_skipped table=papers column=venue error=%s",
-                    exc,
-                )
-
-        self._ensure_column(conn, "papers", "custom_meta", "TEXT")
-        self._ensure_column(conn, "papers", "analysis_report", "TEXT")
-        self._ensure_column(
-            conn,
-            "papers",
-            "extraction_fact_check_status",
-            "TEXT DEFAULT 'PENDING'",
-        )
-        self._ensure_column(conn, "papers", "extraction_fact_check_result", "TEXT")
-        self._ensure_column(
-            conn,
-            "papers",
-            "analysis_fact_check_status",
-            "TEXT DEFAULT 'PENDING'",
-        )
-        self._ensure_column(conn, "papers", "analysis_fact_check_result", "TEXT")
-        self._ensure_column(conn, "papers", "analysis_retry_count", "INTEGER DEFAULT 0")
-        self._migrate_legacy_fact_check_columns(conn)
-        self._drop_papers_trace_columns(conn)
-        self._ensure_column(conn, "papers", "raw_pdf_sha256", "TEXT")
-        self._migrate_analysis_report_related_references(conn)
-        self._migrate_agent_traces_messages_schema(conn)
-        self._ensure_column(conn, "agent_traces", "llm_model", "TEXT")
-        self._ensure_column(conn, "agent_traces", "prompt_tokens", "INTEGER")
-        self._ensure_column(conn, "agent_traces", "completion_tokens", "INTEGER")
-        self._ensure_column(conn, "agent_traces", "total_tokens", "INTEGER")
-        self._ensure_column(conn, "agent_traces", "usage_payload", "TEXT")
-        self._ensure_trace_columns(conn, "data_process_tasks")
-        conn.execute("DROP TABLE IF EXISTS teacher_history")
-        conn.execute("DROP TABLE IF EXISTS data_process_history")
+        self._ensure_column(conn, "projects", "agent_summary", "TEXT")
+        self._ensure_column(conn, "papers", "agent_note", "TEXT")
         self._ensure_papers_fts_objects(conn)
-
-    def _ensure_trace_columns(self, conn: sqlite3.Connection, table: str) -> None:
-        for column in [
-            "extraction_trace_ids",
-            "analysis_trace_ids",
-            "extraction_fact_check_trace_ids",
-            "analysis_fact_check_trace_ids",
-        ]:
-            self._ensure_column(conn, table, column, "TEXT")
-
-    def _migrate_legacy_fact_check_columns(self, conn: sqlite3.Connection) -> None:
-        legacy_columns = [
-            "fact_check_status",
-            "fact_check_result",
-            "final_fact_check_trace_id",
-            "extraction_final_fact_check_trace_id",
-            "analysis_final_fact_check_trace_id",
-        ]
-        if not any(
-            self._has_column(conn, "papers", column) for column in legacy_columns
-        ):
-            return
-
-        if self._has_column(conn, "papers", "fact_check_status"):
-            conn.execute(
-                """
-                UPDATE papers
-                SET extraction_fact_check_status = fact_check_status
-                WHERE fact_check_status IS NOT NULL
-                """
-            )
-        if self._has_column(conn, "papers", "fact_check_result"):
-            conn.execute(
-                """
-                UPDATE papers
-                SET extraction_fact_check_result = fact_check_result
-                WHERE fact_check_result IS NOT NULL
-                """
-            )
-        for legacy_column in legacy_columns:
-            if not self._has_column(conn, "papers", legacy_column):
-                continue
-            try:
-                conn.execute(f"ALTER TABLE papers DROP COLUMN {legacy_column}")
-            except sqlite3.OperationalError as exc:
-                logger.warning(
-                    "event=database.drop_legacy_column_skipped table=papers column=%s error=%s",
-                    legacy_column,
-                    exc,
-                )
-
-    def _drop_papers_trace_columns(self, conn: sqlite3.Connection) -> None:
-        for column in [
-            "extraction_trace_ids",
-            "extraction_fact_check_trace_ids",
-            "analysis_trace_ids",
-            "analysis_fact_check_trace_ids",
-        ]:
-            if self._has_column(conn, "papers", column):
-                try:
-                    conn.execute(f"ALTER TABLE papers DROP COLUMN {column}")
-                except sqlite3.OperationalError as exc:
-                    logger.warning(
-                        "event=database.drop_legacy_column_skipped table=papers column=%s error=%s",
-                        column,
-                        exc,
-                    )
-
-    def _migrate_analysis_report_related_references(
-        self, conn: sqlite3.Connection
-    ) -> None:
-        rows = conn.execute(
-            """
-            SELECT paper_id, analysis_report
-            FROM papers
-            WHERE analysis_report IS NOT NULL
-            """
-        ).fetchall()
-
-        for row in rows:
-            raw = row["analysis_report"]
-            if not isinstance(raw, str) or not raw.strip():
-                continue
-            try:
-                payload = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(payload, dict):
-                continue
-            if "related_references" in payload:
-                continue
-            payload["related_references"] = []
-            conn.execute(
-                "UPDATE papers SET analysis_report = ? WHERE paper_id = ?",
-                (json.dumps(payload, ensure_ascii=False), row["paper_id"]),
-            )
-
-    def _migrate_agent_traces_messages_schema(self, conn: sqlite3.Connection) -> None:
-        """迁移 agent_traces 旧字段到 messages 字段。
-
-        删除 latest_input_message / output_message / reasoning_content，
-        将 message_history 与 output_message 合并后写入 messages，
-        最后删除 message_history。
-        """
-        legacy_columns = [
-            "latest_input_message",
-            "output_message",
-            "reasoning_content",
-            "message_history",
-        ]
-        if not any(
-            self._has_column(conn, "agent_traces", col) for col in legacy_columns
-        ):
-            self._ensure_column(conn, "agent_traces", "messages", "TEXT")
-            return
-
-        self._ensure_column(conn, "agent_traces", "messages", "TEXT")
-
-        has_output_message = self._has_column(conn, "agent_traces", "output_message")
-        has_message_history = self._has_column(conn, "agent_traces", "message_history")
-
-        if has_output_message or has_message_history:
-            rows = conn.execute(
-                "SELECT trace_id, agent_name, output_message, message_history FROM agent_traces"
-            ).fetchall()
-            for row in rows:
-                trace_id = row["trace_id"]
-                agent_name = row["agent_name"] or "UnknownAgent"
-                output_msg = row["output_message"] or ""
-                history_str = row["message_history"] or "[]"
-
-                try:
-                    messages: list[dict[str, Any]] = json.loads(history_str)
-                    if not isinstance(messages, list):
-                        messages = []
-                except (json.JSONDecodeError, TypeError):
-                    messages = []
-
-                if output_msg:
-                    messages.append(
-                        {
-                            "role": "assistant",
-                            "content": output_msg,
-                            "name": agent_name,
-                        }
-                    )
-
-                if messages:
-                    conn.execute(
-                        "UPDATE agent_traces SET messages = ? WHERE trace_id = ?",
-                        (json.dumps(messages, ensure_ascii=False), trace_id),
-                    )
-
-        for col in legacy_columns:
-            if self._has_column(conn, "agent_traces", col):
-                try:
-                    conn.execute(f"ALTER TABLE agent_traces DROP COLUMN {col}")
-                except sqlite3.OperationalError as exc:
-                    logger.warning(
-                        "event=database.drop_legacy_column_skipped table=agent_traces column=%s error=%s",
-                        col,
-                        exc,
-                    )
 
     @staticmethod
     def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:

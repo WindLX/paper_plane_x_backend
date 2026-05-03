@@ -348,6 +348,44 @@ class TestDataProcessAPI:
         assert count_row is not None
         assert count_row["count"] == 1
 
+    def test_delete_task_record_removes_related_traces(
+        self,
+        client: TestClient,
+        db: Database,
+    ) -> None:
+        manager = get_data_process_task_manager()
+        manager.task_states["task-delete-1"] = DataProcessTaskState(
+            task_id="task-delete-1",
+            paper_id="paper-delete-1",
+            payload={"paper_id": "paper-delete-1"},
+            status=DataProcessTaskStatus.COMPLETED,
+            created_at=datetime.now(),
+            extraction_trace_ids=["trace-e-1"],
+            analysis_trace_ids=["trace-a-1"],
+            extraction_fact_check_trace_ids=["trace-efc-1"],
+            analysis_fact_check_trace_ids=["trace-afc-1"],
+        )
+
+        for trace_id in ["trace-e-1", "trace-a-1", "trace-efc-1", "trace-afc-1"]:
+            db.insert(
+                "agent_traces",
+                {
+                    "trace_id": trace_id,
+                    "agent_name": "Agent",
+                    "messages": "[]",
+                },
+            )
+
+        response = client.delete("/api/v1/data-process/tasks/task-delete-1")
+
+        assert response.status_code == 200
+        assert manager.get_task("task-delete-1") is None
+        for trace_id in ["trace-e-1", "trace-a-1", "trace-efc-1", "trace-afc-1"]:
+            assert (
+                db.fetchone("SELECT 1 FROM agent_traces WHERE trace_id = ?", (trace_id,))
+                is None
+            )
+
     def test_start_data_process_rejects_invalid_custom_meta(
         self, client: TestClient
     ) -> None:

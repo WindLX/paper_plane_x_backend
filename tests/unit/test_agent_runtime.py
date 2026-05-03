@@ -1,9 +1,10 @@
 """Agent 测试."""
 
+from typing import Any
+
 import pytest
 from pydantic import BaseModel, Field
 
-from paper_plane_x_backend.config import LLMConfig
 from paper_plane_x_backend.core.agent_runtime import (
     AgentExecutionError,
     AgentValidationError,
@@ -12,6 +13,7 @@ from paper_plane_x_backend.core.agent_runtime import (
     ToolRegistry,
     tool,
 )
+from paper_plane_x_backend.models.app_settings import LLMConfig
 from paper_plane_x_backend.schemas.agent_io.base import (
     ToolCallFunction,
     ToolCallMessage,
@@ -330,6 +332,66 @@ class TestBaseAgent:
         assert agent.memory.get_messages()[1]["reasoning_content"] == "use add tool"
 
     @pytest.mark.asyncio
+    async def test_normal_mode_injects_caller_context(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """验证 _run_normal 将 caller/caller_id 注入 tool_context."""
+        captured_contexts: list[dict[str, Any]] = []
+
+        @tool(
+            context_params={
+                "injected_caller": "_caller_agent_name",
+                "injected_caller_id": "_caller_trace_id",
+            }
+        )
+        def spy_tool(
+            injected_caller: str | None = None, injected_caller_id: str | None = None
+        ) -> str:
+            captured_contexts.append(
+                {"caller": injected_caller, "caller_id": injected_caller_id}
+            )
+            return "ok"
+
+        agent = BaseAgent(
+            mode="normal",
+            tools=[spy_tool],
+            save_trace=False,
+            agent_name="ParentAgent",
+            max_steps=2,
+        )
+
+        call_count = 0
+
+        async def mock_generate_with_tools(messages, tools, **kwargs) -> LLMResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCallMessage(
+                            id="c1",
+                            function=ToolCallFunction(
+                                name="spy_tool",
+                                arguments="{}",
+                            ),
+                        )
+                    ],
+                    model="gpt-4o",
+                    usage={},
+                )
+            return LLMResponse(content="done", model="gpt-4o", usage={})
+
+        agent.llm.generate_with_tools = mock_generate_with_tools
+        agent.memory.append_user_message({"q": "spy"})
+        result = await agent.run()
+
+        assert result == "done"
+        assert len(captured_contexts) == 1
+        assert captured_contexts[0]["caller"] == "ParentAgent"
+        assert captured_contexts[0]["caller_id"] is None
+
+    @pytest.mark.asyncio
     async def test_normal_mode_max_steps_exceeded(self) -> None:
         """测试 normal 模式工具循环步数超限异常."""
 
@@ -615,3 +677,204 @@ class TestToolDecorator:
 
         assert my_func.name == "custom_search"
         assert my_func.description == "自定义搜索工具"
+
+
+class TestBaseAgentRunStream:
+    """BaseAgent run_stream 流式执行测试."""
+
+    @pytest.mark.asyncio
+    async def test_run_stream_rejects_api_mode(self) -> None:
+        """验证 run_stream 在 api 模式下抛出异常."""
+        agent = BaseAgent(
+            output_schema=SimpleOutput,
+            mode="api",
+            save_trace=False,
+        )
+        agent.memory.append_user_message({"q": "x"})
+        with pytest.raises(
+            AgentExecutionError, match="run_stream only supports normal mode"
+        ):
+            async for _ in agent.run_stream():
+                pass
+
+    @pytest.mark.asyncio
+    async def test_run_stream_no_tools(self) -> None:
+        """验证无工具时流式逐 token 返回."""
+        from paper_plane_x_backend.core.agent_runtime.llm_client import LLMStreamChunk
+
+        agent = BaseAgent(mode="normal", save_trace=False)
+
+        async def mock_chat_stream(messages, **kwargs):
+            deltas = ["Hel", "lo", "!"]
+            for i, d in enumerate(deltas):
+                yield LLMStreamChunk(
+                    content_delta=d,
+                    is_finished=(i == len(deltas) - 1),
+                )
+
+        agent.llm.chat_stream = mock_chat_stream
+        agent.memory.append_user_message({"q": "say hi"})
+
+        chunks: list = []
+        async for chunk in agent.run_stream():
+            chunks.append(chunk)
+
+        assert chunks[0].delta == "Hel"
+        assert chunks[1].delta == "lo"
+        assert chunks[2].delta == "!"
+        assert chunks[-1].is_complete is True
+        assert chunks[-1].content == "Hello!"
+
+    @pytest.mark.asyncio
+    async def test_run_stream_with_tools(self) -> None:
+        """验证有工具时流式内容后执行工具."""
+        from paper_plane_x_backend.core.agent_runtime.llm_client import LLMStreamChunk
+
+        @tool()
+        def greet(name: str) -> str:
+            return f"Hi {name}"
+
+        agent = BaseAgent(
+            mode="normal",
+            tools=[greet],
+            save_trace=False,
+            max_steps=3,
+        )
+
+        call_count = 0
+
+        async def mock_chat_stream(messages, tools=None, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield LLMStreamChunk(
+                    content_delta="call",
+                    is_finished=True,
+                    tool_calls=[
+                        ToolCallMessage(
+                            id="c1",
+                            function=ToolCallFunction(
+                                name="greet",
+                                arguments='{"name": "world"}',
+                            ),
+                        )
+                    ],
+                )
+            else:
+                yield LLMStreamChunk(
+                    content_delta="done",
+                    is_finished=True,
+                )
+
+        agent.llm.chat_stream = mock_chat_stream
+        agent.memory.append_user_message({"q": "greet"})
+
+        chunks: list = []
+        async for chunk in agent.run_stream():
+            chunks.append(chunk)
+
+        # 第一次流式 + 工具执行 + 第二次流式
+        assert chunks[0].delta == "call"
+        assert chunks[1].tool_call_name == "greet"
+        # is_complete 块的 delta 为空，倒数第二块是 "done"
+        assert chunks[-2].delta == "done"
+        assert chunks[-1].is_complete is True
+        assert chunks[-1].content == "done"
+
+    @pytest.mark.asyncio
+    async def test_run_stream_injects_caller_context(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """验证 run_stream 将 caller/caller_id 注入 tool_context."""
+        from paper_plane_x_backend.core.agent_runtime.llm_client import LLMStreamChunk
+
+        captured_contexts: list[dict[str, Any]] = []
+
+        @tool(
+            context_params={
+                "injected_caller": "_caller_agent_name",
+                "injected_caller_id": "_caller_trace_id",
+            }
+        )
+        def spy_tool(
+            injected_caller: str | None = None, injected_caller_id: str | None = None
+        ) -> str:
+            captured_contexts.append(
+                {"caller": injected_caller, "caller_id": injected_caller_id}
+            )
+            return "ok"
+
+        agent = BaseAgent(
+            mode="normal",
+            tools=[spy_tool],
+            save_trace=False,
+            agent_name="ParentAgent",
+            max_steps=2,
+        )
+
+        fake_db = object()
+        monkeypatch.setattr(
+            "paper_plane_x_backend.core.agent_runtime.base_agent.get_db",
+            lambda: fake_db,
+        )
+
+        call_count = 0
+
+        async def mock_chat_stream(messages, tools=None, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield LLMStreamChunk(
+                    content_delta="call",
+                    is_finished=True,
+                    tool_calls=[
+                        ToolCallMessage(
+                            id="c1",
+                            function=ToolCallFunction(
+                                name="spy_tool",
+                                arguments="{}",
+                            ),
+                        )
+                    ],
+                )
+            else:
+                yield LLMStreamChunk(
+                    content_delta="done",
+                    is_finished=True,
+                )
+
+        agent.llm.chat_stream = mock_chat_stream
+        agent.memory.append_user_message({"q": "spy"})
+
+        async for _ in agent.run_stream():
+            pass
+
+        assert len(captured_contexts) == 1
+        assert captured_contexts[0]["caller"] == "ParentAgent"
+        # save_trace=False 时 trace_ids 为空，caller_id 为 None
+        assert captured_contexts[0]["caller_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_run_stream_with_reasoning_content(self) -> None:
+        """验证流式返回包含 reasoning_content."""
+        from paper_plane_x_backend.core.agent_runtime.llm_client import LLMStreamChunk
+
+        agent = BaseAgent(mode="normal", save_trace=False)
+
+        async def mock_chat_stream(messages, **kwargs):
+            yield LLMStreamChunk(
+                content_delta="ok",
+                reasoning_content_delta="thinking...",
+                is_finished=True,
+            )
+
+        agent.llm.chat_stream = mock_chat_stream
+        agent.memory.append_user_message({"q": "x"})
+
+        chunks: list = []
+        async for chunk in agent.run_stream():
+            chunks.append(chunk)
+
+        assert chunks[0].delta == "ok"
+        assert chunks[0].reasoning_delta == "thinking..."
+        assert chunks[-1].is_complete is True

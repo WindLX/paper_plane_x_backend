@@ -12,7 +12,7 @@
 ## 1. User Input (原始论文信息)
 role 为 user 的消息。
 - `md_content`: 原始论文的全文 Markdown 文本，作为唯一绝对真实的 Ground Truth。
-- `images`: 原始 Markdown 中提取的图片数据， 元素是 base64 编码的图片数据。
+- `images`: 原始 Markdown 中提取的图片数据， 元素是 base64 编码的图片数据，可能为空。
 
 ## 2. Agent Input (关于论文内容的结构化的数据)
 role 为 assistant，name 为 ExtractionAgent 或者 AnalysisAgent 的消息(只会同时存在一种)。它提取并生成的 JSON 结构化数据。

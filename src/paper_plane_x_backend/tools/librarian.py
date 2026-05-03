@@ -2,21 +2,26 @@
 
 from typing import Any
 
-from paper_plane_x_backend.config import settings
+from paper_plane_x_backend.core.agent_runtime import AgentExecutionError
 from paper_plane_x_backend.core.agent_runtime.tooling import tool
-from paper_plane_x_backend.services.database import get_db
-from paper_plane_x_backend.services.librarian.global_finder import (
-    global_finder_by_project,
+from paper_plane_x_backend.core.query_parser import (
+    LibrarianQueryError,
+    parse_librarian_query_expr_or_fallback,
 )
-from paper_plane_x_backend.services.librarian.guide import build_field_paths_guide
-from paper_plane_x_backend.services.librarian.queries import matrix_fetch_by_paths
-from paper_plane_x_backend.services.librarian.query_parser import (
-    parse_librarian_query_expr,
+from paper_plane_x_backend.services.app_settings import get_app_settings_repo
+from paper_plane_x_backend.services.database import get_db
+from paper_plane_x_backend.services.librarian import (
+    build_field_paths_guide,
+    deep_dive,
+    global_finder_by_project,
+    matrix_fetch_by_paths,
 )
 from paper_plane_x_backend.services.paper.repository import (
     PaperQueryRepository,
+    PaperRepository,
     PaperRepositoryError,
 )
+from paper_plane_x_backend.services.project.repository import ProjectRepository
 from paper_plane_x_backend.utils.schema_utils import strip_citations_recursively
 
 
@@ -51,11 +56,13 @@ def global_finder(
     project_id: str | None = None,
 ) -> dict[str, Any]:
     repo = PaperQueryRepository(get_db())
+    project_repo = ProjectRepository(get_db())
     try:
         return global_finder_by_project(
-            repo=repo,
+            paper_repo=repo,
+            project_repo=project_repo,
             project_id=project_id or "",
-            top_tags_limit=settings.librarian.top_tags_limit,
+            top_tags_limit=get_app_settings_repo().get().librarian.top_tags_limit,
         )
     except PaperRepositoryError as exc:
         return {
@@ -121,7 +128,7 @@ def search_paper(
 ) -> dict[str, Any]:
     repo = PaperQueryRepository(get_db())
     try:
-        query_group = parse_librarian_query_expr(query_expr)
+        query_group = parse_librarian_query_expr_or_fallback(query_expr)
         paper_ids, total = repo.search_paper(
             project_id=project_id,
             paper_id=None,
@@ -129,7 +136,7 @@ def search_paper(
             limit=limit,
             offset=offset,
         )
-    except PaperRepositoryError as exc:
+    except (PaperRepositoryError, LibrarianQueryError) as exc:
         return {
             "query_expr": query_expr,
             "limit": limit,
@@ -144,3 +151,50 @@ def search_paper(
         "total": total,
         "paper_ids": paper_ids,
     }
+
+
+@tool(
+    name="deep_dive",
+    description=(
+        "针对单篇论文的特定问题进行深度挖掘，返回结构化的分析结果。"
+        "适用场景：对单篇论文进行深入理解，或在写作过程中需要从某篇论文中提取特定信息时。"
+        "\n输入：paper_id, question。"
+        "\n输出：成功时返回 {is_answered, answer, citations}；失败时返回 {paper_id, question, error}。"
+        "\n说明：answer 的结构详见 DeepDiverAgentOutput 模型定义"
+    ),
+    context_params={"caller": "_caller_agent_name", "caller_id": "_caller_trace_id"},
+)
+async def deep_dive_tool(
+    paper_id: str,
+    question: str = "",
+    caller: str | None = None,
+    caller_id: str | None = None,
+) -> dict[str, Any]:
+    if not paper_id:
+        return {
+            "paper_id": paper_id,
+            "question": question,
+            "error": "paper_id is required",
+        }
+    try:
+        result = await deep_dive(
+            repo=PaperRepository(get_db()),
+            paper_id=paper_id,
+            question=question,
+            caller=caller,
+            caller_id=caller_id,
+        )
+    except (PaperRepositoryError, AgentExecutionError) as exc:
+        return {
+            "paper_id": paper_id,
+            "question": question,
+            "error": exc.message,
+        }
+    return {
+        "paper_id": paper_id,
+        "question": question,
+        "answer": strip_citations_recursively(result["result"]),
+    }
+
+
+# TODO 返回值有问题
