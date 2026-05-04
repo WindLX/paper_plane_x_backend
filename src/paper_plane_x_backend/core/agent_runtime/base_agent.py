@@ -25,6 +25,10 @@ from paper_plane_x_backend.core.agent_runtime.stream_types import AgentStreamChu
 from paper_plane_x_backend.core.agent_runtime.tooling import Tool, ToolRegistry
 from paper_plane_x_backend.models import AgentTrace
 from paper_plane_x_backend.models.app_settings import LLMConfig
+from paper_plane_x_backend.schemas.agent_io.base import (
+    AssistantMessage,
+    ToolCallMessage,
+)
 from paper_plane_x_backend.services import get_db
 from paper_plane_x_backend.services.agent_trace.repository import (
     AgentTraceRepository,
@@ -78,6 +82,10 @@ class BaseAgent:
             for tool in tools:
                 self.tool_registry.register(tool)
 
+        rendered_system_prompt = self.tool_registry.inject_shared_guide_into_system_prompt(
+            system_prompt or ""
+        )
+
         if llm_config is None:
             raise ValueError(
                 "llm_config is required. "
@@ -85,7 +93,7 @@ class BaseAgent:
             )
         self.llm = LLMClient.from_config(llm_config)
         self.memory = MemoryManager(
-            system_prompt=system_prompt or "",
+            system_prompt=rendered_system_prompt,
             short_memory_window=short_memory_window,
             is_vlm=llm_config.is_vlm,
         )
@@ -98,20 +106,9 @@ class BaseAgent:
             )
         return self.output_schema
 
-    def _get_messages_with_tool_guide(self) -> list[dict[str, Any]]:
-        messages = self.memory.get_messages()
-        shared_guide = self.tool_registry.build_shared_guide_message()
-        if not shared_guide:
-            return messages
-
-        guide_message = {"role": "system", "content": shared_guide}
-        if messages and messages[0].get("role") == "system":
-            return [messages[0], guide_message, *messages[1:]]
-        return [guide_message, *messages]
-
     def build_messages_with_tool_guide(self) -> list[dict[str, Any]]:
-        """为执行器提供带工具说明的消息列表."""
-        return self._get_messages_with_tool_guide()
+        """返回已渲染共享 guide 的消息列表."""
+        return self.memory.get_messages()
 
     def _validate_output(self, content: str) -> BaseModel:
         return validate_output_content(
@@ -132,15 +129,18 @@ class BaseAgent:
             db = get_db()
             repo = AgentTraceRepository(db)
             usage = usage or {}
+            prompt_tokens, completion_tokens, total_tokens = self._extract_token_counts(
+                usage
+            )
             trace_id = generate_trace_id()
             trace = AgentTrace(
                 trace_id=trace_id,
                 agent_name=self.agent_name,
                 messages=messages,
                 llm_model=llm_model,
-                prompt_tokens=usage.get("prompt_tokens"),
-                completion_tokens=usage.get("completion_tokens"),
-                total_tokens=usage.get("total_tokens"),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
                 usage_payload=usage or None,
                 tools=tools,
                 caller=self.caller,
@@ -156,6 +156,28 @@ class BaseAgent:
                 e,
             )
 
+    @staticmethod
+    def _extract_token_counts(
+        usage: dict[str, Any],
+    ) -> tuple[int | None, int | None, int | None]:
+        def _as_int(value: Any) -> int | None:
+            return value if isinstance(value, int) else None
+
+        prompt_tokens = _as_int(usage.get("prompt_tokens"))
+        if prompt_tokens is None:
+            prompt_tokens = _as_int(usage.get("input_tokens"))
+
+        completion_tokens = _as_int(usage.get("completion_tokens"))
+        if completion_tokens is None:
+            completion_tokens = _as_int(usage.get("output_tokens"))
+
+        total_tokens = _as_int(usage.get("total_tokens"))
+        if total_tokens is None:
+            if prompt_tokens is not None and completion_tokens is not None:
+                total_tokens = prompt_tokens + completion_tokens
+
+        return prompt_tokens, completion_tokens, total_tokens
+
     def save_trace_snapshot(
         self,
         messages: list[dict[str, Any]],
@@ -169,6 +191,72 @@ class BaseAgent:
             messages,
             llm_model=llm_model,
             usage=usage,
+            tools=tools,
+        )
+
+    def _build_partial_trace_messages(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        assistant_content: str | None = None,
+        assistant_reasoning_content: str | None = None,
+        assistant_tool_calls: list[ToolCallMessage] | None = None,
+    ) -> list[dict[str, Any]]:
+        trace_messages = [dict(message) for message in messages]
+        has_partial_assistant = (
+            assistant_content is not None
+            or assistant_reasoning_content is not None
+            or bool(assistant_tool_calls)
+        )
+        if has_partial_assistant:
+            trace_messages.append(
+                AssistantMessage(
+                    content=assistant_content,
+                    reasoning_content=assistant_reasoning_content,
+                    name=self.agent_name,
+                    tool_calls=assistant_tool_calls,
+                ).model_dump(exclude_none=True)
+            )
+        return trace_messages
+
+    def save_partial_trace_snapshot(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        llm_model: str | None = None,
+        usage: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        assistant_content: str | None = None,
+        assistant_reasoning_content: str | None = None,
+        assistant_tool_calls: list[ToolCallMessage] | None = None,
+        step: int | None = None,
+        cancel_reason: str = "cancelled",
+    ) -> None:
+        trace_messages = self._build_partial_trace_messages(
+            messages,
+            assistant_content=assistant_content,
+            assistant_reasoning_content=assistant_reasoning_content,
+            assistant_tool_calls=assistant_tool_calls,
+        )
+        trace_usage = dict(usage or {})
+        trace_meta: dict[str, Any] = {
+            "status": "cancelled",
+            "partial": True,
+            "reason": cancel_reason,
+        }
+        if step is not None:
+            trace_meta["step"] = step
+        existing_trace_meta = trace_usage.get("_trace")
+        if isinstance(existing_trace_meta, dict):
+            trace_meta = {
+                **existing_trace_meta,
+                **trace_meta,
+            }
+        trace_usage["_trace"] = trace_meta
+        self._save_trace(
+            trace_messages,
+            llm_model=llm_model,
+            usage=trace_usage,
             tools=tools,
         )
 
@@ -197,7 +285,7 @@ class BaseAgent:
                     self.max_steps,
                 )
                 response = await self.llm.generate_structured(
-                    messages=self.memory.get_messages(),
+                    messages=self.build_messages_with_tool_guide(),
                     output_schema=output_schema,
                 )
                 content = response.content or ""
@@ -210,7 +298,7 @@ class BaseAgent:
 
                 if self.save_trace:
                     self._save_trace(
-                        messages=self.memory.dump_messages(),
+                        messages=self.build_messages_with_tool_guide(),
                         llm_model=response.model,
                         usage=response.usage,
                         tools=self.tool_registry.to_openai_format(),
@@ -237,6 +325,15 @@ class BaseAgent:
                 error_detail = e.validation_errors if e.validation_errors else e.message
                 self.memory.append_validation_feedback(error_detail)
             except asyncio.CancelledError:
+                if self.save_trace:
+                    self.save_partial_trace_snapshot(
+                        messages=self.build_messages_with_tool_guide(),
+                        usage=None,
+                        tools=self.tool_registry.to_openai_format(),
+                        assistant_content=content or None,
+                        assistant_reasoning_content=reasoning_content,
+                        step=step + 1,
+                    )
                 logger.info(
                     "event=agent.run_canceled agent=%s mode=api step=%s",
                     self.agent_name,

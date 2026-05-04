@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
     reasoning_content TEXT,
     tools TEXT,
     images TEXT,
+    paper_ids TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id) ON DELETE CASCADE
 );
@@ -235,6 +236,7 @@ class Database:
                 "parent_message_id",
                 "message_kind",
                 "images",
+                "paper_ids",
             ]
         )
         return (
@@ -384,6 +386,7 @@ class Database:
             "TEXT NOT NULL DEFAULT 'assistant_final'",
         )
         self._ensure_column(conn, "conversation_messages", "images", "TEXT")
+        self._ensure_column(conn, "conversation_messages", "paper_ids", "TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_conversation_messages_conversation_sequence "
             "ON conversation_messages(conversation_id, sequence_no)"

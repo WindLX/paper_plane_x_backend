@@ -58,10 +58,17 @@ def _trace_dict_to_response(trace_dict: dict[str, Any]) -> AgentTraceResponse:
             if isinstance(trace_dict.get("usage_payload"), dict)
             else None
         ),
+        tools=(
+            trace_dict["tools"] if isinstance(trace_dict.get("tools"), list) else None
+        ),
         created_at=trace_dict["created_at"],
-        caller=trace_dict["caller"] if isinstance(trace_dict.get("caller"), str) else None,
+        caller=(
+            trace_dict["caller"] if isinstance(trace_dict.get("caller"), str) else None
+        ),
         caller_id=(
-            trace_dict["caller_id"] if isinstance(trace_dict.get("caller_id"), str) else None
+            trace_dict["caller_id"]
+            if isinstance(trace_dict.get("caller_id"), str)
+            else None
         ),
     )
 

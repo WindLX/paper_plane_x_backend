@@ -1,5 +1,7 @@
 """Agent 测试."""
 
+import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -20,6 +22,14 @@ from paper_plane_x_backend.schemas.agent_io.base import (
 )
 
 DEFAULT_LLM_CONFIG = LLMConfig(model="gpt-4o", api_key="test-key")
+
+
+class FakeDB:
+    def __init__(self) -> None:
+        self.inserts: list[tuple[str, dict[str, Any]]] = []
+
+    def insert(self, table: str, data: dict[str, Any]) -> None:
+        self.inserts.append((table, data))
 
 
 class SimpleOutput(BaseModel):
@@ -904,3 +914,130 @@ class TestBaseAgentRunStream:
         assert chunks[0].delta == "ok"
         assert chunks[0].reasoning_delta == "thinking..."
         assert chunks[-1].is_complete is True
+
+    @pytest.mark.asyncio
+    async def test_run_stream_saves_partial_trace_when_cancelled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """验证流式取消时仍会保存 partial trace."""
+        from paper_plane_x_backend.core.agent_runtime.llm_client import LLMStreamChunk
+
+        agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
+            mode="normal",
+            save_trace=True,
+        )
+        fake_db = FakeDB()
+        monkeypatch.setattr(
+            "paper_plane_x_backend.core.agent_runtime.base_agent.get_db",
+            lambda: fake_db,
+        )
+
+        async def mock_chat_stream(messages, **kwargs):
+            yield LLMStreamChunk(
+                content_delta="Hel",
+                reasoning_content_delta="thinking",
+            )
+            yield LLMStreamChunk(
+                content_delta="lo",
+                usage={
+                    "prompt_tokens": 5,
+                    "completion_tokens": 2,
+                    "total_tokens": 7,
+                },
+            )
+
+        agent.llm.chat_stream = mock_chat_stream
+        agent.memory.append_user_message({"q": "say hi"})
+
+        with pytest.raises(asyncio.CancelledError):
+            async for chunk in agent.run_stream():
+                if chunk.delta == "lo":
+                    agent.cancel()
+
+        assert len(fake_db.inserts) == 1
+        _, payload = fake_db.inserts[0]
+        usage_payload = json.loads(payload["usage_payload"])
+        messages = json.loads(payload["messages"])
+
+        assert usage_payload["prompt_tokens"] == 5
+        assert usage_payload["_trace"]["status"] == "cancelled"
+        assert usage_payload["_trace"]["partial"] is True
+        assert usage_payload["_trace"]["step"] == 1
+        assert messages[-1]["role"] == "assistant"
+        assert messages[-1]["content"] == "Hello"
+        assert messages[-1]["reasoning_content"] == "thinking"
+
+    @pytest.mark.asyncio
+    async def test_run_stream_preserves_tool_calls_when_usage_arrives_in_late_chunk(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """验证 usage-only 收尾 chunk 不会覆盖前一个 finish chunk 的 tool_calls."""
+        from paper_plane_x_backend.core.agent_runtime.llm_client import LLMStreamChunk
+
+        saved_usages: list[dict[str, Any] | None] = []
+
+        @tool()
+        def greet(name: str) -> str:
+            return f"Hi {name}"
+
+        agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
+            mode="normal",
+            tools=[greet],
+            save_trace=True,
+            max_steps=2,
+        )
+
+        monkeypatch.setattr(
+            agent,
+            "save_trace_snapshot",
+            lambda messages, llm_model=None, usage=None, tools=None: saved_usages.append(
+                usage
+            ),
+        )
+
+        call_count = 0
+
+        async def mock_chat_stream(messages, tools=None, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield LLMStreamChunk(
+                    is_finished=True,
+                    tool_calls=[
+                        ToolCallMessage(
+                            id="c1",
+                            function=ToolCallFunction(
+                                name="greet",
+                                arguments='{"name": "world"}',
+                            ),
+                        )
+                    ],
+                )
+                yield LLMStreamChunk(
+                    usage={
+                        "prompt_tokens": 8,
+                        "completion_tokens": 2,
+                        "total_tokens": 10,
+                    }
+                )
+            else:
+                yield LLMStreamChunk(
+                    content_delta="done",
+                    is_finished=True,
+                )
+
+        agent.llm.chat_stream = mock_chat_stream
+        agent.memory.append_user_message({"q": "greet"})
+
+        chunks: list = []
+        async for chunk in agent.run_stream():
+            chunks.append(chunk)
+
+        assert any(chunk.tool_call_name == "greet" for chunk in chunks)
+        assert saved_usages[0] == {
+            "prompt_tokens": 8,
+            "completion_tokens": 2,
+            "total_tokens": 10,
+        }

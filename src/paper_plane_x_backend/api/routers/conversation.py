@@ -98,6 +98,7 @@ def _message_to_response(
         trace_ids=message.trace_ids,
         reasoning_content=message.reasoning_content,
         images=message.images,
+        paper_ids=message.paper_ids,
         created_at=message.created_at,
     )
 
@@ -422,6 +423,7 @@ def create_message(
         name=request.name,
         sequence_no=repo.get_next_sequence_no(conversation_id),
         images=request.images,
+        paper_ids=request.paper_ids,
         message_kind=(
             "system"
             if request.role == "system"
@@ -489,6 +491,8 @@ def update_message(
     update_payload: dict[str, object] = {"content": request.content}
     if request.images is not None:
         update_payload["images"] = request.images
+    if request.paper_ids is not None:
+        update_payload["paper_ids"] = request.paper_ids
     repo.update_fields(message_id, update_payload)
     repo.delete_after(conversation_id, message_id)
     convo_repo.touch(conversation_id)
@@ -505,6 +509,8 @@ def update_message(
     message.content = request.content
     if request.images is not None:
         message.images = request.images
+    if request.paper_ids is not None:
+        message.paper_ids = request.paper_ids
     return _message_to_response(message)
 
 

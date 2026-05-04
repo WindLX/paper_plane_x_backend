@@ -22,6 +22,8 @@ from paper_plane_x_backend.schemas.agent_io.base import ToolCallMessage, ToolMes
 
 logger = logging.getLogger(__name__)
 
+TOOLSET_SHARED_GUIDE_PLACEHOLDER = "{{TOOLSET_SHARED_GUIDE}}"
+
 
 class Tool(BaseModel):
     """工具描述模型."""
@@ -144,6 +146,24 @@ class ToolRegistry:
             sections.append(f"[{guide_name}]")
             sections.append(guide_content.strip())
         return "\n\n".join(sections).strip()
+
+    def inject_shared_guide_into_system_prompt(self, system_prompt: str) -> str:
+        """将共享 guide 渲染到唯一的 system prompt 中."""
+        shared_guide = self.build_shared_guide_message()
+        if TOOLSET_SHARED_GUIDE_PLACEHOLDER in system_prompt:
+            return system_prompt.replace(
+                TOOLSET_SHARED_GUIDE_PLACEHOLDER,
+                shared_guide,
+            )
+
+        if not shared_guide:
+            return system_prompt
+
+        logger.warning(
+            "event=tool.shared_guide_placeholder_missing placeholder=%s",
+            TOOLSET_SHARED_GUIDE_PLACEHOLDER,
+        )
+        return f"{system_prompt.rstrip()}\n\n{shared_guide}"
 
     async def execute_tool_call(
         self,

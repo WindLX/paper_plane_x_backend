@@ -47,7 +47,8 @@ async def conversation_websocket(
         "type": "user_message",
         "content": "用户输入文本",
         "message_id": "可选，用于编辑已有消息",
-        "images": ["可选，base64 图片列表"]
+        "images": ["可选，base64 图片列表"],
+        "paper_ids": ["可选，用户关注的文献 ID 列表"]
     }
     {
         "type": "stop"
@@ -126,6 +127,7 @@ async def conversation_websocket(
                 content = data.get("content", "")
                 edit_message_id = data.get("message_id")
                 images = data.get("images")
+                paper_ids = data.get("paper_ids")
 
                 # 保存或更新用户消息
                 if edit_message_id:
@@ -139,6 +141,8 @@ async def conversation_websocket(
                         }
                         if images is not None:
                             update_payload["images"] = images
+                        if paper_ids is not None:
+                            update_payload["paper_ids"] = paper_ids
                         msg_repo.update_fields(
                             edit_message_id,
                             update_payload,
@@ -148,6 +152,8 @@ async def conversation_websocket(
                         user_msg.message_kind = "user_input"
                         if images is not None:
                             user_msg.images = images
+                        if paper_ids is not None:
+                            user_msg.paper_ids = paper_ids
                         msg_repo.delete_after(conversation_id, edit_message_id)
                     else:
                         await _send_error(
@@ -171,6 +177,7 @@ async def conversation_websocket(
                         parent_message_id=parent_message_id,
                         message_kind="user_input",
                         images=images,
+                        paper_ids=paper_ids,
                     )
                     msg_repo.create(user_msg)
 

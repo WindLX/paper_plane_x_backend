@@ -456,7 +456,11 @@ class ConversationMessageRepository:
         if next_row is not None:
             self.db.update(
                 "conversation_messages",
-                {"parent_message_id": previous_row["message_id"] if previous_row else None},
+                {
+                    "parent_message_id": (
+                        previous_row["message_id"] if previous_row else None
+                    )
+                },
                 "message_id = ?",
                 (next_row["message_id"],),
             )

@@ -121,6 +121,26 @@ class TestBaseAgentExtended:
         assert "cache_hit" in payload["usage_payload"]
         assert agent.trace_ids == [payload["trace_id"]]
 
+    def test_save_trace_maps_input_output_tokens_to_columns(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent = BaseAgent(llm_config=DEFAULT_LLM_CONFIG, mode="normal", save_trace=True)
+        fake_db = FakeDB()
+        monkeypatch.setattr(
+            "paper_plane_x_backend.core.agent_runtime.base_agent.get_db",
+            lambda: fake_db,
+        )
+
+        agent.save_trace_snapshot(
+            messages=[{"role": "user", "content": "hi"}],
+            usage={"input_tokens": 9, "output_tokens": 4},
+        )
+
+        _, payload = fake_db.inserts[0]
+        assert payload["prompt_tokens"] == 9
+        assert payload["completion_tokens"] == 4
+        assert payload["total_tokens"] == 13
+
     @pytest.mark.asyncio
     async def test_api_mode_collects_all_trace_ids_across_validation_retries(
         self, monkeypatch: pytest.MonkeyPatch
@@ -482,6 +502,25 @@ class TestLLMClientExtended:
         assert parsed.content == "ok"
         assert parsed.reasoning_content is None
 
+    def test_extract_usage_from_attribute_object(self) -> None:
+        client = LLMClient(model="m")
+
+        class UsageObject:
+            prompt_tokens = 12
+            completion_tokens = 3
+            total_tokens = 15
+
+        class ResponseObject:
+            usage = UsageObject()
+
+        parsed = client._extract_usage(ResponseObject())
+
+        assert parsed == {
+            "prompt_tokens": 12,
+            "completion_tokens": 3,
+            "total_tokens": 15,
+        }
+
     @pytest.mark.asyncio
     async def test_tool_registry_execute_tool_call_returns_tool_message(self) -> None:
         @tool()
@@ -740,3 +779,149 @@ class TestLLMClientStream:
             assert chunks[1].tool_calls[0].function.arguments == '{"a":1}'
         finally:
             llm_mod.acompletion = original_acompletion
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_yields_usage_from_terminal_usage_only_chunk(
+        self,
+    ) -> None:
+        """验证 chat_stream 不会丢掉只有 usage 的末尾 chunk."""
+        client = LLMClient(model="m")
+
+        async def fake_stream():
+            yield SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content="done"),
+                        finish_reason="stop",
+                    )
+                ],
+                model="m",
+            )
+            yield SimpleNamespace(
+                choices=[],
+                model="m",
+                usage={"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15},
+            )
+
+        import paper_plane_x_backend.core.agent_runtime.llm_client as llm_mod
+
+        original_acompletion = llm_mod.acompletion
+
+        async def mock_acompletion(**kwargs):
+            return fake_stream()
+
+        llm_mod.acompletion = mock_acompletion
+        try:
+            chunks = []
+            async for chunk in client.chat_stream(
+                messages=[{"role": "user", "content": "hi"}]
+            ):
+                chunks.append(chunk)
+            assert len(chunks) == 2
+            assert chunks[0].content_delta == "done"
+            assert chunks[0].usage == {}
+            assert chunks[1].content_delta is None
+            assert chunks[1].usage == {
+                "prompt_tokens": 12,
+                "completion_tokens": 3,
+                "total_tokens": 15,
+            }
+        finally:
+            llm_mod.acompletion = original_acompletion
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_yields_usage_when_present_on_non_finished_chunk(
+        self,
+    ) -> None:
+        """验证 usage 出现在 finish_reason=None 的 chunk 上时也会透传."""
+        client = LLMClient(model="m")
+
+        async def fake_stream():
+            yield SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content=None),
+                        finish_reason="tool_calls",
+                    )
+                ],
+                model="m",
+            )
+            yield SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content=None),
+                        finish_reason=None,
+                    )
+                ],
+                model="m",
+                usage={"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15},
+            )
+
+        import paper_plane_x_backend.core.agent_runtime.llm_client as llm_mod
+
+        original_acompletion = llm_mod.acompletion
+
+        async def mock_acompletion(**kwargs):
+            return fake_stream()
+
+        llm_mod.acompletion = mock_acompletion
+        try:
+            chunks = []
+            async for chunk in client.chat_stream(
+                messages=[{"role": "user", "content": "hi"}]
+            ):
+                chunks.append(chunk)
+            assert len(chunks) == 2
+            assert chunks[1].usage == {
+                "prompt_tokens": 12,
+                "completion_tokens": 3,
+                "total_tokens": 15,
+            }
+        finally:
+            llm_mod.acompletion = original_acompletion
+
+    def test_build_messages_with_tool_guide_renders_shared_guide_in_system_prompt(
+        self,
+    ) -> None:
+        """验证共享 guide 被渲染到唯一的 system prompt 中."""
+
+        @tool(
+            name="test_tool",
+            description="A test tool.",
+            shared_guides={"Test Guide": "This is the test guide content."},
+        )
+        def test_tool(x: str) -> str:
+            return x
+
+        agent = BaseAgent(
+            mode="normal",
+            system_prompt="You are a test agent.\n\n{{TOOLSET_SHARED_GUIDE}}",
+            tools=[test_tool],
+            llm_config=DEFAULT_LLM_CONFIG,
+        )
+        agent.memory.append_user_message({"content": "hello"})
+
+        messages = agent.build_messages_with_tool_guide()
+
+        assert len(messages) == 2
+        assert messages[0]["role"] == "system"
+        assert "You are a test agent." in messages[0]["content"]
+        assert "Toolset Shared Guide:" in messages[0]["content"]
+        assert "[Test Guide]" in messages[0]["content"]
+        assert "This is the test guide content." in messages[0]["content"]
+        assert messages[1]["role"] == "user"
+
+    def test_build_messages_without_tools_returns_plain_messages(self) -> None:
+        """验证没有工具时 build_messages_with_tool_guide 返回原始消息."""
+        agent = BaseAgent(
+            mode="normal",
+            system_prompt="You are a test agent.",
+            llm_config=DEFAULT_LLM_CONFIG,
+        )
+        agent.memory.append_user_message({"content": "hello"})
+
+        messages = agent.build_messages_with_tool_guide()
+
+        assert len(messages) == 2
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "user"

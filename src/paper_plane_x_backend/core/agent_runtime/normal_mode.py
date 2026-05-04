@@ -10,7 +10,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, Protocol
 
 from paper_plane_x_backend.core.agent_runtime.exceptions import AgentExecutionError
-from paper_plane_x_backend.core.agent_runtime.llm_client import LLMClient
+from paper_plane_x_backend.core.agent_runtime.llm_client import LLMClient, LLMResponse
 from paper_plane_x_backend.core.agent_runtime.memory import MemoryManager
 from paper_plane_x_backend.core.agent_runtime.stream_types import AgentStreamChunk
 from paper_plane_x_backend.core.agent_runtime.tooling import ToolRegistry
@@ -42,6 +42,20 @@ class SupportsNormalAgentRuntime(Protocol):
 
     def ensure_not_cancelled(self) -> None: ...
 
+    def save_partial_trace_snapshot(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        llm_model: str | None = None,
+        usage: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        assistant_content: str | None = None,
+        assistant_reasoning_content: str | None = None,
+        assistant_tool_calls: list[ToolCallMessage] | None = None,
+        step: int | None = None,
+        cancel_reason: str = "cancelled",
+    ) -> None: ...
+
 
 class NormalAgentRunner:
     """承载 BaseAgent normal 模式执行循环的辅助对象."""
@@ -61,29 +75,54 @@ class NormalAgentRunner:
             )
 
         if len(self.agent.tool_registry) == 0:
-            response = await self.agent.llm.generate(self.agent.memory.get_messages())
-            content = response.content or ""
-            reasoning_content = response.reasoning_content
+            content = ""
+            reasoning_content = None
+            llm_model: str | None = None
+            usage: dict[str, Any] | None = None
+            try:
+                response = await self.agent.llm.generate(
+                    self.agent.build_messages_with_tool_guide()
+                )
+                content = response.content or ""
+                reasoning_content = response.reasoning_content
+                llm_model = response.model
+                usage = response.usage
 
-            self.agent.memory.append_assistant_message(
-                content=content,
-                name=self.agent.agent_name,
-                reasoning_content=reasoning_content,
-            )
-
-            if self.agent.save_trace:
-                self.agent.save_trace_snapshot(
-                    messages=self.agent.memory.dump_messages(),
-                    llm_model=response.model,
-                    usage=response.usage,
-                    tools=self.agent.tool_registry.to_openai_format(),
+                self.agent.memory.append_assistant_message(
+                    content=content,
+                    name=self.agent.agent_name,
+                    reasoning_content=reasoning_content,
                 )
 
-            logger.info(
-                "event=agent.run_completed agent=%s mode=normal step=1",
-                self.agent.agent_name,
-            )
-            return content
+                if self.agent.save_trace:
+                    self.agent.save_trace_snapshot(
+                        messages=self.agent.build_messages_with_tool_guide(),
+                        llm_model=response.model,
+                        usage=response.usage,
+                        tools=self.agent.tool_registry.to_openai_format(),
+                    )
+
+                logger.info(
+                    "event=agent.run_completed agent=%s mode=normal step=1",
+                    self.agent.agent_name,
+                )
+                return content
+            except asyncio.CancelledError:
+                if self.agent.save_trace:
+                    self.agent.save_partial_trace_snapshot(
+                        messages=self.agent.build_messages_with_tool_guide(),
+                        llm_model=llm_model,
+                        usage=usage,
+                        tools=self.agent.tool_registry.to_openai_format(),
+                        assistant_content=content or None,
+                        assistant_reasoning_content=reasoning_content,
+                        step=1,
+                    )
+                logger.info(
+                    "event=agent.run_canceled agent=%s mode=normal step=1",
+                    self.agent.agent_name,
+                )
+                raise
 
         for step in range(self.agent.max_steps):
             logger.debug(
@@ -92,6 +131,9 @@ class NormalAgentRunner:
                 step + 1,
                 self.agent.max_steps,
             )
+            assistant_appended = False
+            messages: list[dict[str, Any]] = []
+            response: LLMResponse | None = None
             try:
                 messages = self.agent.build_messages_with_tool_guide()
                 tools = self.agent.tool_registry.to_openai_format()
@@ -106,10 +148,11 @@ class NormalAgentRunner:
                     tool_calls=response.tool_calls or None,
                     reasoning_content=response.reasoning_content,
                 )
+                assistant_appended = True
 
                 if self.agent.save_trace:
                     self.agent.save_trace_snapshot(
-                        messages=self.agent.memory.dump_messages(),
+                        messages=self.agent.build_messages_with_tool_guide(),
                         llm_model=response.model,
                         usage=response.usage,
                         tools=self.agent.tool_registry.to_openai_format(),
@@ -145,6 +188,37 @@ class NormalAgentRunner:
                 )
                 return final_content
             except asyncio.CancelledError:
+                if self.agent.save_trace:
+                    self.agent.save_partial_trace_snapshot(
+                        messages=(
+                            self.agent.build_messages_with_tool_guide()
+                            if assistant_appended
+                            else messages
+                        ),
+                        llm_model=(response.model if response is not None else None),
+                        usage=(response.usage if response is not None else None),
+                        tools=self.agent.tool_registry.to_openai_format(),
+                        assistant_content=(
+                            None
+                            if assistant_appended
+                            else (response.content if response is not None else None)
+                        ),
+                        assistant_reasoning_content=(
+                            None
+                            if assistant_appended
+                            else (
+                                response.reasoning_content
+                                if response is not None
+                                else None
+                            )
+                        ),
+                        assistant_tool_calls=(
+                            None
+                            if assistant_appended
+                            else (response.tool_calls if response is not None else None)
+                        ),
+                        step=step + 1,
+                    )
                 logger.info(
                     "event=agent.run_canceled agent=%s mode=normal step=%s",
                     self.agent.agent_name,
@@ -229,43 +303,67 @@ class NormalAgentRunner:
         full_reasoning = ""
         last_model: str | None = None
         last_usage: dict[str, Any] | None = None
+        assistant_appended = False
 
-        async for chunk in self.agent.llm.chat_stream(self.agent.memory.get_messages()):
+        messages = self.agent.build_messages_with_tool_guide()
+        try:
+            async for chunk in self.agent.llm.chat_stream(messages):
+                self.agent.ensure_not_cancelled()
+                if chunk.content_delta:
+                    full_content += chunk.content_delta
+                if chunk.reasoning_content_delta:
+                    full_reasoning += chunk.reasoning_content_delta
+                last_model = chunk.model or last_model
+                if chunk.usage:
+                    last_usage = chunk.usage
+                yield AgentStreamChunk(
+                    delta=chunk.content_delta or "",
+                    reasoning_delta=chunk.reasoning_content_delta or "",
+                )
+
             self.agent.ensure_not_cancelled()
-            if chunk.content_delta:
-                full_content += chunk.content_delta
-            if chunk.reasoning_content_delta:
-                full_reasoning += chunk.reasoning_content_delta
-            last_model = chunk.model or last_model
-            if chunk.usage:
-                last_usage = chunk.usage
+            self.agent.memory.append_assistant_message(
+                content=full_content,
+                name=self.agent.agent_name,
+                reasoning_content=full_reasoning or None,
+            )
+            assistant_appended = True
+            if self.agent.save_trace:
+                self.agent.save_trace_snapshot(
+                    messages=self.agent.build_messages_with_tool_guide(),
+                    llm_model=last_model,
+                    usage=last_usage,
+                    tools=self.agent.tool_registry.to_openai_format(),
+                )
             yield AgentStreamChunk(
-                delta=chunk.content_delta or "",
-                reasoning_delta=chunk.reasoning_content_delta or "",
+                delta="",
+                is_complete=True,
+                content=full_content,
             )
-
-        self.agent.ensure_not_cancelled()
-        self.agent.memory.append_assistant_message(
-            content=full_content,
-            name=self.agent.agent_name,
-            reasoning_content=full_reasoning or None,
-        )
-        if self.agent.save_trace:
-            self.agent.save_trace_snapshot(
-                messages=self.agent.memory.dump_messages(),
-                llm_model=last_model,
-                usage=last_usage,
-                tools=self.agent.tool_registry.to_openai_format(),
+            logger.info(
+                "event=agent.run_stream_completed agent=%s mode=normal step=1",
+                self.agent.agent_name,
             )
-        yield AgentStreamChunk(
-            delta="",
-            is_complete=True,
-            content=full_content,
-        )
-        logger.info(
-            "event=agent.run_stream_completed agent=%s mode=normal step=1",
-            self.agent.agent_name,
-        )
+        except asyncio.CancelledError:
+            if self.agent.save_trace:
+                self.agent.save_partial_trace_snapshot(
+                    messages=(
+                        self.agent.build_messages_with_tool_guide()
+                        if assistant_appended
+                        else messages
+                    ),
+                    llm_model=last_model,
+                    usage=last_usage,
+                    tools=self.agent.tool_registry.to_openai_format(),
+                    assistant_content=(
+                        None if assistant_appended else full_content or None
+                    ),
+                    assistant_reasoning_content=(
+                        None if assistant_appended else full_reasoning or None
+                    ),
+                    step=1,
+                )
+            raise
 
     async def _run_stream_step(
         self,
@@ -280,56 +378,82 @@ class NormalAgentRunner:
         final_tool_calls: list[ToolCallMessage] = []
         last_model: str | None = None
         last_usage: dict[str, Any] | None = None
+        assistant_appended = False
 
-        async for chunk in stream:
+        try:
+            async for chunk in stream:
+                self.agent.ensure_not_cancelled()
+                if chunk.content_delta:
+                    full_content += chunk.content_delta
+                if chunk.reasoning_content_delta:
+                    full_reasoning += chunk.reasoning_content_delta
+                last_model = chunk.model or last_model
+                if chunk.is_finished and chunk.tool_calls:
+                    final_tool_calls = chunk.tool_calls
+                if chunk.usage:
+                    last_usage = chunk.usage
+                yield AgentStreamChunk(
+                    delta=chunk.content_delta or "",
+                    reasoning_delta=chunk.reasoning_content_delta or "",
+                    step=step,
+                )
+
             self.agent.ensure_not_cancelled()
-            if chunk.content_delta:
-                full_content += chunk.content_delta
-            if chunk.reasoning_content_delta:
-                full_reasoning += chunk.reasoning_content_delta
-            last_model = chunk.model or last_model
-            if chunk.is_finished:
-                final_tool_calls = chunk.tool_calls
-            if chunk.usage:
-                last_usage = chunk.usage
+            self.agent.memory.append_assistant_message(
+                content=full_content,
+                name=self.agent.agent_name,
+                tool_calls=final_tool_calls or None,
+                reasoning_content=full_reasoning or None,
+            )
+            assistant_appended = True
+
+            if self.agent.save_trace:
+                self.agent.save_trace_snapshot(
+                    messages=self.agent.build_messages_with_tool_guide(),
+                    llm_model=last_model,
+                    usage=last_usage,
+                    tools=self.agent.tool_registry.to_openai_format(),
+                )
+
+            if final_tool_calls:
+                async for chunk in self._execute_stream_tools(final_tool_calls, step):
+                    yield chunk
+                return
+
+            logger.info(
+                "event=agent.run_stream_completed agent=%s mode=normal step=%s",
+                self.agent.agent_name,
+                step,
+            )
             yield AgentStreamChunk(
-                delta=chunk.content_delta or "",
-                reasoning_delta=chunk.reasoning_content_delta or "",
+                delta="",
+                is_complete=True,
+                content=full_content,
                 step=step,
             )
-
-        self.agent.ensure_not_cancelled()
-        self.agent.memory.append_assistant_message(
-            content=full_content,
-            name=self.agent.agent_name,
-            tool_calls=final_tool_calls or None,
-            reasoning_content=full_reasoning or None,
-        )
-
-        if self.agent.save_trace:
-            self.agent.save_trace_snapshot(
-                messages=self.agent.memory.dump_messages(),
-                llm_model=last_model,
-                usage=last_usage,
-                tools=self.agent.tool_registry.to_openai_format(),
-            )
-
-        if final_tool_calls:
-            async for chunk in self._execute_stream_tools(final_tool_calls, step):
-                yield chunk
-            return
-
-        logger.info(
-            "event=agent.run_stream_completed agent=%s mode=normal step=%s",
-            self.agent.agent_name,
-            step,
-        )
-        yield AgentStreamChunk(
-            delta="",
-            is_complete=True,
-            content=full_content,
-            step=step,
-        )
+        except asyncio.CancelledError:
+            if self.agent.save_trace:
+                self.agent.save_partial_trace_snapshot(
+                    messages=(
+                        self.agent.build_messages_with_tool_guide()
+                        if assistant_appended
+                        else messages
+                    ),
+                    llm_model=last_model,
+                    usage=last_usage,
+                    tools=self.agent.tool_registry.to_openai_format(),
+                    assistant_content=(
+                        None if assistant_appended else full_content or None
+                    ),
+                    assistant_reasoning_content=(
+                        None if assistant_appended else full_reasoning or None
+                    ),
+                    assistant_tool_calls=(
+                        None if assistant_appended else final_tool_calls
+                    ),
+                    step=step,
+                )
+            raise
 
     async def _execute_stream_tools(
         self,

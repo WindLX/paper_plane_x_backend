@@ -101,6 +101,11 @@ class LLMClient:
         - None
         """
         raw_usage = getattr(response, "usage", None)
+        return self._normalize_usage(raw_usage)
+
+    @staticmethod
+    def _normalize_usage(raw_usage: Any) -> dict[str, Any]:
+        """将不同形态的 usage 统一转成 dict."""
         if raw_usage is None:
             return {}
 
@@ -113,11 +118,38 @@ class LLMClient:
             except Exception:
                 pass
 
+        # Pydantic v1 / 一般对象的 dict() 方法
+        if hasattr(raw_usage, "dict") and callable(raw_usage.dict):
+            try:
+                dumped = raw_usage.dict()
+                if isinstance(dumped, dict):
+                    return cast(dict[str, Any], dumped)
+            except Exception:
+                pass
+
         # 普通 dict
         if isinstance(raw_usage, dict):
             return cast(dict[str, Any], raw_usage)
 
-        return {}
+        # 最后回退到属性探测，兼容 LiteLLM/Provider 自定义 usage 对象
+        known_fields = [
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "input_tokens",
+            "output_tokens",
+            "reasoning_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+            "prompt_cache_hit_tokens",
+            "prompt_cache_miss_tokens",
+        ]
+        extracted: dict[str, Any] = {}
+        for field in known_fields:
+            value = getattr(raw_usage, field, None)
+            if value is not None:
+                extracted[field] = value
+        return extracted
 
     def _parse_response(self, response: Any) -> LLMResponse:
         message = response.choices[0].message
@@ -401,8 +433,9 @@ class LLMClient:
         request["stream_options"] = {"include_usage": True}
 
         logger.debug(
-            "event=llm.stream_request model=%s tool_count=%s",
+            "event=llm.stream_request model=%s message_count=%s tool_count=%s",
             request["model"],
+            len(messages),
             0 if tools is None else len(tools),
         )
 
@@ -414,6 +447,7 @@ class LLMClient:
         indexed_tool_calls: dict[int, dict[str, Any]] = {}
         content_buffer = ""
         reasoning_buffer = ""
+        chunk_index = 0
 
         # acompletion(stream=True) 返回可异步迭代的 CustomStreamWrapper，
         # 但 LiteLLM 类型签名标注为 ModelResponse，需忽略类型检查。
@@ -431,21 +465,52 @@ class LLMClient:
             model: object
 
         async for chunk in cast(AsyncIterator[_ChunkLike], response):
+            chunk_index += 1
             chunk_model = chunk.model
             last_model = chunk_model if isinstance(chunk_model, str) else last_model
 
             # 提取 usage（stream_options 开启后最后一个 chunk 会携带）
             raw_usage = getattr(chunk, "usage", None)
-            if raw_usage is not None:
-                if hasattr(raw_usage, "model_dump") and callable(raw_usage.model_dump):
-                    try:
-                        last_usage = raw_usage.model_dump()
-                    except Exception:
-                        pass
-                elif isinstance(raw_usage, dict):
-                    last_usage = cast(dict[str, Any], raw_usage)
+            chunk_usage = self._normalize_usage(raw_usage)
+            if chunk_usage:
+                last_usage = chunk_usage
+
+            choice_count = len(chunk.choices)
+            finish_reason = None
+            if chunk.choices:
+                finish_reason = getattr(chunk.choices[0], "finish_reason", None)
+            usage_keys = sorted(chunk_usage.keys())
+            logger.debug(
+                "event=llm.stream_chunk_summary model=%s chunk_index=%s choices_len=%s finish_reason=%s has_usage=%s usage_type=%s usage_keys=%s",
+                last_model or request["model"],
+                chunk_index,
+                choice_count,
+                finish_reason,
+                bool(chunk_usage),
+                type(raw_usage).__name__ if raw_usage is not None else None,
+                usage_keys,
+            )
+            # if raw_usage is not None or finish_reason is not None:
+            #     logger.debug(
+            #         "event=llm.stream_chunk_probe model=%s chunk_index=%s raw_usage_repr=%r normalized_usage=%s finish_reason=%s",
+            #         last_model or request["model"],
+            #         chunk_index,
+            #         raw_usage,
+            #         chunk_usage,
+            #         finish_reason,
+            #     )
 
             if not chunk.choices:
+                if chunk_usage:
+                    logger.debug(
+                        "event=llm.stream_usage_chunk model=%s usage=%s",
+                        last_model or request["model"],
+                        chunk_usage,
+                    )
+                    yield LLMStreamChunk(
+                        model=last_model,
+                        usage=chunk_usage,
+                    )
                 continue
 
             choice = chunk.choices[0]
@@ -499,5 +564,5 @@ class LLMClient:
                     reasoning_content_delta=reasoning_delta,
                     model=last_model,
                     is_finished=is_finished,
-                    usage=last_usage if is_finished else {},
+                    usage=chunk_usage or (last_usage if is_finished else {}),
                 )

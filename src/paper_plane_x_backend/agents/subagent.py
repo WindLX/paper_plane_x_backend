@@ -11,9 +11,14 @@ from paper_plane_x_backend.core.agent_runtime import BaseAgent
 from paper_plane_x_backend.models.app_settings import LLMConfig
 from paper_plane_x_backend.services.app_settings import resolve_agent_llm_config
 from paper_plane_x_backend.tools.conversation_io import (
+    find_in_project_file,
     list_project_files,
+    patch_project_file,
     read_project_file,
+    read_project_file_lines,
     remove_project_file,
+    replace_project_file_lines,
+    replace_project_file_text,
     write_project_file,
 )
 from paper_plane_x_backend.tools.librarian import (
@@ -33,7 +38,12 @@ logger = logging.getLogger(__name__)
 
 _SUBAGENT_TOOLS = [
     read_project_file,
+    read_project_file_lines,
+    find_in_project_file,
     write_project_file,
+    replace_project_file_lines,
+    replace_project_file_text,
+    patch_project_file,
     list_project_files,
     remove_project_file,
     global_finder,

@@ -87,6 +87,9 @@ class ConversationMessage(BaseModel):
     images: list[str] | None = Field(
         default=None, description="消息中附带的图片 URL/base64 列表"
     )
+    paper_ids: list[str] | None = Field(
+        default=None, description="用户本次对话关注的文献 ID 列表"
+    )
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
 
     @classmethod
@@ -94,7 +97,7 @@ class ConversationMessage(BaseModel):
         """从数据库行创建实例，自动解析 JSON 字段."""
         data = dict(row)
 
-        for json_col in ["tool_calls", "trace_ids", "tools", "images"]:
+        for json_col in ["tool_calls", "trace_ids", "tools", "images", "paper_ids"]:
             raw = data.get(json_col)
             if isinstance(raw, str) and raw:
                 try:
@@ -126,7 +129,7 @@ class ConversationMessage(BaseModel):
     def to_db_dict(self) -> dict[str, Any]:
         """转换为数据库插入格式，自动序列化 JSON 字段."""
         data = self.model_dump()
-        for json_col in ["tool_calls", "trace_ids", "tools", "images"]:
+        for json_col in ["tool_calls", "trace_ids", "tools", "images", "paper_ids"]:
             value = data.get(json_col)
             if value is not None:
                 data[json_col] = json.dumps(value, ensure_ascii=False)

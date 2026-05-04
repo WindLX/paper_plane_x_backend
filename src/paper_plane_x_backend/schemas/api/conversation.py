@@ -91,6 +91,9 @@ class ConversationMessageResponse(BaseModel):
     )
     reasoning_content: str | None = Field(default=None, description="思考过程内容")
     images: list[str] | None = Field(default=None, description="消息中附带的图片列表")
+    paper_ids: list[str] | None = Field(
+        default=None, description="用户本次对话关注的文献 ID 列表"
+    )
     created_at: datetime = Field(..., description="创建时间")
 
 
@@ -150,6 +153,9 @@ class ConversationMessageCreateRequest(BaseModel):
     content: str = Field(..., description="消息内容")
     name: str | None = Field(default=None, description="名称")
     images: list[str] | None = Field(default=None, description="消息中附带的图片列表")
+    paper_ids: list[str] | None = Field(
+        default=None, description="用户本次对话关注的文献 ID 列表"
+    )
 
 
 class ConversationMessageUpdateRequest(BaseModel):
@@ -159,3 +165,6 @@ class ConversationMessageUpdateRequest(BaseModel):
 
     content: str = Field(..., description="消息内容")
     images: list[str] | None = Field(default=None, description="消息中附带的图片列表")
+    paper_ids: list[str] | None = Field(
+        default=None, description="用户本次对话关注的文献 ID 列表"
+    )

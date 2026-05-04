@@ -92,6 +92,7 @@ query_expr 使用以下语法：
 - 当用户查询涉及时间范围时，请自动计算具体年份。例如"最近五年"意味着当前年份往前推 5 年。
 - 当用户查询涉及作者时，使用 `meta.authors CONTAINS "姓名"`。
 - 当用户查询涉及会议/期刊时，使用 `meta.publication CONTAINS "名称"`。
+- 请积极使用 `quick_scan`, `synthesis_data`, `analysis_report` 里的字段。
 
 # Examples
 用户输入："我想查询最近五年关于 transformer 的论文"

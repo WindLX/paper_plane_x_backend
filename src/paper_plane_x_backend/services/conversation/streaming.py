@@ -106,7 +106,11 @@ def messages_to_agent_format(
         if msg.message_kind == "system":
             entry = {"role": "system", "content": msg.content or ""}
         elif msg.message_kind == "user_input":
-            entry = {"role": "user", "content": msg.content or ""}
+            content = msg.content or ""
+            if msg.paper_ids:
+                paper_refs = "\n".join(f"- {pid}" for pid in msg.paper_ids)
+                content = f"[用户关注以下文献]\n{paper_refs}\n\n{content}"
+            entry = {"role": "user", "content": content}
         elif msg.message_kind == "assistant_reasoning":
             entry = {
                 "role": "assistant",
@@ -189,6 +193,7 @@ class ConversationTurnStreamSession:
                     "trace_ids": self.user_message.trace_ids,
                     "reasoning_content": self.user_message.reasoning_content,
                     "images": self.user_message.images,
+                    "paper_ids": self.user_message.paper_ids,
                     "created_at": self.user_message.created_at.isoformat(),
                 },
             }
