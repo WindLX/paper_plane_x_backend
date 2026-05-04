@@ -5,7 +5,7 @@
 
 import logging
 from collections.abc import AsyncIterator
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, Protocol, TypeVar, cast
 
 from litellm import acompletion  # pyright: ignore[reportUnknownVariableType]
 from pydantic import BaseModel, Field
@@ -15,7 +15,6 @@ from paper_plane_x_backend.schemas.agent_io.base import (
     ToolCallFunction,
     ToolCallMessage,
 )
-from paper_plane_x_backend.services.app_settings import get_app_settings_repo
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +43,7 @@ class LLMStreamChunk(BaseModel):
     )
     model: str | None = None
     is_finished: bool = False
+    usage: dict[str, Any] = Field(default_factory=dict)
 
 
 class LLMClient:
@@ -54,7 +54,7 @@ class LLMClient:
 
     def __init__(
         self,
-        model: str | None = None,
+        model: str,
         api_key: str | None = None,
         base_url: str | None = None,
         temperature: float = 0.7,
@@ -65,10 +65,9 @@ class LLMClient:
         reasoning_effort: str | None = None,
         extra_body: dict[str, Any] | None = None,
     ):
-        app_llm = get_app_settings_repo().get().llm
-        self.model = model or app_llm.model
-        self.api_key = api_key or app_llm.api_key
-        self.base_url = base_url or app_llm.base_url
+        self.model = model
+        self.api_key = api_key
+        self.base_url = base_url
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
@@ -91,6 +90,34 @@ class LLMClient:
             reasoning_effort=config.reasoning_effort,
             extra_body=config.extra_body,
         )
+
+    def _extract_usage(self, response: Any) -> dict[str, Any]:
+        """从 LLM 响应中安全提取 usage 信息.
+
+        LiteLLM 不同 provider 返回的 usage 对象类型不一：
+        - Pydantic v1 BaseModel（OpenAI 等）
+        - Pydantic v2 BaseModel
+        - dict
+        - None
+        """
+        raw_usage = getattr(response, "usage", None)
+        if raw_usage is None:
+            return {}
+
+        # Pydantic v2
+        if hasattr(raw_usage, "model_dump") and callable(raw_usage.model_dump):
+            try:
+                dumped = raw_usage.model_dump()
+                if isinstance(dumped, dict):
+                    return cast(dict[str, Any], dumped)
+            except Exception:
+                pass
+
+        # 普通 dict
+        if isinstance(raw_usage, dict):
+            return cast(dict[str, Any], raw_usage)
+
+        return {}
 
     def _parse_response(self, response: Any) -> LLMResponse:
         message = response.choices[0].message
@@ -132,7 +159,7 @@ class LLMClient:
                     )
                 )
 
-        usage = dict(response.usage) if getattr(response, "usage", None) else {}
+        usage = self._extract_usage(response)
         reasoning_content = getattr(message, "reasoning_content", None)
         return LLMResponse(
             content=message.content,
@@ -345,7 +372,11 @@ class LLMClient:
             if isinstance(fn_args, str):
                 args = fn_args
             elif isinstance(fn_args, dict):
-                args = {k: v for k, v in fn_args.items() if isinstance(k, str)}
+                args = {
+                    k: v
+                    for k, v in cast(dict[Any, Any], fn_args).items()
+                    if isinstance(k, str)
+                }
             else:
                 continue
             tool_calls.append(
@@ -367,6 +398,7 @@ class LLMClient:
         """流式调用 LLM，逐块 yield 增量内容."""
         request = self._build_request(messages, tools=tools, **kwargs)
         request["stream"] = True
+        request["stream_options"] = {"include_usage": True}
 
         logger.debug(
             "event=llm.stream_request model=%s tool_count=%s",
@@ -376,6 +408,7 @@ class LLMClient:
 
         response = await acompletion(**request)
         last_model: str | None = None
+        last_usage: dict[str, Any] = {}
 
         # 流式 tool_calls 需要按 index 累积
         indexed_tool_calls: dict[int, dict[str, Any]] = {}
@@ -384,10 +417,39 @@ class LLMClient:
 
         # acompletion(stream=True) 返回可异步迭代的 CustomStreamWrapper，
         # 但 LiteLLM 类型签名标注为 ModelResponse，需忽略类型检查。
-        async for chunk in response:  # type: ignore[var-annotated]
+        class _DeltaLike(Protocol):
+            content: object
+            reasoning_content: object
+            tool_calls: object
+
+        class _ChoiceLike(Protocol):
+            delta: _DeltaLike
+            finish_reason: object
+
+        class _ChunkLike(Protocol):
+            choices: list[_ChoiceLike]
+            model: object
+
+        async for chunk in cast(AsyncIterator[_ChunkLike], response):
+            chunk_model = chunk.model
+            last_model = chunk_model if isinstance(chunk_model, str) else last_model
+
+            # 提取 usage（stream_options 开启后最后一个 chunk 会携带）
+            raw_usage = getattr(chunk, "usage", None)
+            if raw_usage is not None:
+                if hasattr(raw_usage, "model_dump") and callable(raw_usage.model_dump):
+                    try:
+                        last_usage = raw_usage.model_dump()
+                    except Exception:
+                        pass
+                elif isinstance(raw_usage, dict):
+                    last_usage = cast(dict[str, Any], raw_usage)
+
+            if not chunk.choices:
+                continue
+
             choice = chunk.choices[0]
             delta = choice.delta
-            last_model = getattr(chunk, "model", None) or last_model
 
             content_delta = getattr(delta, "content", None)
             if isinstance(content_delta, str):
@@ -400,7 +462,7 @@ class LLMClient:
             # 累积流式 tool_calls
             raw_tcs = getattr(delta, "tool_calls", None)
             if isinstance(raw_tcs, list):
-                for tc in raw_tcs:
+                for tc in cast(list[Any], raw_tcs):
                     idx = getattr(tc, "index", None)
                     if isinstance(idx, int):
                         entry = indexed_tool_calls.setdefault(idx, {})
@@ -429,6 +491,7 @@ class LLMClient:
                     tool_calls=self._parse_stream_tool_calls(sorted_tcs),
                     model=last_model,
                     is_finished=True,
+                    usage=last_usage,
                 )
             else:
                 yield LLMStreamChunk(
@@ -436,4 +499,5 @@ class LLMClient:
                     reasoning_content_delta=reasoning_delta,
                     model=last_model,
                     is_finished=is_finished,
+                    usage=last_usage if is_finished else {},
                 )

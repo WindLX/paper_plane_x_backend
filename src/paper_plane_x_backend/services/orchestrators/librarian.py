@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, NoReturn
+from typing import Any, NoReturn, cast
 
 from paper_plane_x_backend.agents.global_finder import GlobalFinderAgent
 from paper_plane_x_backend.core.query_parser import (
@@ -35,6 +35,10 @@ from paper_plane_x_backend.services.project.repository import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_int(value: object) -> int:
+    return value if isinstance(value, int) else 0
 
 
 class LibrarianDomainError(Exception):
@@ -135,8 +139,8 @@ class LibrarianOrchestrator:
         except PaperRepositoryError as exc:
             self._raise_repo_error(exc)
 
-        agent_summary = payload.get("agent_summary")
-        if agent_summary is None:
+        agent_summary: str | None = cast(str | None, payload.get("agent_summary"))
+        if not agent_summary or not agent_summary.strip():
             agent_summary = await self._generate_agent_summary(
                 project_id=project_id,
                 payload=payload,
@@ -146,6 +150,33 @@ class LibrarianOrchestrator:
             payload["agent_summary"] = agent_summary
 
         return payload
+
+    async def force_generate_agent_summary(
+        self,
+        *,
+        project_id: str,
+        top_tags_limit: int,
+        caller: str | None = None,
+        caller_id: str | None = None,
+    ) -> str | None:
+        """强制重新生成项目的 agent_summary，无论当前是否已存在。"""
+        try:
+            payload = global_finder_by_project(
+                paper_repo=self.query_repo,
+                project_repo=self.project_repo,
+                project_id=project_id,
+                top_tags_limit=top_tags_limit,
+            )
+        except PaperRepositoryError as exc:
+            self._raise_repo_error(exc)
+
+        agent_summary = await self._generate_agent_summary(
+            project_id=project_id,
+            payload=payload,
+            caller=caller,
+            caller_id=caller_id,
+        )
+        return agent_summary
 
     async def _generate_agent_summary(
         self,
@@ -159,14 +190,25 @@ class LibrarianOrchestrator:
         project = self.project_repo.get(project_id)
         project_name = project.name if project else None
 
-        papers_raw = payload.get("papers", [])
-        stats_raw = payload.get("stats", {})
+        papers_raw_obj = payload.get("papers", [])
+        papers_raw: list[object] = (
+            cast(list[object], papers_raw_obj)
+            if isinstance(papers_raw_obj, list)
+            else cast(list[object], [])
+        )
+        stats_raw_obj = payload.get("stats", {})
+        stats_raw: dict[str, Any] = (
+            cast(dict[str, Any], stats_raw_obj)
+            if isinstance(stats_raw_obj, dict)
+            else cast(dict[str, Any], {})
+        )
 
         paper_summaries: list[GlobalFinderPaperSummary] = []
         for p in papers_raw:
             if not isinstance(p, dict):
                 continue
-            qs_raw = p.get("quick_scan")
+            paper_dict = cast(dict[str, Any], p)
+            qs_raw = paper_dict.get("quick_scan")
             qs_model = None
             if isinstance(qs_raw, dict):
                 try:
@@ -175,53 +217,96 @@ class LibrarianOrchestrator:
                     qs_model = None
             paper_summaries.append(
                 GlobalFinderPaperSummary(
-                    paper_id=str(p.get("paper_id") or ""),
-                    title=p.get("title") if isinstance(p.get("title"), str) else None,
+                    paper_id=str(paper_dict.get("paper_id") or ""),
+                    title=(
+                        paper_dict.get("title")
+                        if isinstance(paper_dict.get("title"), str)
+                        else None
+                    ),
                     authors=[
-                        str(a) for a in p.get("authors", []) if isinstance(a, str)
+                        str(a)
+                        for a in cast(list[object], paper_dict.get("authors", []))
+                        if isinstance(a, str)
                     ],
-                    year=p.get("year") if isinstance(p.get("year"), int) else None,
+                    year=(
+                        paper_dict.get("year")
+                        if isinstance(paper_dict.get("year"), int)
+                        else None
+                    ),
                     quick_scan=qs_model,
                 )
             )
 
+        year_dist_raw_obj = stats_raw.get("year_distribution", {})
         year_dist_raw = (
-            stats_raw.get("year_distribution", {})
-            if isinstance(stats_raw, dict)
-            else {}
+            cast(dict[str, Any], year_dist_raw_obj)
+            if isinstance(year_dist_raw_obj, dict)
+            else cast(dict[str, Any], {})
+        )
+        available_count: int = _coerce_int(year_dist_raw.get("available_count"))
+        missing_count: int = _coerce_int(year_dist_raw.get("missing_count"))
+        outlier_count: int = _coerce_int(year_dist_raw.get("outlier_count"))
+        low_outlier_count: int = _coerce_int(
+            year_dist_raw.get("low_outlier_count")
+        )
+        high_outlier_count: int = _coerce_int(
+            year_dist_raw.get("high_outlier_count")
         )
         year_dist = YearDistribution(
-            available_count=year_dist_raw.get("available_count", 0),
-            missing_count=year_dist_raw.get("missing_count", 0),
-            mean=year_dist_raw.get("mean"),
-            variance=year_dist_raw.get("variance"),
-            median=year_dist_raw.get("median"),
-            mode_years=year_dist_raw.get("mode_years", []),
-            q25=year_dist_raw.get("q25"),
-            q75=year_dist_raw.get("q75"),
-            outlier_count=year_dist_raw.get("outlier_count", 0),
-            low_outlier_count=year_dist_raw.get("low_outlier_count", 0),
-            high_outlier_count=year_dist_raw.get("high_outlier_count", 0),
+            available_count=available_count,
+            missing_count=missing_count,
+            mean=year_dist_raw.get("mean") if isinstance(year_dist_raw.get("mean"), (int, float)) else None,
+            variance=(
+                year_dist_raw.get("variance")
+                if isinstance(year_dist_raw.get("variance"), (int, float))
+                else None
+            ),
+            median=(
+                year_dist_raw.get("median")
+                if isinstance(year_dist_raw.get("median"), (int, float))
+                else None
+            ),
+            mode_years=[
+                year
+                for year in cast(list[object], year_dist_raw.get("mode_years", []))
+                if isinstance(year, int)
+            ],
+            q25=year_dist_raw.get("q25") if isinstance(year_dist_raw.get("q25"), (int, float)) else None,
+            q75=year_dist_raw.get("q75") if isinstance(year_dist_raw.get("q75"), (int, float)) else None,
+            outlier_count=outlier_count,
+            low_outlier_count=low_outlier_count,
+            high_outlier_count=high_outlier_count,
         )
 
+        top_tags_raw_obj = stats_raw.get("top_tags", [])
         top_tags_raw = (
-            stats_raw.get("top_tags", []) if isinstance(stats_raw, dict) else []
+            cast(list[object], top_tags_raw_obj)
+            if isinstance(top_tags_raw_obj, list)
+            else cast(list[object], [])
         )
         top_tags = [
-            TagCount(tag=t.get("tag", ""), count=t.get("count", 0))
+            TagCount(
+                tag=str(tag_dict.get("tag", "")),
+                count=tag_dict.get("count", 0)
+                if isinstance(tag_dict.get("count"), int)
+                else 0,
+            )
             for t in top_tags_raw
             if isinstance(t, dict)
+            for tag_dict in [cast(dict[str, Any], t)]
         ]
 
         stats = GlobalFinderStats(
-            paper_count=(
-                stats_raw.get("paper_count", 0) if isinstance(stats_raw, dict) else 0
-            ),
-            top_tags_limit=(
-                stats_raw.get("top_tags_limit", 0) if isinstance(stats_raw, dict) else 0
-            ),
+            paper_count=stats_raw.get("paper_count", 0)
+            if isinstance(stats_raw.get("paper_count"), int)
+            else 0,
+            top_tags_limit=stats_raw.get("top_tags_limit", 0)
+            if isinstance(stats_raw.get("top_tags_limit"), int)
+            else 0,
             year_range=(
-                stats_raw.get("year_range") if isinstance(stats_raw, dict) else None
+                stats_raw.get("year_range")
+                if isinstance(stats_raw.get("year_range"), str)
+                else None
             ),
             year_distribution=year_dist,
             top_tags=top_tags,

@@ -1,3 +1,5 @@
+from typing import cast
+
 from pydantic import BaseModel, Field
 
 from .base import CitedText
@@ -60,7 +62,10 @@ class YearDistribution(BaseModel):
     mean: float | None = Field(default=None, description="平均年份")
     variance: float | None = Field(default=None, description="年份方差")
     median: float | None = Field(default=None, description="中位数年份")
-    mode_years: list[int] = Field(default_factory=list, description="众数年份")
+    mode_years: list[int] = Field(
+        default_factory=lambda: cast(list[int], []),
+        description="众数年份",
+    )
     q25: float | None = Field(default=None, description="25%分位数")
     q75: float | None = Field(default=None, description="75%分位数")
     outlier_count: int = Field(default=0, description="异常值数量")
@@ -95,7 +100,8 @@ class GlobalFinderStats(BaseModel):
     )
     year_distribution: YearDistribution = Field(..., description="论文年份分布统计")
     top_tags: list[TagCount] = Field(
-        default_factory=list[TagCount], description="Top 标签统计列表"
+        default_factory=lambda: cast(list[TagCount], []),
+        description="Top 标签统计列表",
     )
 
 
@@ -107,7 +113,7 @@ class GlobalFinderAgentInput(BaseModel):
         description="项目名称",
     )
     papers: list[GlobalFinderPaperSummary] = Field(
-        default_factory=list[GlobalFinderPaperSummary],
+        default_factory=lambda: cast(list[GlobalFinderPaperSummary], []),
         description="项目下的论文基础摘要列表",
     )
     stats: GlobalFinderStats = Field(..., description="全局查找统计信息")

@@ -18,7 +18,7 @@ class TestAgentTracesAPI:
         db.insert(
             "agent_traces",
             {
-                "trace_id": "t-1",
+                "trace_id": "trc-test-1",
                 "agent_name": "ExtractionAgent",
                 "messages": json.dumps(
                     [{"role": "assistant", "content": "hello"}], ensure_ascii=False
@@ -34,7 +34,7 @@ class TestAgentTracesAPI:
         db.insert(
             "agent_traces",
             {
-                "trace_id": "t-2",
+                "trace_id": "trc-test-2",
                 "agent_name": "FactCheckAgent",
                 "messages": json.dumps(
                     [{"role": "user", "content": "world"}], ensure_ascii=False
@@ -50,12 +50,12 @@ class TestAgentTracesAPI:
 
         response = client.post(
             "/api/v1/agent-traces/query",
-            json={"trace_ids": ["t-2", "t-1", "missing", "t-2"]},
+            json={"trace_ids": ["trc-test-2", "trc-test-1", "missing", "trc-test-2"]},
         )
         assert response.status_code == 200
         payload = response.json()
         items = payload["items"]
-        assert [item["trace_id"] for item in items] == ["t-2", "t-1"]
+        assert [item["trace_id"] for item in items] == ["trc-test-2", "trc-test-1"]
         assert items[0]["messages"][0]["role"] == "user"
         assert items[1]["messages"][0]["content"] == "hello"
         assert items[0]["usage_payload"]["cache_hit"] is True
@@ -85,7 +85,7 @@ class TestAgentTraceListAPI:
         db.insert(
             "agent_traces",
             {
-                "trace_id": "t-1",
+                "trace_id": "trc-test-1",
                 "agent_name": "ExtractionAgent",
                 "messages": json.dumps([{"role": "assistant"}], ensure_ascii=False),
                 "llm_model": "deepseek-v4-flash",
@@ -101,7 +101,7 @@ class TestAgentTraceListAPI:
         db.insert(
             "agent_traces",
             {
-                "trace_id": "t-2",
+                "trace_id": "trc-test-2",
                 "agent_name": "FactCheckAgent",
                 "messages": json.dumps([{"role": "user"}], ensure_ascii=False),
                 "llm_model": "deepseek-v4-flash",
@@ -110,7 +110,7 @@ class TestAgentTraceListAPI:
                 "total_tokens": 3,
                 "usage_payload": json.dumps({}, ensure_ascii=False),
                 "caller": "data_process",
-                "caller_id": "paper-1",
+                "caller_id": "pap-test-1",
                 "created_at": now,
             },
         )
@@ -142,7 +142,7 @@ class TestAgentTraceListAPI:
         db.insert(
             "agent_traces",
             {
-                "trace_id": "t-1",
+                "trace_id": "trc-test-1",
                 "agent_name": "ExtractionAgent",
                 "messages": json.dumps([], ensure_ascii=False),
                 "llm_model": "m1",
@@ -156,7 +156,7 @@ class TestAgentTraceListAPI:
         db.insert(
             "agent_traces",
             {
-                "trace_id": "t-2",
+                "trace_id": "trc-test-2",
                 "agent_name": "FactCheckAgent",
                 "messages": json.dumps([], ensure_ascii=False),
                 "llm_model": "m1",
@@ -187,7 +187,7 @@ class TestAgentTraceListAPI:
         db.insert(
             "agent_traces",
             {
-                "trace_id": "t-1",
+                "trace_id": "trc-test-1",
                 "agent_name": "A",
                 "messages": json.dumps([], ensure_ascii=False),
                 "llm_model": "m1",
@@ -202,7 +202,7 @@ class TestAgentTraceListAPI:
         db.insert(
             "agent_traces",
             {
-                "trace_id": "t-2",
+                "trace_id": "trc-test-2",
                 "agent_name": "A",
                 "messages": json.dumps([], ensure_ascii=False),
                 "llm_model": "m1",
@@ -222,7 +222,7 @@ class TestAgentTraceListAPI:
         assert response.status_code == 200
         payload = response.json()
         assert payload["total"] == 1
-        assert payload["items"][0]["trace_id"] == "t-1"
+        assert payload["items"][0]["trace_id"] == "trc-test-1"
 
     def test_list_pagination(
         self,

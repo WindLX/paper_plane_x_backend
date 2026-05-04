@@ -83,18 +83,24 @@
 
 ---
 
-## Phase 5: HITL 与 Survey Workflow（待启动）
+## Phase 5: HITL 与 Survey Workflow（进行中）
 
 目标：引入人机协作决策与综述写作链路。
 
-| 任务                        | 说明                                              | 状态   |
-| --------------------------- | ------------------------------------------------- | ------ |
-| 5.1 HITL 状态机             | `IDLE/RUNNING/WAITING_FOR_HUMAN/COMPLETED/FAILED` | 待开始 |
-| 5.2 HITL API 落地           | `/api/v1/hitl/*` 从占位到可用接口                 | 待开始 |
-| 5.3 Writer/Reviewer/Planner | Survey 多 Agent 协作流程                          | 待开始 |
-| 5.4 导出链路                | 结构化输出到文稿导出                              | 待开始 |
+| 任务                        | 说明                                           | 状态     |
+| --------------------------- | ---------------------------------------------- | -------- |
+| 5.1 HITL 基础设施           | `HITLManager` + WebSocket 广播 + 等待/超时机制 | ✅ 已完成 |
+| 5.2 `ask_human` 工具        | ResearcherAgent 可向人类提问并等待回答         | ✅ 已完成 |
+| 5.3 HITL WebSocket API      | `/api/v1/ws/hitl` 接收问题、提交回答           | ✅ 已完成 |
+| 5.4 SubAgent 委派           | `delegate_to_subagent` 工具 + SubAgent 实现    | ✅ 已完成 |
+| 5.5 Conversation 系统       | 项目级流式对话 + WebSocket + REST CRUD         | ✅ 已完成 |
+| 5.6 Writer/Reviewer/Planner | Survey 多 Agent 协作流程                       | 待开始   |
+| 5.7 导出链路                | 结构化输出到文稿导出                           | 待开始   |
 
-说明：当前 `agents/planner.py`、`agents/reviewer.py`、`agents/writer.py` 为空占位文件。
+说明：
+- ResearcherAgent 当前可用工具集：文件沙箱、Librarian 检索、paper 笔记、subagent 委派、ask_human。
+- SubAgent 拥有与 ResearcherAgent 相同的工具集（不含 `delegate_to_subagent`），防止递归。
+- HITL 每个问题支持单选/多选 + 自定义回答选项，10 分钟超时保护。
 
 ---
 
@@ -114,3 +120,18 @@
 3. 类型安全：Pydantic + pyright 约束。
 4. 可追溯：保留 Agent 交互 trace 与关键状态。
 5. 数据库变更纪律：涉及 schema 变更必须包含迁移逻辑与迁移前备份。
+
+---
+
++ Prompt 优化，工具/cite
++ 右侧边栏
+  + 文献的 detail
+  + trace 记录
+  + project 文件编辑
+  + project 文件导出
++ 输入栏
+  + 文献选择
+  + 工具选择
+  + 图片上传
++ 消息的刷新/分支/编辑/删除
++ hitl 测试

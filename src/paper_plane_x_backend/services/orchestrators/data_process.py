@@ -9,7 +9,6 @@ from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import TypeAlias
-from uuid import uuid4
 
 from fastapi import UploadFile, status
 
@@ -37,6 +36,7 @@ from paper_plane_x_backend.services.paper.repository import (
     PaperRepository,
     PaperRepositoryError,
 )
+from paper_plane_x_backend.utils.ids import generate_task_id
 
 logger = logging.getLogger(__name__)
 
@@ -229,7 +229,7 @@ class DataProcessOrchestrator:
                     ExtractionStatus.HUMAN_COMPLETED,
                 }:
                     task_state = DataProcessTaskState(
-                        task_id=str(uuid4()),
+                        task_id=generate_task_id(),
                         paper_id=reusable_paper.paper_id,
                         payload={
                             "pdf_path": reusable_paper.raw_pdf_path or str(pdf_path),
@@ -277,7 +277,7 @@ class DataProcessOrchestrator:
                     )
 
                 queue_task = DataProcessQueueTask(
-                    task_id=str(uuid4()),
+                    task_id=generate_task_id(),
                     paper_id=reusable_paper.paper_id,
                     payload={
                         "pdf_path": reusable_paper.raw_pdf_path or str(pdf_path),
@@ -298,7 +298,7 @@ class DataProcessOrchestrator:
                 raw_pdf_sha256=raw_pdf_sha256,
             )
             queue_task = DataProcessQueueTask(
-                task_id=str(uuid4()),
+                task_id=generate_task_id(),
                 paper_id=paper.paper_id,
                 payload={"pdf_path": str(pdf_path)},
             )
@@ -368,7 +368,7 @@ class DataProcessOrchestrator:
             _ = old_paper
 
             queue_task = DataProcessQueueTask(
-                task_id=str(uuid4()),
+                task_id=generate_task_id(),
                 paper_id=paper_id,
                 payload={"pdf_path": str(pdf_path)},
             )
@@ -619,7 +619,7 @@ class DataProcessOrchestrator:
             _ = old_paper
 
             queue_task = DataProcessQueueTask(
-                task_id=str(uuid4()),
+                task_id=generate_task_id(),
                 paper_id=paper_id,
                 payload={"pdf_path": str(pdf_path)},
                 retry_of_task_id=task_id,

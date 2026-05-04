@@ -13,7 +13,7 @@ Paper Plane X 后端负责整个数据处理主链路：
 
 ## 1. 后端负责什么
 
-当前后端提供四类核心能力：
+当前后端提供六类核心能力：
 
 1. **项目与论文管理**
    - Project CRUD
@@ -34,6 +34,16 @@ Paper Plane X 后端负责整个数据处理主链路：
 4. **控制台与检索 API**
    - 控制台所需的项目、任务、导出接口
    - Librarian 字段投影、矩阵对比、项目内搜索、Deep Diver 深挖论文细节
+
+5. **项目级流式对话（Conversation）**
+   - WebSocket 流式对话：`/api/v1/ws/conversations/{conversation_id}`
+   - REST CRUD：`/api/v1/conversations/*`
+   - ResearcherAgent 支持文件沙箱、文献检索、论文笔记、subagent 委派、人机交互
+
+6. **人机交互（HITL）**
+   - Agent 可通过 `ask_human` 工具向用户提问
+   - HITL WebSocket：`/api/v1/ws/hitl`
+   - 支持单选/多选 + 自定义回答，10 分钟超时保护
 
 ## 2. 快速开始
 

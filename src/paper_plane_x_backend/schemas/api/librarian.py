@@ -1,7 +1,5 @@
 """Librarian API schemas."""
 
-from typing import Any
-
 from pydantic import BaseModel, ConfigDict, Field
 
 from paper_plane_x_backend.models import PaperSortKey, SortOrder
@@ -9,25 +7,6 @@ from paper_plane_x_backend.schemas.agent_io import (
     GlobalFinderPaperSummary,
     GlobalFinderStats,
 )
-
-
-class LibrarianMatrixRequest(BaseModel):
-    """多 paper 多路径矩阵投影请求。"""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    paper_ids: list[str] = Field(..., min_length=1)
-    field_paths: list[str] = Field(..., min_length=1)
-
-
-class LibrarianMatrixResponse(BaseModel):
-    """多 paper 多路径矩阵投影响应。"""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    paper_ids: list[str]
-    field_paths: list[str]
-    items: dict[str, dict[str, Any | None]]
 
 
 class LibrarianGlobalFinderRequest(BaseModel):
@@ -50,6 +29,15 @@ class LibrarianGlobalFinderResponse(BaseModel):
     )
     stats: GlobalFinderStats = Field(..., description="全局查找统计信息")
     agent_summary: str | None = Field(default=None)
+
+
+class LibrarianAgentSummaryResponse(BaseModel):
+    """项目 Agent Summary 强制生成响应。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    project_id: str
+    agent_summary: str | None = Field(default=None, description="生成的项目文献总结")
 
 
 class LibrarianUnifiedSearchRequest(BaseModel):
@@ -117,20 +105,3 @@ class LibrarianQueryBuilderResponse(BaseModel):
         ...,
         description="对生成查询的简要说明",
     )
-
-
-class LibrarianGuideResponse(BaseModel):
-    """Librarian 字段与用法说明."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    field_paths_guide: str
-    global_finder_schema: dict[str, Any]
-    query_schema: dict[str, Any]
-    projection_schema: dict[str, Any]
-    matrix_schema: dict[str, Any]
-    query_examples: list[str]
-    projection_examples: list[str]
-    matrix_tips: list[str]
-    project_query_tips: list[str]
-    global_finder_tips: list[str]

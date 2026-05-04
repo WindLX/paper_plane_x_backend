@@ -382,7 +382,9 @@ class TestDataProcessAPI:
         assert manager.get_task("task-delete-1") is None
         for trace_id in ["trace-e-1", "trace-a-1", "trace-efc-1", "trace-afc-1"]:
             assert (
-                db.fetchone("SELECT 1 FROM agent_traces WHERE trace_id = ?", (trace_id,))
+                db.fetchone(
+                    "SELECT 1 FROM agent_traces WHERE trace_id = ?", (trace_id,)
+                )
                 is None
             )
 

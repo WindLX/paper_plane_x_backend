@@ -182,11 +182,7 @@ def global_finder_by_project(
         "stats": {
             "paper_count": len(papers),
             "top_tags_limit": top_tags_limit,
-            "year_range": (
-                f"{min_year}-{max_year}"
-                if min_year is not None and max_year is not None
-                else None
-            ),
+            "year_range": f"{min_year}-{max_year}" if years else None,
             "year_distribution": year_dist,
             "top_tags": top_tags,
         },

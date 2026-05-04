@@ -27,14 +27,6 @@ def test_get_returns_full_settings(repo: AppSettingsRepository) -> None:
     assert isinstance(settings, AppSettings)
 
 
-def test_update_llm(repo: AppSettingsRepository) -> None:
-    updated = repo.update_llm({"model": "gpt-4-turbo", "temperature": 0.5})
-    assert updated.llm.model == "gpt-4-turbo"
-    assert updated.llm.temperature == 0.5
-    # 未覆盖字段保留默认值
-    assert updated.llm.max_tokens == 8192
-
-
 def test_update_mineru(repo: AppSettingsRepository) -> None:
     updated = repo.update_mineru({"base_url": "http://mineru:9000"})
     assert updated.mineru.base_url == "http://mineru:9000"
@@ -162,20 +154,18 @@ def test_ensure_default_provider_skips_when_exists(
 
 
 def test_changes_are_persisted_to_disk(repo: AppSettingsRepository) -> None:
-    repo.update_llm({"model": "persisted-model"})
     repo.update_mineru({"base_url": "http://persisted"})
 
     # 重新加载同一路径的仓库
     repo2 = AppSettingsRepository(repo.path)
-    assert repo2.get().llm.model == "persisted-model"
     assert repo2.get().mineru.base_url == "http://persisted"
 
 
 def test_agent_llm_persisted(repo: AppSettingsRepository) -> None:
-    repo.update_agent_llm("writer", {"provider_name": "p", "temperature": 0.3})
+    repo.update_agent_llm("researcher", {"provider_name": "p", "temperature": 0.3})
 
     repo2 = AppSettingsRepository(repo.path)
-    entry = repo2.get_agent_llm("writer")
+    entry = repo2.get_agent_llm("researcher")
     assert entry is not None
     assert entry.provider_name == "p"
     assert entry.temperature == 0.3

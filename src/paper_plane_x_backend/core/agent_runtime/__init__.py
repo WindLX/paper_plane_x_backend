@@ -10,9 +10,11 @@ from paper_plane_x_backend.core.agent_runtime.exceptions import (
 )
 from paper_plane_x_backend.core.agent_runtime.llm_client import LLMClient, LLMResponse
 from paper_plane_x_backend.core.agent_runtime.memory import MemoryManager
+from paper_plane_x_backend.core.agent_runtime.stream_types import AgentStreamChunk
 from paper_plane_x_backend.core.agent_runtime.tooling import Tool, ToolRegistry, tool
 
 __all__ = [
+    "AgentStreamChunk",
     "BaseAgent",
     "AgentError",
     "AgentExecutionError",

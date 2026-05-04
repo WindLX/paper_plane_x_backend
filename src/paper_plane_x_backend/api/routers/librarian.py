@@ -13,11 +13,9 @@ from paper_plane_x_backend.core.query_parser import (
 )
 from paper_plane_x_backend.schemas.agent_io.librarian import QueryBuilderAgentInput
 from paper_plane_x_backend.schemas.api import (
+    LibrarianAgentSummaryResponse,
     LibrarianGlobalFinderRequest,
     LibrarianGlobalFinderResponse,
-    LibrarianGuideResponse,
-    LibrarianMatrixRequest,
-    LibrarianMatrixResponse,
     LibrarianQueryBuilderRequest,
     LibrarianQueryBuilderResponse,
     LibrarianUnifiedSearchRequest,
@@ -47,16 +45,6 @@ def _raise_as_http(exc: LibrarianDomainError) -> NoReturn:
         status_code=exc.status_code,
         detail=exc.detail,
     )
-
-
-@router.get(
-    "/guide",
-    response_model=LibrarianGuideResponse,
-    summary="获取 Librarian 字段说明与查询示例",
-)
-def get_librarian_guide(db: DBDep) -> LibrarianGuideResponse:
-    orchestrator = _build_orchestrator(db)
-    return LibrarianGuideResponse.model_validate(orchestrator.build_guide())
 
 
 @router.post(
@@ -115,27 +103,28 @@ async def run_global_finder(
 
 
 @router.post(
-    "/matrix",
-    response_model=LibrarianMatrixResponse,
-    summary="按路径批量对比多篇论文字段",
+    "/global-finder/agent-summary",
+    response_model=LibrarianAgentSummaryResponse,
+    summary="强制重新生成项目文献总结",
 )
-def matrix_project_papers(
-    request: LibrarianMatrixRequest,
+async def force_global_finder_agent_summary(
+    request: LibrarianGlobalFinderRequest,
     db: DBDep,
-) -> LibrarianMatrixResponse:
+) -> LibrarianAgentSummaryResponse:
     orchestrator = _build_orchestrator(db)
     try:
-        matrix = orchestrator.run_matrix(
-            paper_ids=request.paper_ids,
-            field_paths=request.field_paths,
+        agent_summary = await orchestrator.force_generate_agent_summary(
+            project_id=request.project_id,
+            top_tags_limit=get_app_settings_repo().get().librarian.top_tags_limit,
+            caller="api",
+            caller_id=None,
         )
     except LibrarianDomainError as exc:
         _raise_as_http(exc)
 
-    return LibrarianMatrixResponse(
-        paper_ids=request.paper_ids,
-        field_paths=request.field_paths,
-        items=matrix,
+    return LibrarianAgentSummaryResponse(
+        project_id=request.project_id,
+        agent_summary=agent_summary,
     )
 
 

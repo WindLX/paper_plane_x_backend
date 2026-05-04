@@ -36,6 +36,9 @@ class AgentTraceResponse(BaseModel):
         default=None,
         description="原始 usage 信息",
     )
+    tools: list[dict[str, Any]] | None = Field(
+        default=None, description="本次运行可用的工具注册表"
+    )
     created_at: datetime = Field(..., description="创建时间")
     caller: str | None = Field(default=None, description="调用方")
     caller_id: str | None = Field(default=None, description="调用方业务 ID")

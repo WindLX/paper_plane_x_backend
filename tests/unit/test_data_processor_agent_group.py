@@ -134,23 +134,6 @@ class _FakeAnalysisAgent:
 
 
 @pytest.mark.asyncio
-async def test_group_raises_when_fact_check_result_missing() -> None:
-    group = DataProcessorAgentGroup(
-        extraction_agent=_FakeExtractionAgent(),  # type: ignore
-        fact_check_agent1=_FakeFactCheckAgent(result=None),  # type: ignore
-    )
-
-    with pytest.raises(RuntimeError) as exc:
-        await group.run_extraction_fact_check_loop(
-            md_content="# md",
-            images=[],
-            max_retries=1,
-        )
-
-    assert "result is empty" in str(exc.value)
-
-
-@pytest.mark.asyncio
 async def test_group_does_not_raise_when_fact_check_failed_with_result() -> None:
     group = DataProcessorAgentGroup(
         extraction_agent=_FakeExtractionAgent(),  # type: ignore

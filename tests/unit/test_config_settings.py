@@ -41,7 +41,7 @@ def _mock_app_settings():
         analysis=AgentLLMConfigEntry(
             provider_name="analysis-provider",
         ),
-        writer=None,
+        researcher=None,
     )
     return mock
 
@@ -122,7 +122,7 @@ def test_resolve_agent_llm_config_inherits_provider_defaults(
     assert cfg.extra_body == {"metadata": {"tier": "provider"}}
 
 
-def test_resolve_agent_llm_config_returns_global_when_missing(
+def test_resolve_agent_llm_config_raises_when_agent_not_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_app = _mock_app_settings()
@@ -136,11 +136,8 @@ def test_resolve_agent_llm_config_returns_global_when_missing(
         resolve_agent_llm_config,
     )
 
-    cfg = resolve_agent_llm_config("writer")
-
-    assert cfg.model == "global-model"
-    assert cfg.api_key == "k-global"
-    assert cfg.is_vlm is False
+    with pytest.raises(RuntimeError, match="has no LLM configuration"):
+        resolve_agent_llm_config("researcher")
 
 
 def test_server_config_supports_static_keys() -> None:

@@ -4,16 +4,12 @@
 """
 
 import asyncio
-import json
 import logging
-import re
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal, cast
-from uuid import uuid4
+from typing import Any, Literal
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from paper_plane_x_backend.core.agent_runtime.exceptions import (
     AgentExecutionError,
@@ -21,6 +17,11 @@ from paper_plane_x_backend.core.agent_runtime.exceptions import (
 )
 from paper_plane_x_backend.core.agent_runtime.llm_client import LLMClient
 from paper_plane_x_backend.core.agent_runtime.memory import MemoryManager
+from paper_plane_x_backend.core.agent_runtime.normal_mode import NormalAgentRunner
+from paper_plane_x_backend.core.agent_runtime.output_validation import (
+    validate_output_content,
+)
+from paper_plane_x_backend.core.agent_runtime.stream_types import AgentStreamChunk
 from paper_plane_x_backend.core.agent_runtime.tooling import Tool, ToolRegistry
 from paper_plane_x_backend.models import AgentTrace
 from paper_plane_x_backend.models.app_settings import LLMConfig
@@ -28,23 +29,11 @@ from paper_plane_x_backend.services import get_db
 from paper_plane_x_backend.services.agent_trace.repository import (
     AgentTraceRepository,
 )
-from paper_plane_x_backend.services.app_settings import get_app_settings_repo
+from paper_plane_x_backend.utils.ids import generate_trace_id
 
 logger = logging.getLogger(__name__)
 
 AgentMode = Literal["api", "normal"]
-
-
-@dataclass
-class AgentStreamChunk:
-    """Agent 流式执行输出块."""
-
-    delta: str = ""
-    reasoning_delta: str = ""
-    tool_call_name: str | None = None
-    is_complete: bool = False
-    content: str = ""
-    step: int = 0
 
 
 class BaseAgent:
@@ -82,18 +71,23 @@ class BaseAgent:
         self.tool_context = tool_context or {}
         self.caller = caller
         self.caller_id = caller_id
+        self._cancel_event = asyncio.Event()
 
         self.tool_registry = ToolRegistry()
         if tools:
             for tool in tools:
                 self.tool_registry.register(tool)
 
-        config = llm_config or get_app_settings_repo().get().llm
-        self.llm = LLMClient.from_config(config)
+        if llm_config is None:
+            raise ValueError(
+                "llm_config is required. "
+                "Please configure the agent's LLM settings first."
+            )
+        self.llm = LLMClient.from_config(llm_config)
         self.memory = MemoryManager(
             system_prompt=system_prompt or "",
             short_memory_window=short_memory_window,
-            is_vlm=config.is_vlm,
+            is_vlm=llm_config.is_vlm,
         )
 
     def _get_output_schema(self) -> type[BaseModel]:
@@ -115,260 +109,16 @@ class BaseAgent:
             return [messages[0], guide_message, *messages[1:]]
         return [guide_message, *messages]
 
-    @staticmethod
-    def _sanitize_json_string_escapes(raw: str) -> str:
-        """修复 JSON 字符串内部非法转义（常见于未转义 LaTeX 反斜杠）。"""
-        valid_escape_chars = {'"', "\\", "/", "b", "f", "n", "r", "t", "u"}
-        result: list[str] = []
-        in_string = False
-        idx = 0
-        length = len(raw)
-
-        while idx < length:
-            ch = raw[idx]
-
-            if not in_string:
-                result.append(ch)
-                if ch == '"':
-                    in_string = True
-                idx += 1
-                continue
-
-            if ch == '"':
-                in_string = False
-                result.append(ch)
-                idx += 1
-                continue
-
-            if ch == "\\":
-                if idx + 1 >= length:
-                    result.append("\\\\")
-                    idx += 1
-                    continue
-
-                next_char = raw[idx + 1]
-                if next_char in valid_escape_chars:
-                    result.append("\\")
-                    result.append(next_char)
-                    idx += 2
-                    continue
-
-                # 对于非法转义（例如 \alpha 的 \a），补一个反斜杠使其成为字面量
-                result.append("\\\\")
-                idx += 1
-                continue
-
-            result.append(ch)
-            idx += 1
-
-        return "".join(result)
-
-    @staticmethod
-    def _load_json_object_candidate(raw: str) -> dict[str, Any] | None:
-        try:
-            loaded: Any = json.loads(raw)
-        except json.JSONDecodeError:
-            sanitized = BaseAgent._sanitize_json_string_escapes(raw)
-            if sanitized == raw:
-                return None
-            logger.debug(
-                "event=agent.json_sanitize_applied stage=candidate candidate_length=%s sanitized_length=%s",
-                len(raw),
-                len(sanitized),
-            )
-            try:
-                loaded = json.loads(sanitized)
-            except json.JSONDecodeError:
-                logger.debug(
-                    "event=agent.json_sanitize_failed stage=candidate candidate_length=%s",
-                    len(raw),
-                )
-                return None
-        if isinstance(loaded, dict):
-            return cast(dict[str, Any], loaded)
-        return None
-
-    def _extract_json_candidates_from_code_fences(self, content: str) -> list[str]:
-        fence_pattern = re.compile(r"```([^\n`]*)\n?([\s\S]*?)```")
-        json_fences: list[str] = []
-        other_fences: list[str] = []
-
-        for match in fence_pattern.finditer(content):
-            language = (match.group(1) or "").strip().lower()
-            candidate = (match.group(2) or "").strip()
-            if not candidate:
-                continue
-            if language == "json":
-                json_fences.append(candidate)
-            else:
-                other_fences.append(candidate)
-
-        return json_fences + other_fences
-
-    def _extract_json_candidates_from_text(self, content: str) -> list[str]:
-        candidates: list[str] = []
-        length = len(content)
-
-        for start in range(length):
-            if content[start] != "{":
-                continue
-
-            depth = 0
-            in_string = False
-            escaped = False
-
-            for end in range(start, length):
-                ch = content[end]
-
-                if in_string:
-                    if escaped:
-                        escaped = False
-                    elif ch == "\\":
-                        escaped = True
-                    elif ch == '"':
-                        in_string = False
-                    continue
-
-                if ch == '"':
-                    in_string = True
-                    continue
-
-                if ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        candidate = content[start : end + 1].strip()
-                        if candidate:
-                            candidates.append(candidate)
-                        break
-                    if depth < 0:
-                        break
-
-        return candidates
-
-    def _collect_json_object_candidates(
-        self, content: str
-    ) -> list[tuple[int, dict[str, Any]]]:
-        candidates: list[tuple[int, dict[str, Any]]] = []
-
-        raw_candidates: list[str] = []
-        raw_candidates.extend(self._extract_json_candidates_from_code_fences(content))
-        raw_candidates.extend(self._extract_json_candidates_from_text(content))
-
-        seen_raw: set[str] = set()
-        for raw in raw_candidates:
-            normalized = raw.strip()
-            if not normalized or normalized in seen_raw:
-                continue
-            seen_raw.add(normalized)
-
-            loaded = self._load_json_object_candidate(normalized)
-            if loaded is not None:
-                candidates.append((len(normalized), loaded))
-
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        return candidates
+    def build_messages_with_tool_guide(self) -> list[dict[str, Any]]:
+        """为执行器提供带工具说明的消息列表."""
+        return self._get_messages_with_tool_guide()
 
     def _validate_output(self, content: str) -> BaseModel:
-        output_schema = self._get_output_schema()
-        original_error: AgentValidationError | None = None
-
-        try:
-            direct_loaded = json.loads(content)
-            if not isinstance(direct_loaded, dict):
-                raise AgentValidationError(
-                    message="Invalid JSON output: root type must be JSON object",
-                    agent_name=self.agent_name,
-                    raw_output=content,
-                )
-            else:
-                try:
-                    return output_schema.model_validate(direct_loaded)
-                except ValidationError as e:
-                    original_error = AgentValidationError(
-                        message=f"Schema validation failed: {e}",
-                        agent_name=self.agent_name,
-                        validation_errors=[dict(err) for err in e.errors()],
-                        raw_output=content,
-                    )
-        except json.JSONDecodeError:
-            pass
-
-        if original_error is None:
-            try:
-                json.loads(content)
-            except json.JSONDecodeError as e:
-                original_error = AgentValidationError(
-                    message=f"Invalid JSON output: {e}",
-                    agent_name=self.agent_name,
-                    raw_output=content,
-                )
-
-        sanitized = self._sanitize_json_string_escapes(content)
-        if sanitized != content:
-            logger.debug(
-                "event=agent.json_sanitize_applied stage=direct content_length=%s sanitized_length=%s",
-                len(content),
-                len(sanitized),
-            )
-            try:
-                direct_loaded = json.loads(sanitized)
-                if not isinstance(direct_loaded, dict):
-                    raise AgentValidationError(
-                        message="Invalid JSON output: root type must be JSON object",
-                        agent_name=self.agent_name,
-                        raw_output=content,
-                    )
-                try:
-                    return output_schema.model_validate(direct_loaded)
-                except ValidationError:
-                    # 保留最原始顶层错误，不用清洗后的 schema 错误覆盖它。
-                    pass
-            except json.JSONDecodeError:
-                logger.debug(
-                    "event=agent.json_sanitize_failed stage=direct content_length=%s",
-                    len(content),
-                )
-
-        json_candidates = self._collect_json_object_candidates(content)
-        if not json_candidates:
-            if original_error is not None:
-                raise original_error
-
-            raise AgentValidationError(
-                message="Invalid JSON output: root type must be JSON object",
-                agent_name=self.agent_name,
-                raw_output=content,
-            )
-
-        last_validation_error: ValidationError | None = None
-        try:
-            for _, data in json_candidates:
-                try:
-                    return output_schema.model_validate(data)
-                except ValidationError as e:
-                    last_validation_error = e
-
-            if last_validation_error is not None:
-                if original_error is not None:
-                    raise original_error
-                raise last_validation_error
-
-            raise AgentValidationError(
-                message="Schema validation failed: no valid JSON object candidate",
-                agent_name=self.agent_name,
-                raw_output=content,
-            )
-        except ValidationError as e:
-            if original_error is not None:
-                raise original_error
-            raise AgentValidationError(
-                message=f"Schema validation failed: {e}",
-                agent_name=self.agent_name,
-                validation_errors=[dict(err) for err in e.errors()],
-                raw_output=content,
-            ) from e
+        return validate_output_content(
+            content,
+            output_schema=self._get_output_schema(),
+            agent_name=self.agent_name,
+        )
 
     def _save_trace(
         self,
@@ -376,12 +126,13 @@ class BaseAgent:
         *,
         llm_model: str | None = None,
         usage: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> None:
         try:
             db = get_db()
             repo = AgentTraceRepository(db)
             usage = usage or {}
-            trace_id = str(uuid4())
+            trace_id = generate_trace_id()
             trace = AgentTrace(
                 trace_id=trace_id,
                 agent_name=self.agent_name,
@@ -391,6 +142,7 @@ class BaseAgent:
                 completion_tokens=usage.get("completion_tokens"),
                 total_tokens=usage.get("total_tokens"),
                 usage_payload=usage or None,
+                tools=tools,
                 caller=self.caller,
                 caller_id=self.caller_id,
                 created_at=datetime.now(),
@@ -403,6 +155,22 @@ class BaseAgent:
                 self.agent_name,
                 e,
             )
+
+    def save_trace_snapshot(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        llm_model: str | None = None,
+        usage: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """为执行器提供 trace 持久化入口."""
+        self._save_trace(
+            messages,
+            llm_model=llm_model,
+            usage=usage,
+            tools=tools,
+        )
 
     async def _run_api(self) -> BaseModel:
         logger.info(
@@ -445,6 +213,7 @@ class BaseAgent:
                         messages=self.memory.dump_messages(),
                         llm_model=response.model,
                         usage=response.usage,
+                        tools=self.tool_registry.to_openai_format(),
                     )
 
                 validated_output = self._validate_output(content)
@@ -499,131 +268,30 @@ class BaseAgent:
         )
 
     async def _run_normal(self) -> str:
-        logger.info(
-            "event=agent.run_started agent=%s mode=normal",
-            self.agent_name,
-        )
-        if not self.memory.has_role_message("user"):
-            raise AgentExecutionError(
-                message="No user message in memory. Append user input before run().",
-                agent_name=self.agent_name,
-            )
-
-        if len(self.tool_registry) == 0:
-            response = await self.llm.generate(self.memory.get_messages())
-            content = response.content or ""
-            reasoning_content = response.reasoning_content
-
-            self.memory.append_assistant_message(
-                content=content,
-                name=self.agent_name,
-                reasoning_content=reasoning_content,
-            )
-
-            if self.save_trace:
-                self._save_trace(
-                    messages=self.memory.dump_messages(),
-                    llm_model=response.model,
-                    usage=response.usage,
-                )
-
-            logger.info(
-                "event=agent.run_completed agent=%s mode=normal step=1",
-                self.agent_name,
-            )
-            return content
-
-        for step in range(self.max_steps):
-            logger.debug(
-                "event=agent.step_started agent=%s mode=normal step=%s max_steps=%s",
-                self.agent_name,
-                step + 1,
-                self.max_steps,
-            )
-            try:
-                messages = self._get_messages_with_tool_guide()
-                tools = self.tool_registry.to_openai_format()
-                if tools:
-                    response = await self.llm.generate_with_tools(messages, tools)
-                else:
-                    response = await self.llm.generate(messages)
-
-                self.memory.append_assistant_message(
-                    content=response.content,
-                    name=self.agent_name,
-                    tool_calls=response.tool_calls or None,
-                    reasoning_content=response.reasoning_content,
-                )
-
-                if self.save_trace:
-                    self._save_trace(
-                        messages=self.memory.dump_messages(),
-                        llm_model=response.model,
-                        usage=response.usage,
-                    )
-
-                if response.tool_calls:
-                    logger.debug(
-                        "event=agent.tool_calls_received agent=%s step=%s tool_call_count=%s",
-                        self.agent_name,
-                        step + 1,
-                        len(response.tool_calls),
-                    )
-                    tool_ctx = {
-                        **self.tool_context,
-                        "_caller_agent_name": self.agent_name,
-                        "_caller_trace_id": (
-                            self.trace_ids[-1] if self.trace_ids else None
-                        ),
-                    }
-                    for tc in response.tool_calls:
-                        tool_msg = await self.tool_registry.execute_tool_call(
-                            tc,
-                            context=tool_ctx,
-                        )
-                        self.memory.append_tool_message(tool_msg)
-                    continue
-
-                content = response.content
-            except asyncio.CancelledError:
-                logger.info(
-                    "event=agent.run_canceled agent=%s mode=normal step=%s",
-                    self.agent_name,
-                    step + 1,
-                )
-                raise
-            except Exception as e:
-                logger.exception(
-                    "event=agent.run_failed agent=%s mode=normal step=%s max_steps=%s",
-                    self.agent_name,
-                    step + 1,
-                    self.max_steps,
-                )
-                raise AgentExecutionError(
-                    message=f"Step execution failed: {e}",
-                    agent_name=self.agent_name,
-                    step_count=step + 1,
-                ) from e
-
-            final_content = content or ""
-            logger.info(
-                "event=agent.run_completed agent=%s mode=normal step=%s",
-                self.agent_name,
-                step + 1,
-            )
-            return final_content
-
-        raise AgentExecutionError(
-            message=f"Exceeded maximum steps ({self.max_steps})",
-            agent_name=self.agent_name,
-            step_count=self.max_steps,
-        )
+        return await NormalAgentRunner(self).run()
 
     async def run(self) -> BaseModel | str:
         self.trace_ids = []
         if self.mode == "api":
             return await self._run_api()
         return await self._run_normal()
+
+    def get_memory_messages(self) -> list[dict[str, Any]]:
+        """获取当前 memory 中的所有交互消息（不含 system prompt）。"""
+        return self.memory.get_interaction_messages()
+
+    def cancel(self) -> None:
+        """请求取消当前 agent 的运行。"""
+        self._cancel_event.set()
+
+    def _check_cancelled(self) -> None:
+        """检查是否已被请求取消，如果是则抛出 CancelledError。"""
+        if self._cancel_event.is_set():
+            raise asyncio.CancelledError("Agent execution cancelled by user")
+
+    def ensure_not_cancelled(self) -> None:
+        """为执行器提供取消检查入口."""
+        self._check_cancelled()
 
     async def run_stream(self) -> AsyncGenerator[AgentStreamChunk, None]:
         """流式执行 agent（仅支持 normal 模式）.
@@ -632,167 +300,17 @@ class BaseAgent:
             AgentStreamChunk: 每块增量内容；最终块 is_complete=True。
         """
         self.trace_ids = []
+        self._cancel_event.clear()
         if self.mode == "api":
             raise AgentExecutionError(
                 message="run_stream only supports normal mode",
                 agent_name=self.agent_name,
             )
         async for chunk in self._run_normal_stream():
+            self._check_cancelled()
             yield chunk
 
     async def _run_normal_stream(self) -> AsyncGenerator[AgentStreamChunk, None]:
         """normal 模式流式执行（内部 ReAct 循环，逐 token 透传）."""
-        logger.info(
-            "event=agent.run_stream_started agent=%s mode=normal",
-            self.agent_name,
-        )
-        if not self.memory.has_role_message("user"):
-            raise AgentExecutionError(
-                message="No user message in memory. Append user input before run_stream().",
-                agent_name=self.agent_name,
-            )
-
-        if len(self.tool_registry) == 0:
-            # 无工具时直接流式调用 LLM
-            full_content = ""
-            full_reasoning = ""
-            last_model: str | None = None
-            async for chunk in self.llm.chat_stream(self.memory.get_messages()):
-                if chunk.content_delta:
-                    full_content += chunk.content_delta
-                if chunk.reasoning_content_delta:
-                    full_reasoning += chunk.reasoning_content_delta
-                last_model = chunk.model or last_model
-                yield AgentStreamChunk(
-                    delta=chunk.content_delta or "",
-                    reasoning_delta=chunk.reasoning_content_delta or "",
-                )
-            self.memory.append_assistant_message(
-                content=full_content,
-                name=self.agent_name,
-                reasoning_content=full_reasoning or None,
-            )
-            if self.save_trace:
-                self._save_trace(
-                    messages=self.memory.dump_messages(),
-                    llm_model=last_model,
-                )
-            yield AgentStreamChunk(
-                delta="",
-                is_complete=True,
-                content=full_content,
-            )
-            logger.info(
-                "event=agent.run_stream_completed agent=%s mode=normal step=1",
-                self.agent_name,
-            )
-            return
-
-        for step in range(self.max_steps):
-            logger.debug(
-                "event=agent.stream_step_started agent=%s step=%s max_steps=%s",
-                self.agent_name,
-                step + 1,
-                self.max_steps,
-            )
-            try:
-                messages = self._get_messages_with_tool_guide()
-                tools = self.tool_registry.to_openai_format()
-                stream = self.llm.chat_stream(messages, tools=tools)
-
-                full_content = ""
-                full_reasoning = ""
-                final_tool_calls: list = []
-                last_model: str | None = None
-
-                async for chunk in stream:
-                    if chunk.content_delta:
-                        full_content += chunk.content_delta
-                    if chunk.reasoning_content_delta:
-                        full_reasoning += chunk.reasoning_content_delta
-                    last_model = chunk.model or last_model
-                    if chunk.is_finished:
-                        final_tool_calls = chunk.tool_calls
-                    yield AgentStreamChunk(
-                        delta=chunk.content_delta or "",
-                        reasoning_delta=chunk.reasoning_content_delta or "",
-                        step=step + 1,
-                    )
-
-                self.memory.append_assistant_message(
-                    content=full_content,
-                    name=self.agent_name,
-                    tool_calls=final_tool_calls or None,
-                    reasoning_content=full_reasoning or None,
-                )
-
-                if self.save_trace:
-                    self._save_trace(
-                        messages=self.memory.dump_messages(),
-                        llm_model=last_model,
-                    )
-
-                if final_tool_calls:
-                    logger.debug(
-                        "event=agent.stream_tool_calls_received agent=%s step=%s tool_call_count=%s",
-                        self.agent_name,
-                        step + 1,
-                        len(final_tool_calls),
-                    )
-                    tool_ctx = {
-                        **self.tool_context,
-                        "_caller_agent_name": self.agent_name,
-                        "_caller_trace_id": (
-                            self.trace_ids[-1] if self.trace_ids else None
-                        ),
-                    }
-                    for tc in final_tool_calls:
-                        tool_msg = await self.tool_registry.execute_tool_call(
-                            tc,
-                            context=tool_ctx,
-                        )
-                        self.memory.append_tool_message(tool_msg)
-                        yield AgentStreamChunk(
-                            delta="",
-                            tool_call_name=tc.function.name,
-                            step=step + 1,
-                        )
-                    continue
-
-                logger.info(
-                    "event=agent.run_stream_completed agent=%s mode=normal step=%s",
-                    self.agent_name,
-                    step + 1,
-                )
-                yield AgentStreamChunk(
-                    delta="",
-                    is_complete=True,
-                    content=full_content,
-                    step=step + 1,
-                )
-                return
-            except asyncio.CancelledError:
-                logger.info(
-                    "event=agent.run_stream_canceled agent=%s step=%s",
-                    self.agent_name,
-                    step + 1,
-                )
-                raise
-            except Exception as e:
-                logger.exception(
-                    "event=agent.run_stream_failed agent=%s step=%s max_steps=%s",
-                    self.agent_name,
-                    step + 1,
-                    self.max_steps,
-                )
-                raise AgentExecutionError(
-                    message=f"Stream step execution failed: {e}",
-                    agent_name=self.agent_name,
-                    step_count=step + 1,
-                ) from e
-
-        raise AgentExecutionError(
-            message=f"Exceeded maximum steps ({self.max_steps})",
-            agent_name=self.agent_name,
-            step_count=self.max_steps,
-        )
+        async for chunk in NormalAgentRunner(self).run_stream():
+            yield chunk

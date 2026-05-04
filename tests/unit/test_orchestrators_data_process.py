@@ -36,7 +36,7 @@ def orchestrator(db):
     )
 
 
-def _insert_project(db, project_id: str = "proj-1") -> str:
+def _insert_project(db, project_id: str = "prj-test-1") -> str:
     now = datetime.now()
     project = Project(
         project_id=project_id,
@@ -141,7 +141,7 @@ class TestDataProcessOrchestrator:
         self, orchestrator: DataProcessOrchestrator, db
     ) -> None:
         project_id = _insert_project(db)
-        paper_id = "paper-1"
+        paper_id = "pap-test-1"
         now = datetime.now()
         _insert_linked_paper(
             db,

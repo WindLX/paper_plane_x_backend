@@ -132,10 +132,10 @@ async def test_deep_dive_tool_strips_citations(monkeypatch: pytest.MonkeyPatch) 
 
     assert librarian.deep_dive_tool.function is not None
     payload = await librarian.deep_dive_tool.function(
-        paper_id="paper-1",
+        paper_id="pap-test-1",
         question="What is new?",
     )
-    assert payload["paper_id"] == "paper-1"
+    assert payload["paper_id"] == "pap-test-1"
     assert payload["answer"]["is_answered"] is True
     assert payload["answer"]["answer"]["text"] == "核心回答"
     assert "citations" not in payload["answer"]["answer"]

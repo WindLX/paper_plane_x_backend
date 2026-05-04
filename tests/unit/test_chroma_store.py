@@ -61,20 +61,20 @@ def test_upsert_and_query_by_project(tmp_path) -> None:
     )
 
     paper = _build_paper(
-        paper_id="paper-1",
-        project_id="project-1",
+        paper_id="pap-test-1",
+        project_id="prj-test-1",
         review_summary="Graph neural networks for molecular discovery",
     )
-    assert store.upsert_paper(paper, project_ids=["project-1"]) is True
+    assert store.upsert_paper(paper, project_ids=["prj-test-1"]) is True
 
     rows = store.query_project_papers(
-        project_id="project-1",
+        project_id="prj-test-1",
         query="Graph neural networks for molecular discovery",
         limit=3,
     )
 
     assert len(rows) >= 1
-    assert rows[0]["metadata"]["paper_id"] == "paper-1"
+    assert rows[0]["metadata"]["paper_id"] == "pap-test-1"
 
 
 def test_delete_paper_removes_index(tmp_path) -> None:
@@ -84,15 +84,15 @@ def test_delete_paper_removes_index(tmp_path) -> None:
         collection_name="test_collection",
     )
     paper = _build_paper(
-        paper_id="paper-2",
-        project_id="project-2",
+        paper_id="pap-test-2",
+        project_id="prj-test-2",
         review_summary="A survey on retrieval-augmented generation",
     )
-    store.upsert_paper(paper, project_ids=["project-2"])
-    assert store.delete_paper(project_id="project-2", paper_id="paper-2") is True
+    store.upsert_paper(paper, project_ids=["prj-test-2"])
+    assert store.delete_paper(project_id="prj-test-2", paper_id="pap-test-2") is True
 
     rows = store.query_project_papers(
-        project_id="project-2",
+        project_id="prj-test-2",
         query="A survey on retrieval-augmented generation",
         limit=3,
     )
@@ -106,8 +106,8 @@ def test_upsert_skips_empty_summary(tmp_path) -> None:
         collection_name="test_collection",
     )
     paper = _build_paper(
-        paper_id="paper-3",
-        project_id="project-3",
+        paper_id="pap-test-3",
+        project_id="prj-test-3",
         review_summary=None,
     )
 

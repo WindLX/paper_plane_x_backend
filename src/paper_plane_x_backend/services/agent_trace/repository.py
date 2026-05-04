@@ -47,7 +47,7 @@ class AgentTraceRepository:
                     {k: v for k, v in item_dict.items()}
                     for item in parsed_list
                     if isinstance(item, dict)
-                    and isinstance(item_dict := cast(dict[str, Any], item), dict)
+                    for item_dict in [cast(dict[str, Any], item)]
                 ]
             return []
 
@@ -57,7 +57,7 @@ class AgentTraceRepository:
                 {k: v for k, v in item_dict.items()}
                 for item in value_list
                 if isinstance(item, dict)
-                and isinstance(item_dict := cast(dict[str, Any], item), dict)
+                for item_dict in [cast(dict[str, Any], item)]
             ]
 
         return []
@@ -80,6 +80,32 @@ class AgentTraceRepository:
 
         return None
 
+    @staticmethod
+    def _parse_tools(value: object) -> list[dict[str, Any]] | None:
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return None
+            if isinstance(parsed, list):
+                parsed_list = cast(list[Any], parsed)
+                return [
+                    {k: v for k, v in item_dict.items()}
+                    for item in parsed_list
+                    if isinstance(item, dict)
+                    for item_dict in [cast(dict[str, Any], item)]
+                ]
+            return None
+        if isinstance(value, list):
+            value_list = cast(list[Any], value)
+            return [
+                {k: v for k, v in item_dict.items()}
+                for item in value_list
+                if isinstance(item, dict)
+                for item_dict in [cast(dict[str, Any], item)]
+            ]
+        return None
+
     def _row_to_trace(self, row: dict[str, Any]) -> dict[str, Any]:
         return {
             "trace_id": row["trace_id"],
@@ -90,6 +116,7 @@ class AgentTraceRepository:
             "completion_tokens": row.get("completion_tokens"),
             "total_tokens": row.get("total_tokens"),
             "usage_payload": self._parse_usage_payload(row.get("usage_payload")),
+            "tools": self._parse_tools(row.get("tools")),
             "caller": row.get("caller"),
             "caller_id": row.get("caller_id"),
             "created_at": row["created_at"],
@@ -105,7 +132,7 @@ class AgentTraceRepository:
             SELECT
                 trace_id, agent_name, messages, llm_model,
                 prompt_tokens, completion_tokens, total_tokens, usage_payload,
-                caller, caller_id, created_at
+                tools, caller, caller_id, created_at
             FROM agent_traces
             WHERE trace_id IN ({placeholders})
             """,
@@ -191,7 +218,7 @@ class AgentTraceRepository:
             SELECT
                 trace_id, agent_name, messages, llm_model,
                 prompt_tokens, completion_tokens, total_tokens, usage_payload,
-                caller, caller_id, created_at
+                tools, caller, caller_id, created_at
             FROM agent_traces
             {where_sql}
             ORDER BY {order_by}

@@ -39,8 +39,7 @@ class DataProcessTaskStateStore:
             analysis_trace_ids=state.analysis_trace_ids or None,
             extraction_fact_check_trace_ids=state.extraction_fact_check_trace_ids
             or None,
-            analysis_fact_check_trace_ids=state.analysis_fact_check_trace_ids
-            or None,
+            analysis_fact_check_trace_ids=state.analysis_fact_check_trace_ids or None,
         )
         db_dict = task.to_db_dict()
         self._db.execute(
@@ -127,9 +126,7 @@ class DataProcessTaskStateStore:
 
     def count_total(self, paper_id: str | None = None) -> int:
         if paper_id is None:
-            row = self._db.fetchone(
-                "SELECT COUNT(*) AS count FROM data_process_tasks"
-            )
+            row = self._db.fetchone("SELECT COUNT(*) AS count FROM data_process_tasks")
         else:
             row = self._db.fetchone(
                 "SELECT COUNT(*) AS count FROM data_process_tasks WHERE paper_id = ?",
@@ -190,8 +187,7 @@ class DataProcessTaskStateStore:
             retry_of_task_id=task.retry_of_task_id,
             extraction_trace_ids=task.extraction_trace_ids or [],
             analysis_trace_ids=task.analysis_trace_ids or [],
-            extraction_fact_check_trace_ids=task.extraction_fact_check_trace_ids
-            or [],
+            extraction_fact_check_trace_ids=task.extraction_fact_check_trace_ids or [],
             analysis_fact_check_trace_ids=task.analysis_fact_check_trace_ids or [],
         )
 

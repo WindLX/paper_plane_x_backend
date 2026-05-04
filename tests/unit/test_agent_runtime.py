@@ -19,6 +19,8 @@ from paper_plane_x_backend.schemas.agent_io.base import (
     ToolCallMessage,
 )
 
+DEFAULT_LLM_CONFIG = LLMConfig(model="gpt-4o", api_key="test-key")
+
 
 class SimpleOutput(BaseModel):
     """简单输出模型."""
@@ -48,6 +50,7 @@ class TestBaseAgent:
         """测试 api 模式 Agent（结构化输出）."""
         # 创建 Agent
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             output_schema=SimpleOutput,
             mode="api",
             max_steps=3,
@@ -77,6 +80,7 @@ class TestBaseAgent:
     async def test_api_mode_validation_error(self) -> None:
         """测试 api 模式结构化输出验证失败（重试后仍失败）."""
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             output_schema=SimpleOutput,
             mode="api",
             max_steps=3,
@@ -106,6 +110,7 @@ class TestBaseAgent:
     async def test_api_mode_validation_retry_then_success(self) -> None:
         """测试 api 模式在首次校验失败后可重试成功."""
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             output_schema=SimpleOutput,
             mode="api",
             max_steps=3,
@@ -138,6 +143,7 @@ class TestBaseAgent:
     async def test_api_mode_accepts_json_with_prefix_suffix_noise(self) -> None:
         """测试 api 模式可从前后噪声文本中提取 JSON object。"""
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             output_schema=SimpleOutput,
             mode="api",
             max_steps=2,
@@ -163,6 +169,7 @@ class TestBaseAgent:
     async def test_api_mode_accepts_markdown_json_fence(self) -> None:
         """测试 api 模式可从 markdown json 代码块中提取 JSON object。"""
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             output_schema=SimpleOutput,
             mode="api",
             max_steps=2,
@@ -188,6 +195,7 @@ class TestBaseAgent:
     async def test_api_mode_fallbacks_when_fence_json_invalid(self) -> None:
         """测试 json 代码块无效时可回退提取正文合法 JSON。"""
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             output_schema=SimpleOutput,
             mode="api",
             max_steps=2,
@@ -198,9 +206,7 @@ class TestBaseAgent:
             messages, output_schema, **kwargs
         ) -> LLMResponse:
             return LLMResponse(
-                content=(
-                    '```json\n{"answer": }\n```\n' 'final={"answer": "Fallback OK"}'
-                ),
+                content=('```json\n{"answer": }\n```\nfinal={"answer": "Fallback OK"}'),
                 model="gpt-4o",
                 usage={},
             )
@@ -215,6 +221,7 @@ class TestBaseAgent:
     async def test_api_mode_sanitizes_unescaped_latex_backslashes(self) -> None:
         """测试 api 模式可修复字符串内未转义反斜杠（如 LaTeX）。"""
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             output_schema=SimpleOutput,
             mode="api",
             max_steps=2,
@@ -242,6 +249,7 @@ class TestBaseAgent:
     ) -> None:
         """测试混合场景：同一字符串中部分反斜杠已转义，部分未转义。"""
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             output_schema=SimpleOutput,
             mode="api",
             max_steps=2,
@@ -267,6 +275,7 @@ class TestBaseAgent:
     async def test_normal_mode_simple_output(self) -> None:
         """测试 normal 模式无工具时自由输出."""
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             mode="normal",
             max_steps=2,
             save_trace=False,
@@ -295,6 +304,7 @@ class TestBaseAgent:
             return a + b
 
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             mode="normal",
             tools=[add],
             max_steps=3,
@@ -353,6 +363,7 @@ class TestBaseAgent:
             return "ok"
 
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             mode="normal",
             tools=[spy_tool],
             save_trace=False,
@@ -401,6 +412,7 @@ class TestBaseAgent:
             return "ok"
 
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             mode="normal",
             tools=[noop],
             max_steps=2,
@@ -432,11 +444,15 @@ class TestBaseAgent:
 
     def test_short_memory_window_validation(self) -> None:
         with pytest.raises(ValueError, match="short_memory_window"):
-            BaseAgent(mode="normal", short_memory_window=0)
+            BaseAgent(
+                llm_config=DEFAULT_LLM_CONFIG, mode="normal", short_memory_window=0
+            )
 
     @pytest.mark.asyncio
     async def test_short_memory_persists_history(self) -> None:
-        agent = BaseAgent(mode="normal", save_trace=False)
+        agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG, mode="normal", save_trace=False
+        )
 
         calls: list[list[dict[str, object]]] = []
 
@@ -459,6 +475,7 @@ class TestBaseAgent:
     @pytest.mark.asyncio
     async def test_short_memory_window_limits_history(self) -> None:
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             mode="normal",
             save_trace=False,
             short_memory_window=2,
@@ -551,7 +568,9 @@ class TestBaseAgent:
 
     @pytest.mark.asyncio
     async def test_normal_mode_content_parts_passthrough(self) -> None:
-        agent = BaseAgent(mode="normal", save_trace=False)
+        agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG, mode="normal", save_trace=False
+        )
 
         captured_messages: list[dict[str, object]] = []
 
@@ -686,6 +705,7 @@ class TestBaseAgentRunStream:
     async def test_run_stream_rejects_api_mode(self) -> None:
         """验证 run_stream 在 api 模式下抛出异常."""
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             output_schema=SimpleOutput,
             mode="api",
             save_trace=False,
@@ -702,7 +722,9 @@ class TestBaseAgentRunStream:
         """验证无工具时流式逐 token 返回."""
         from paper_plane_x_backend.core.agent_runtime.llm_client import LLMStreamChunk
 
-        agent = BaseAgent(mode="normal", save_trace=False)
+        agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG, mode="normal", save_trace=False
+        )
 
         async def mock_chat_stream(messages, **kwargs):
             deltas = ["Hel", "lo", "!"]
@@ -735,6 +757,7 @@ class TestBaseAgentRunStream:
             return f"Hi {name}"
 
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             mode="normal",
             tools=[greet],
             save_trace=False,
@@ -805,6 +828,7 @@ class TestBaseAgentRunStream:
             return "ok"
 
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             mode="normal",
             tools=[spy_tool],
             save_trace=False,
@@ -859,7 +883,9 @@ class TestBaseAgentRunStream:
         """验证流式返回包含 reasoning_content."""
         from paper_plane_x_backend.core.agent_runtime.llm_client import LLMStreamChunk
 
-        agent = BaseAgent(mode="normal", save_trace=False)
+        agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG, mode="normal", save_trace=False
+        )
 
         async def mock_chat_stream(messages, **kwargs):
             yield LLMStreamChunk(

@@ -14,7 +14,7 @@ from paper_plane_x_backend.models.core import (
 def test_paper_from_db_row_parses_enums_and_json_fields() -> None:
     now = datetime.now()
     row = {
-        "paper_id": "p1",
+        "paper_id": "pap-test-1",
         "title": "t",
         "authors": json.dumps(["A", "B"], ensure_ascii=False),
         "year": 2024,
@@ -62,7 +62,7 @@ def test_paper_from_db_row_parses_enums_and_json_fields() -> None:
 def test_paper_from_db_row_fills_empty_list_defaults() -> None:
     now = datetime.now()
     row = {
-        "paper_id": "p2",
+        "paper_id": "pap-test-2",
         "title": None,
         "authors": None,
         "year": None,

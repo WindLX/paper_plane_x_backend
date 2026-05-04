@@ -40,11 +40,26 @@
 
 负责：
 
-- HTTP 入参校验
-- 响应模型封装
+- HTTP 入参校验与响应模型封装
 - 领域错误到 HTTP 错误的映射
+- WebSocket 连接管理（conversation、hitl）
 
-API 层不直接写复杂业务逻辑，真正的流程控制放在 orchestrator / service。
+当前路由分组：
+
+| 路由              | 前缀         | 说明                       |
+| ----------------- | ------------ | -------------------------- |
+| `paper`           | `/api/v1`    | 论文 CRUD、上传、重处理    |
+| `project`         | `/api/v1`    | 项目 CRUD、项目论文关联    |
+| `librarian`       | `/api/v1`    | 检索、矩阵、投影、搜索     |
+| `data_process`    | `/api/v1`    | 任务队列、取消、重试       |
+| `conversation`    | `/api/v1`    | 对话 CRUD、消息 CRUD       |
+| `conversation_ws` | `/api/v1/ws` | 流式对话 WebSocket         |
+| `hitl`            | `/api/v1`    | HITL REST 占位（未来扩展） |
+| `hitl_ws`         | `/api/v1/ws` | HITL 交互 WebSocket        |
+| `agent_traces`    | `/api/v1`    | Agent trace 查询           |
+| `settings`        | `/api/v1`    | LLM 配置、动态配置         |
+
+API 层不直接写复杂业务逻辑，真正的流程控制放在 orchestrator / service / agent。
 
 ### 2.3 Orchestrator 层
 
@@ -87,7 +102,47 @@ API 层不直接写复杂业务逻辑，真正的流程控制放在 orchestrator
 - structured output 校验
 - trace 落库
 
-## 3. Data Process 主链路
+## 3. 新增能力链路
+
+### 3.1 Conversation 对话系统
+
+项目级流式对话能力，通过 WebSocket 提供：
+
+- **WebSocket 端点**：`/api/v1/ws/conversations/{conversation_id}`
+- **REST 端点**：`/api/v1/conversations/*`
+- **核心组件**：`ResearcherAgent`（基于 `BaseAgent` normal 模式）
+
+ResearcherAgent 工具集：
+- 文件沙箱：`read_project_file`、`write_project_file`、`list_project_files`、`remove_project_file`
+- 文献检索：`global_finder`、`search_paper`、`matrix_compare`、`deep_dive`
+- 论文笔记：`get_paper_agent_note`、`write_paper_agent_note`、`update_paper_agent_note`、`delete_paper_agent_note`
+- 子任务委派：`delegate_to_subagent`
+- 人机交互：`ask_human`
+
+### 3.2 HITL (Human-in-the-loop)
+
+Agent 可在关键决策点向人类提问并等待回答：
+
+- **WebSocket 端点**：`/api/v1/ws/hitl`
+- **工具**：`ask_human`（ResearcherAgent 可调用）
+- **状态管理**：`HITLManager` 全局单例，管理 `PendingQuestion` 与 WebSocket 广播
+
+流程：
+1. Agent 调用 `ask_human`，传入问题列表（单选/多选 + 自定义回答选项）
+2. `HITLManager` 注册问题并广播到所有 HITL WebSocket 客户端
+3. 用户通过 WebSocket 提交回答
+4. `ask_human` 被唤醒，返回回答结果给 Agent
+5. 10 分钟超时保护
+
+### 3.3 SubAgent 委派
+
+ResearcherAgent 可通过 `delegate_to_subagent` 将复杂子任务委派给 SubAgent：
+
+- SubAgent 不能调用 `delegate_to_subagent`（防止递归）
+- SubAgent 拥有与 ResearcherAgent 相同的工具集（不含 subagent 工具）
+- 适用于：综述段落撰写、多篇论文分析、独立研究任务
+
+## 4. Data Process 主链路
 
 当前最重要的一条链路是：
 
@@ -149,6 +204,8 @@ worker 在后台执行：
 - `agent_traces`
 - `data_process_tasks`
 - `papers_fts`
+- `conversations`
+- `conversation_messages`
 
 ### 4.2 `papers` 表存什么
 

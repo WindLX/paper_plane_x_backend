@@ -7,16 +7,14 @@
 1. [../README.md](../README.md)
    - 后端总体能力、开发入口、测试入口、配置与部署入口
 2. [workflow_quickstart.md](./workflow_quickstart.md)
-   - 用最短路径验证 Data Process 主链路是否可用
+   - 用最短路径验证 Data Process 主链路、Conversation 对话、HITL 交互是否可用
 3. [architecture.md](./architecture.md)
    - 当前实现的系统结构、运行流程、数据流和核心边界
 4. [librarian.md](./librarian.md)
    - 检索与字段路径系统说明
-5. [teacher.md](./teacher.md)
-   - 单篇论文对话式学习 Agent 说明
-6. [logging_conventions.md](./logging_conventions.md)
+5. [logging_conventions.md](./logging_conventions.md)
    - 日志字段和约定
-7. [roadmap.md](./roadmap.md)
+6. [roadmap.md](./roadmap.md)
    - 后续规划
 
 ## 文档分工
@@ -47,14 +45,6 @@
 - `field_path` 规则
 - 典型查询模式
 
-### `teacher.md`
-
-面向“我要围绕单篇论文持续追问和深挖”的场景，强调：
-
-- Teacher 会话模型
-- 自动注入的论文上下文
-- Teacher 可调用的工具
-- 会话与 trace 的关系
 
 ### `logging_conventions.md`
 

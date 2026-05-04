@@ -8,7 +8,6 @@ import json
 import logging
 from datetime import datetime
 from typing import TypeAlias, cast
-from uuid import uuid4
 
 from paper_plane_x_backend.models import (
     ExtractionStatus,
@@ -18,6 +17,7 @@ from paper_plane_x_backend.models import (
     SortOrder,
 )
 from paper_plane_x_backend.services.database import Database
+from paper_plane_x_backend.utils.ids import generate_paper_id
 
 logger = logging.getLogger(__name__)
 
@@ -558,7 +558,7 @@ class PaperRepository:
         metadata: MetadataPayload | None = None,
     ) -> Paper:
         """创建 Paper 数据库记录."""
-        pid = paper_id or str(uuid4())
+        pid = paper_id or generate_paper_id()
         metadata = metadata or {}
         now = datetime.now()
 

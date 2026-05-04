@@ -20,7 +20,7 @@ class TestProjectRepository:
         repo = ProjectRepository(db)
         now = datetime.now()
         project = Project(
-            project_id="proj-1",
+            project_id="prj-test-1",
             name="Test Project",
             description="desc",
             created_at=now,
@@ -29,9 +29,9 @@ class TestProjectRepository:
         )
         repo.create(project)
 
-        fetched = repo.get("proj-1")
+        fetched = repo.get("prj-test-1")
         assert fetched is not None
-        assert fetched.project_id == "proj-1"
+        assert fetched.project_id == "prj-test-1"
         assert fetched.name == "Test Project"
         assert fetched.description == "desc"
 

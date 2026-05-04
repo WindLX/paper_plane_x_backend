@@ -1,7 +1,7 @@
 """Settings 配置管理路由."""
 
 import logging
-from typing import NoReturn
+from typing import Any, NoReturn, cast
 
 from fastapi import APIRouter, HTTPException, status
 
@@ -13,11 +13,10 @@ from paper_plane_x_backend.schemas.api import (
     AppSettingsResponse,
     DataProcessConfigResponse,
     DataProcessConfigUpdateRequest,
-    GlobalLLMConfigResponse,
-    GlobalLLMConfigUpdateRequest,
     LibrarianConfigResponse,
     LibrarianConfigUpdateRequest,
     LLMProviderCreateRequest,
+    LLMProviderRenameRequest,
     LLMProviderResponse,
     LLMProviderUpdateRequest,
     MinerUConfigResponse,
@@ -25,6 +24,7 @@ from paper_plane_x_backend.schemas.api import (
     ProviderListResponse,
 )
 from paper_plane_x_backend.services.app_settings import (
+    AgentConfigResponsePayload,
     AppSettingsRepository,
     AppSettingsRepositoryError,
     build_agent_config_response,
@@ -43,8 +43,8 @@ def _raise_as_http(exc: AppSettingsRepositoryError) -> NoReturn:
     status_map = {
         "not_found": status.HTTP_404_NOT_FOUND,
         "already_exists": status.HTTP_409_CONFLICT,
-        "immutable_name": status.HTTP_422_UNPROCESSABLE_ENTITY,
-        "invalid_agent": status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "immutable_name": status.HTTP_422_UNPROCESSABLE_CONTENT,
+        "invalid_agent": status.HTTP_422_UNPROCESSABLE_CONTENT,
         "invalid_toml": status.HTTP_500_INTERNAL_SERVER_ERROR,
         "io_error": status.HTTP_500_INTERNAL_SERVER_ERROR,
         "invalid_data": status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -136,6 +136,31 @@ def update_provider(
     return LLMProviderResponse.model_validate(updated.model_dump(mode="json"))
 
 
+@router.put(
+    "/providers/{name}/rename",
+    response_model=LLMProviderResponse,
+    summary="重命名 LLM Provider",
+    responses={
+        404: {"description": "Provider 不存在"},
+        409: {"description": "新名称已存在"},
+    },
+)
+def rename_provider(
+    name: str,
+    request: LLMProviderRenameRequest,
+) -> LLMProviderResponse:
+    logger.info(
+        "event=settings.provider_rename_request_received old=%s new=%s",
+        name,
+        request.name,
+    )
+    try:
+        renamed = _repo().rename_provider(name, request.name)
+    except AppSettingsRepositoryError as exc:
+        _raise_as_http(exc)
+    return LLMProviderResponse.model_validate(renamed.model_dump(mode="json"))
+
+
 @router.delete(
     "/providers/{name}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -160,9 +185,12 @@ def delete_provider(name: str) -> None:
 )
 def list_agent_llm() -> AgentConfigListResponse:
     logger.debug("event=settings.agent_llm_list_request_received")
+    payloads: list[AgentConfigResponsePayload] = [
+        build_agent_config_response(name) for name in AGENT_NAMES
+    ]
     items = [
-        AgentLLMConfigResponse.model_validate(build_agent_config_response(name))
-        for name in AGENT_NAMES
+        AgentLLMConfigResponse.model_validate(cast(dict[str, Any], payload))
+        for payload in payloads
     ]
     return AgentConfigListResponse(items=items)
 
@@ -183,7 +211,7 @@ def get_agent_llm(agent_name: str) -> AgentLLMConfigResponse:
             detail=f"Agent '{agent_name}' not found",
         )
     return AgentLLMConfigResponse.model_validate(
-        build_agent_config_response(agent_name)
+        cast(dict[str, Any], build_agent_config_response(agent_name))
     )
 
 
@@ -215,11 +243,11 @@ def update_agent_llm(
     provider = _repo().get_provider(request.provider_name)
     if provider is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Provider '{request.provider_name}' not found",
         )
 
-    entry = AgentLLMConfigEntry.model_validate(request.model_dump())
+    entry = AgentLLMConfigEntry.model_validate(request.model_dump(exclude_none=True))
     try:
         _repo().update_agent_llm(
             agent_name, entry.model_dump(mode="json", exclude_none=True)
@@ -228,7 +256,7 @@ def update_agent_llm(
         _raise_as_http(exc)
 
     return AgentLLMConfigResponse.model_validate(
-        build_agent_config_response(agent_name)
+        cast(dict[str, Any], build_agent_config_response(agent_name))
     )
 
 
@@ -244,9 +272,6 @@ def get_app_settings() -> AppSettingsResponse:
     logger.debug("event=settings.app_settings_get_request_received")
     app_settings = _repo().get()
     return AppSettingsResponse(
-        llm=GlobalLLMConfigResponse.model_validate(
-            app_settings.llm.model_dump(mode="json")
-        ),
         agent_llm=[
             AgentLLMConfigResponse.model_validate(build_agent_config_response(name))
             for name in AGENT_NAMES
@@ -265,32 +290,6 @@ def get_app_settings() -> AppSettingsResponse:
             for p in app_settings.providers
         ],
     )
-
-
-@router.get(
-    "/llm",
-    response_model=GlobalLLMConfigResponse,
-    summary="获取全局 LLM 配置",
-)
-def get_global_llm_config() -> GlobalLLMConfigResponse:
-    logger.debug("event=settings.global_llm_get_request_received")
-    app_settings = _repo().get()
-    return GlobalLLMConfigResponse.model_validate(
-        app_settings.llm.model_dump(mode="json")
-    )
-
-
-@router.put(
-    "/llm",
-    response_model=GlobalLLMConfigResponse,
-    summary="更新全局 LLM 配置",
-)
-def update_global_llm_config(
-    request: GlobalLLMConfigUpdateRequest,
-) -> GlobalLLMConfigResponse:
-    logger.info("event=settings.global_llm_update_request_received")
-    updated = _repo().update_llm(request.model_dump(mode="json", exclude_none=True))
-    return GlobalLLMConfigResponse.model_validate(updated.llm.model_dump(mode="json"))
 
 
 @router.get(

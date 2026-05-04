@@ -1,7 +1,7 @@
 """Project API schemas."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -40,8 +40,10 @@ class ProjectResponse(BaseModel):
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
     operation_logs: list[dict[str, Any]] = Field(
-        default_factory=list, description="项目操作日志"
+        default_factory=lambda: cast(list[dict[str, Any]], []),
+        description="项目操作日志",
     )
+    conversation_count: int = Field(default=0, description="项目下的会话数量")
 
 
 class ProjectListResponse(BaseModel):

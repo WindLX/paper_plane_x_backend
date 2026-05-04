@@ -13,8 +13,12 @@ from paper_plane_x_backend.api.dependencies import (
     get_task_manager,
 )
 from paper_plane_x_backend.config import server_config
+from paper_plane_x_backend.models.app_settings import AGENT_NAMES, LLMProvider
 from paper_plane_x_backend.services import Database, init_database
-from paper_plane_x_backend.services.app_settings import AppSettingsRepository
+from paper_plane_x_backend.services.app_settings import (
+    get_app_settings_repo,
+    init_app_settings_repo,
+)
 from paper_plane_x_backend.services.data_process_tasks import (
     lifecycle as task_manager_module,
 )
@@ -32,9 +36,15 @@ server_config.database_path = _TEST_RUNTIME_DIR / "app.test.db"
 server_config.log.file_path = _TEST_RUNTIME_DIR / "logs" / "backend.log"
 server_config.api.console_dist_dir = _TEST_RUNTIME_DIR / "console"
 
-# 初始化动态配置仓库到测试目录，并覆盖 mineru output_dir
-_app_settings_repo = AppSettingsRepository(_TEST_RUNTIME_DIR / "app_settings.toml")
+_app_settings_repo = init_app_settings_repo(_TEST_RUNTIME_DIR / "app_settings.toml")
 _app_settings_repo.update_mineru({"output_dir": str(_TEST_RUNTIME_DIR / "papers")})
+
+# 配置测试用的 LLM provider 和 agent_llm
+_app_settings_repo.ensure_default_provider(
+    LLMProvider(name="default", model="gpt-4o", api_key="test-key")
+)
+for agent_name in AGENT_NAMES:
+    _app_settings_repo.update_agent_llm(agent_name, {"provider_name": "default"})
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -42,6 +52,20 @@ def cleanup_test_runtime_dir() -> Generator[None, None, None]:
     """会话结束后清理测试运行目录."""
     yield
     shutil.rmtree(_TEST_RUNTIME_DIR, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def ensure_test_llm_config() -> None:
+    """每个测试前确保 LLM provider 和 agent_llm 配置存在."""
+    repo = get_app_settings_repo()
+    if repo.get_provider("default") is None:
+        repo.ensure_default_provider(
+            LLMProvider(name="default", model="gpt-4o", api_key="test-key")
+        )
+    for agent_name in AGENT_NAMES:
+        entry = repo.get_agent_llm(agent_name)
+        if entry is None:
+            repo.update_agent_llm(agent_name, {"provider_name": "default"})
 
 
 @pytest.fixture

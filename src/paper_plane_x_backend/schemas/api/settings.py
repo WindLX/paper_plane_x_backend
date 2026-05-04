@@ -1,5 +1,7 @@
 """Settings API schemas."""
 
+from typing import Any, cast
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -12,16 +14,6 @@ class LLMProviderResponse(BaseModel):
     model: str = Field(..., description="模型名称")
     api_key: str | None = Field(default=None, description="API 密钥")
     base_url: str | None = Field(default=None, description="API 基础 URL")
-    temperature: float = Field(default=0.7, description="采样温度")
-    max_tokens: int | None = Field(default=8192, description="最大生成 token 数")
-    timeout: float = Field(default=180.0, description="请求超时时间（秒）")
-    custom_headers: dict[str, str] | None = Field(
-        default=None, description="自定义 HTTP 请求头"
-    )
-    thinking_enabled: bool = Field(default=False, description="是否启用思考模式")
-    reasoning_effort: str | None = Field(default=None, description="推理强度参数")
-    extra_body: dict | None = Field(default=None, description="额外请求体参数")
-    is_vlm: bool = Field(default=False, description="是否为视觉模型")
 
 
 class LLMProviderCreateRequest(BaseModel):
@@ -33,16 +25,14 @@ class LLMProviderCreateRequest(BaseModel):
     model: str = Field(..., min_length=1, description="模型名称")
     api_key: str | None = Field(default=None, description="API 密钥")
     base_url: str | None = Field(default=None, description="API 基础 URL")
-    temperature: float = Field(default=0.7, description="采样温度")
-    max_tokens: int | None = Field(default=8192, description="最大生成 token 数")
-    timeout: float = Field(default=180.0, description="请求超时时间（秒）")
-    custom_headers: dict[str, str] | None = Field(
-        default=None, description="自定义 HTTP 请求头"
-    )
-    thinking_enabled: bool = Field(default=False, description="是否启用思考模式")
-    reasoning_effort: str | None = Field(default=None, description="推理强度参数")
-    extra_body: dict | None = Field(default=None, description="额外请求体参数")
-    is_vlm: bool = Field(default=False, description="是否为视觉模型")
+
+
+class LLMProviderRenameRequest(BaseModel):
+    """重命名 LLM Provider 请求."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    name: str = Field(..., min_length=1, description="新 Provider 名称")
 
 
 class LLMProviderUpdateRequest(BaseModel):
@@ -53,16 +43,6 @@ class LLMProviderUpdateRequest(BaseModel):
     model: str | None = Field(default=None, min_length=1, description="模型名称")
     api_key: str | None = Field(default=None, description="API 密钥")
     base_url: str | None = Field(default=None, description="API 基础 URL")
-    temperature: float | None = Field(default=None, description="采样温度")
-    max_tokens: int | None = Field(default=None, description="最大生成 token 数")
-    timeout: float | None = Field(default=None, description="请求超时时间（秒）")
-    custom_headers: dict[str, str] | None = Field(
-        default=None, description="自定义 HTTP 请求头"
-    )
-    thinking_enabled: bool | None = Field(default=None, description="是否启用思考模式")
-    reasoning_effort: str | None = Field(default=None, description="推理强度参数")
-    extra_body: dict | None = Field(default=None, description="额外请求体参数")
-    is_vlm: bool | None = Field(default=None, description="是否为视觉模型")
 
 
 class AgentLLMConfigResponse(BaseModel):
@@ -72,11 +52,13 @@ class AgentLLMConfigResponse(BaseModel):
 
     agent_name: str = Field(..., description="Agent 名称")
     provider_name: str = Field(..., description="引用的 Provider 名称")
-    temperature: float | None = Field(default=None, description="覆盖采样温度")
-    max_tokens: int | None = Field(default=None, description="覆盖最大生成 token 数")
-    thinking_enabled: bool | None = Field(default=None, description="覆盖思考模式")
-    reasoning_effort: str | None = Field(default=None, description="覆盖推理强度")
-    is_vlm: bool | None = Field(default=None, description="覆盖是否为视觉模型")
+    temperature: float = Field(default=0.7, description="采样温度")
+    max_tokens: int | None = Field(default=8192, description="最大生成 token 数")
+    timeout: float = Field(default=180.0, description="请求超时时间（秒）")
+    thinking_enabled: bool = Field(default=False, description="思考模式")
+    reasoning_effort: str | None = Field(default=None, description="推理强度参数")
+    extra_body: dict[str, Any] | None = Field(default=None, description="额外请求体参数")
+    is_vlm: bool = Field(default=False, description="是否为视觉模型")
 
     # 解析后的有效配置预览
     effective_model: str | None = Field(default=None, description="解析后的模型名称")
@@ -93,8 +75,11 @@ class AgentLLMConfigUpdateRequest(BaseModel):
     provider_name: str = Field(..., min_length=1, description="引用的 Provider 名称")
     temperature: float | None = Field(default=None, description="覆盖采样温度")
     max_tokens: int | None = Field(default=None, description="覆盖最大生成 token 数")
+    timeout: float | None = Field(default=None, description="覆盖请求超时时间（秒）")
     thinking_enabled: bool | None = Field(default=None, description="覆盖思考模式")
     reasoning_effort: str | None = Field(default=None, description="覆盖推理强度")
+    extra_body: dict[str, Any] | None = Field(default=None, description="覆盖额外请求体参数")
+    is_vlm: bool | None = Field(default=None, description="覆盖是否为视觉模型")
 
 
 class ProviderListResponse(BaseModel):
@@ -102,7 +87,9 @@ class ProviderListResponse(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    items: list[LLMProviderResponse] = Field(default_factory=list)
+    items: list[LLMProviderResponse] = Field(
+        default_factory=lambda: cast(list[LLMProviderResponse], [])
+    )
 
 
 class AgentConfigListResponse(BaseModel):
@@ -110,47 +97,9 @@ class AgentConfigListResponse(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    items: list[AgentLLMConfigResponse] = Field(default_factory=list)
-
-
-class GlobalLLMConfigResponse(BaseModel):
-    """全局 LLM 配置响应."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    model: str = Field(..., description="模型名称")
-    api_key: str | None = Field(default=None, description="API 密钥")
-    base_url: str | None = Field(default=None, description="API 基础 URL")
-    temperature: float = Field(default=0.7, description="采样温度")
-    max_tokens: int | None = Field(default=8192, description="最大生成 token 数")
-    timeout: float = Field(default=180.0, description="请求超时时间（秒）")
-    custom_headers: dict[str, str] | None = Field(
-        default=None, description="自定义 HTTP 请求头"
+    items: list[AgentLLMConfigResponse] = Field(
+        default_factory=lambda: cast(list[AgentLLMConfigResponse], [])
     )
-    thinking_enabled: bool = Field(default=False, description="是否启用思考模式")
-    reasoning_effort: str | None = Field(default=None, description="推理强度参数")
-    extra_body: dict | None = Field(default=None, description="额外请求体参数")
-    is_vlm: bool = Field(default=False, description="是否为视觉模型")
-
-
-class GlobalLLMConfigUpdateRequest(BaseModel):
-    """更新全局 LLM 配置请求."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    model: str | None = Field(default=None, min_length=1, description="模型名称")
-    api_key: str | None = Field(default=None, description="API 密钥")
-    base_url: str | None = Field(default=None, description="API 基础 URL")
-    temperature: float | None = Field(default=None, description="采样温度")
-    max_tokens: int | None = Field(default=None, description="最大生成 token 数")
-    timeout: float | None = Field(default=None, description="请求超时时间（秒）")
-    custom_headers: dict[str, str] | None = Field(
-        default=None, description="自定义 HTTP 请求头"
-    )
-    thinking_enabled: bool | None = Field(default=None, description="是否启用思考模式")
-    reasoning_effort: str | None = Field(default=None, description="推理强度参数")
-    extra_body: dict | None = Field(default=None, description="额外请求体参数")
-    is_vlm: bool | None = Field(default=None, description="是否为视觉模型")
 
 
 class MinerUConfigResponse(BaseModel):
@@ -234,9 +183,9 @@ class AppSettingsResponse(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    llm: GlobalLLMConfigResponse = Field(..., description="全局默认 LLM 配置")
     agent_llm: list[AgentLLMConfigResponse] = Field(
-        default_factory=list, description="各 Agent LLM 配置"
+        default_factory=lambda: cast(list[AgentLLMConfigResponse], []),
+        description="各 Agent LLM 配置",
     )
     mineru: MinerUConfigResponse = Field(..., description="MinerU 配置")
     data_process: DataProcessConfigResponse = Field(
@@ -244,5 +193,6 @@ class AppSettingsResponse(BaseModel):
     )
     librarian: LibrarianConfigResponse = Field(..., description="Librarian 配置")
     providers: list[LLMProviderResponse] = Field(
-        default_factory=list, description="LLM Provider 列表"
+        default_factory=lambda: cast(list[LLMProviderResponse], []),
+        description="LLM Provider 列表",
     )

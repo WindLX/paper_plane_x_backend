@@ -47,7 +47,9 @@ def _raise_as_http(exc: ProjectDomainError) -> NoReturn:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
-def _project_to_response(project: Project) -> ProjectResponse:
+def _project_to_response(
+    project: Project, *, conversation_count: int = 0
+) -> ProjectResponse:
     """将 Project 模型转换为响应模型."""
     return ProjectResponse(
         project_id=project.project_id,
@@ -57,6 +59,7 @@ def _project_to_response(project: Project) -> ProjectResponse:
         created_at=project.created_at,
         updated_at=project.updated_at,
         operation_logs=project.operation_logs,
+        conversation_count=conversation_count,
     )
 
 
@@ -118,10 +121,16 @@ async def list_projects(
         "event=project.list_request_received offset=%s limit=%s", offset, limit
     )
     orchestrator = _build_orchestrator(db)
-    projects, total = orchestrator.list_projects(
+    projects, total, conversation_counts = orchestrator.list_projects(
         offset=offset, limit=limit, sort_order=sort_order, sort_by=sort_by
     )
-    items = [_project_to_response(project) for project in projects]
+    items = [
+        _project_to_response(
+            project,
+            conversation_count=conversation_counts.get(project.project_id, 0),
+        )
+        for project in projects
+    ]
 
     return ProjectListResponse(
         items=items,
@@ -162,7 +171,8 @@ async def get_project(
     except ProjectDomainError as exc:
         _raise_as_http(exc)
 
-    return _project_to_response(project)
+    conversation_count = orchestrator.conversation_repo.count_by_project(project_id)
+    return _project_to_response(project, conversation_count=conversation_count)
 
 
 @router.patch(

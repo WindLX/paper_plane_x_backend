@@ -138,12 +138,6 @@ class AppSettingsRepository:
 
     # ---- Object-type sections (llm / mineru / data_process / librarian) ----
 
-    def get_llm(self) -> AppSettings:
-        return self._settings
-
-    def update_llm(self, values: dict[str, Any]) -> AppSettings:
-        return self._update_section("llm", values)
-
     def get_mineru(self) -> AppSettings:
         return self._settings
 
@@ -251,6 +245,60 @@ class AppSettingsRepository:
             updated.model,
         )
         return updated
+
+    def rename_provider(self, old_name: str, new_name: str) -> LLMProvider:
+        """重命名 provider（同步更新所有 agent_llm 引用）."""
+        if old_name == new_name:
+            existing = self.get_provider(old_name)
+            if existing is None:
+                raise AppSettingsRepositoryError(
+                    f"Provider '{old_name}' not found",
+                    error_code="not_found",
+                )
+            return existing
+
+        if self.get_provider(old_name) is None:
+            raise AppSettingsRepositoryError(
+                f"Provider '{old_name}' not found",
+                error_code="not_found",
+            )
+        if self.get_provider(new_name) is not None:
+            raise AppSettingsRepositoryError(
+                f"Provider '{new_name}' already exists",
+                error_code="already_exists",
+            )
+
+        # 更新 provider 列表中的名称
+        for p in self._settings.providers:
+            if p.name == old_name:
+                p.name = new_name
+                break
+
+        # 同步更新所有 agent_llm 引用
+        for agent_name in AGENT_NAMES:
+            entry = self.get_agent_llm(agent_name)
+            if entry is not None and entry.provider_name == old_name:
+                self.update_agent_llm(
+                    agent_name,
+                    {
+                        **entry.model_dump(mode="json", exclude_none=True),
+                        "provider_name": new_name,
+                    },
+                )
+
+        self._save()
+        logger.info(
+            "event=app_settings.provider_renamed old=%s new=%s",
+            old_name,
+            new_name,
+        )
+        renamed = self.get_provider(new_name)
+        if renamed is None:
+            raise AppSettingsRepositoryError(
+                f"Provider '{new_name}' not found after rename",
+                error_code="not_found",
+            )
+        return renamed
 
     def delete_provider(self, name: str) -> None:
         """删除 provider."""

@@ -27,7 +27,7 @@ def orchestrator(db):
     return PaperOrchestrator(db=db, task_manager=manager)
 
 
-def _insert_paper(db, paper_id: str = "paper-1") -> Paper:
+def _insert_paper(db, paper_id: str = "pap-test-1") -> Paper:
     now = datetime.now()
     paper = Paper(
         paper_id=paper_id,
@@ -59,8 +59,8 @@ def _insert_paper(db, paper_id: str = "paper-1") -> Paper:
 
 class TestPaperOrchestrator:
     def test_list_papers(self, orchestrator, db):
-        _insert_paper(db, "p1")
-        _insert_paper(db, "p2")
+        _insert_paper(db, "pap-test-1")
+        _insert_paper(db, "pap-test-2")
         papers, total = orchestrator.list_papers(
             offset=0,
             limit=10,
@@ -71,9 +71,9 @@ class TestPaperOrchestrator:
         assert len(papers) == 2
 
     def test_get_paper(self, orchestrator, db):
-        _insert_paper(db, "p1")
-        paper = orchestrator.get_paper(paper_id="p1")
-        assert paper.paper_id == "p1"
+        _insert_paper(db, "pap-test-1")
+        paper = orchestrator.get_paper(paper_id="pap-test-1")
+        assert paper.paper_id == "pap-test-1"
 
     def test_get_paper_not_found(self, orchestrator):
         with pytest.raises(PaperDomainError) as exc_info:
@@ -81,10 +81,10 @@ class TestPaperOrchestrator:
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
 
     def test_batch_get_papers(self, orchestrator, db):
-        _insert_paper(db, "p1")
-        _insert_paper(db, "p2")
+        _insert_paper(db, "pap-test-1")
+        _insert_paper(db, "pap-test-2")
         papers, total = orchestrator.batch_get_papers(
-            paper_ids=["p1", "p2", "no"],
+            paper_ids=["pap-test-1", "pap-test-2", "no"],
             offset=0,
             limit=10,
             sort_order=SortOrder.DESC,
@@ -92,19 +92,19 @@ class TestPaperOrchestrator:
         )
         assert total == 2
         assert len(papers) == 2
-        assert {p.paper_id for p in papers} == {"p1", "p2"}
+        assert {p.paper_id for p in papers} == {"pap-test-1", "pap-test-2"}
 
     def test_count_paper_statuses(self, orchestrator, db):
-        _insert_paper(db, "p1")
-        _insert_paper(db, "p2")
+        _insert_paper(db, "pap-test-1")
+        _insert_paper(db, "pap-test-2")
         counts = orchestrator.count_paper_statuses()
         assert counts["extraction_completed"] == 2
         assert counts["total"] == 2
 
     def test_update_paper(self, orchestrator, db):
-        _insert_paper(db, "p1")
+        _insert_paper(db, "pap-test-1")
         updated = orchestrator.update_paper(
-            paper_id="p1",
+            paper_id="pap-test-1",
             title="new title",
             authors=["Alice"],
             year=2025,
@@ -146,10 +146,10 @@ class TestPaperOrchestrator:
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
 
     def test_update_paper_invalid_custom_meta(self, orchestrator, db):
-        _insert_paper(db, "p1")
+        _insert_paper(db, "pap-test-1")
         with pytest.raises(PaperDomainError) as exc_info:
             orchestrator.update_paper(
-                paper_id="p1",
+                paper_id="pap-test-1",
                 title=None,
                 authors=None,
                 year=None,
@@ -168,10 +168,10 @@ class TestPaperOrchestrator:
         assert exc_info.value.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_update_paper_custom_meta_not_object(self, orchestrator, db):
-        _insert_paper(db, "p1")
+        _insert_paper(db, "pap-test-1")
         with pytest.raises(PaperDomainError) as exc_info:
             orchestrator.update_paper(
-                paper_id="p1",
+                paper_id="pap-test-1",
                 title=None,
                 authors=None,
                 year=None,
@@ -190,9 +190,11 @@ class TestPaperOrchestrator:
         assert exc_info.value.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_delete_paper(self, orchestrator, db):
-        _insert_paper(db, "p1")
-        orchestrator.delete_paper(paper_id="p1")
-        assert db.fetchall("SELECT 1 FROM papers WHERE paper_id=?", ("p1",)) == []
+        _insert_paper(db, "pap-test-1")
+        orchestrator.delete_paper(paper_id="pap-test-1")
+        assert (
+            db.fetchall("SELECT 1 FROM papers WHERE paper_id=?", ("pap-test-1",)) == []
+        )
 
     def test_delete_paper_not_found(self, orchestrator):
         with pytest.raises(PaperDomainError) as exc_info:
@@ -202,7 +204,7 @@ class TestPaperOrchestrator:
     def test_delete_paper_processing_blocked(self, orchestrator, db):
         now = datetime.now()
         paper = Paper(
-            paper_id="p1",
+            paper_id="pap-test-1",
             title="t",
             authors=[],
             year=2024,
@@ -227,5 +229,5 @@ class TestPaperOrchestrator:
         )
         db.insert("papers", paper.to_db_dict())
         with pytest.raises(PaperDomainError) as exc_info:
-            orchestrator.delete_paper(paper_id="p1")
+            orchestrator.delete_paper(paper_id="pap-test-1")
         assert exc_info.value.status_code == status.HTTP_409_CONFLICT

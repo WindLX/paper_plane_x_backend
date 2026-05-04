@@ -28,6 +28,8 @@ from paper_plane_x_backend.schemas.agent_io.base import (
     ToolMessage,
 )
 
+DEFAULT_LLM_CONFIG = LLMConfig(model="gpt-4o", api_key="test-key")
+
 
 class ApiOutput(BaseModel):
     value: str
@@ -57,11 +59,16 @@ class TestBaseAgentExtended:
 
     def test_api_mode_requires_schema(self) -> None:
         with pytest.raises(ValueError, match="output_schema is required"):
-            BaseAgent(mode="api")
+            BaseAgent(llm_config=DEFAULT_LLM_CONFIG, mode="api")
 
     @pytest.mark.asyncio
     async def test_api_mode_wraps_non_validation_error(self) -> None:
-        agent = BaseAgent(output_schema=ApiOutput, mode="api", save_trace=False)
+        agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
+            output_schema=ApiOutput,
+            mode="api",
+            save_trace=False,
+        )
 
         async def mock_generate_structured(messages, output_schema, **kwargs):
             raise RuntimeError("llm down")
@@ -75,7 +82,7 @@ class TestBaseAgentExtended:
     async def test_save_trace_success_normal_mode(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        agent = BaseAgent(mode="normal", save_trace=True)
+        agent = BaseAgent(llm_config=DEFAULT_LLM_CONFIG, mode="normal", save_trace=True)
 
         async def mock_generate(messages, **kwargs):
             return LLMResponse(
@@ -119,6 +126,7 @@ class TestBaseAgentExtended:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             output_schema=ApiOutput,
             mode="api",
             save_trace=True,
@@ -158,7 +166,13 @@ class TestBaseAgentExtended:
         def noop() -> str:
             return "ok"
 
-        agent = BaseAgent(mode="normal", tools=[noop], max_steps=1, save_trace=False)
+        agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
+            mode="normal",
+            tools=[noop],
+            max_steps=1,
+            save_trace=False,
+        )
 
         async def mock_generate_with_tools(messages, tools, **kwargs):
             return LLMResponse(
@@ -183,6 +197,7 @@ class TestBaseAgentExtended:
     @pytest.mark.asyncio
     async def test_api_mode_prefers_larger_json_candidate(self) -> None:
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             output_schema=StrictTwoFieldsOutput,
             mode="api",
             save_trace=False,
@@ -191,9 +206,7 @@ class TestBaseAgentExtended:
 
         async def mock_generate_structured(messages, output_schema, **kwargs):
             return LLMResponse(
-                content=(
-                    'small={"value":"v"}\n' 'large={"value":"v","detail":"use-me"}'
-                ),
+                content=('small={"value":"v"}\nlarge={"value":"v","detail":"use-me"}'),
                 model="test-model",
                 usage={},
             )
@@ -208,6 +221,7 @@ class TestBaseAgentExtended:
     @pytest.mark.asyncio
     async def test_api_mode_rejects_array_root_json(self) -> None:
         agent = BaseAgent(
+            llm_config=DEFAULT_LLM_CONFIG,
             output_schema=ApiOutput,
             mode="api",
             save_trace=False,

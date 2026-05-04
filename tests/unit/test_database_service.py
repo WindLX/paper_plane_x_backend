@@ -102,7 +102,7 @@ def test_update_auto_recovers_from_fts_corruption(tmp_path: Path) -> None:
     db.insert(
         "papers",
         {
-            "paper_id": "p1",
+            "paper_id": "pap-test-1",
             "title": "origin",
             "md_content": "content",
         },
@@ -116,11 +116,11 @@ def test_update_auto_recovers_from_fts_corruption(tmp_path: Path) -> None:
         "papers",
         {"title": "updated"},
         "paper_id = ?",
-        ("p1",),
+        ("pap-test-1",),
     )
     assert affected == 1
 
-    row = db.fetchone("SELECT title FROM papers WHERE paper_id = ?", ("p1",))
+    row = db.fetchone("SELECT title FROM papers WHERE paper_id = ?", ("pap-test-1",))
     assert row is not None
     assert row["title"] == "updated"
 

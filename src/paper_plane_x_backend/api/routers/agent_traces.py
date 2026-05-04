@@ -1,6 +1,7 @@
 """Agent trace 路由。"""
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 
@@ -23,19 +24,45 @@ router = APIRouter(prefix="/agent-traces", tags=["agent-traces"])
 logger = logging.getLogger(__name__)
 
 
-def _trace_dict_to_response(trace_dict: dict) -> AgentTraceResponse:
+def _trace_dict_to_response(trace_dict: dict[str, Any]) -> AgentTraceResponse:
     return AgentTraceResponse(
-        trace_id=trace_dict["trace_id"],
-        agent_name=trace_dict["agent_name"],
-        messages=trace_dict.get("messages", []),
-        llm_model=trace_dict.get("llm_model"),
-        prompt_tokens=trace_dict.get("prompt_tokens"),
-        completion_tokens=trace_dict.get("completion_tokens"),
-        total_tokens=trace_dict.get("total_tokens"),
-        usage_payload=trace_dict.get("usage_payload"),
+        trace_id=str(trace_dict["trace_id"]),
+        agent_name=str(trace_dict["agent_name"]),
+        messages=(
+            trace_dict["messages"]
+            if isinstance(trace_dict.get("messages"), list)
+            else []
+        ),
+        llm_model=(
+            trace_dict["llm_model"]
+            if isinstance(trace_dict.get("llm_model"), str)
+            else None
+        ),
+        prompt_tokens=(
+            trace_dict["prompt_tokens"]
+            if isinstance(trace_dict.get("prompt_tokens"), int)
+            else None
+        ),
+        completion_tokens=(
+            trace_dict["completion_tokens"]
+            if isinstance(trace_dict.get("completion_tokens"), int)
+            else None
+        ),
+        total_tokens=(
+            trace_dict["total_tokens"]
+            if isinstance(trace_dict.get("total_tokens"), int)
+            else None
+        ),
+        usage_payload=(
+            trace_dict["usage_payload"]
+            if isinstance(trace_dict.get("usage_payload"), dict)
+            else None
+        ),
         created_at=trace_dict["created_at"],
-        caller=trace_dict.get("caller"),
-        caller_id=trace_dict.get("caller_id"),
+        caller=trace_dict["caller"] if isinstance(trace_dict.get("caller"), str) else None,
+        caller_id=(
+            trace_dict["caller_id"] if isinstance(trace_dict.get("caller_id"), str) else None
+        ),
     )
 
 

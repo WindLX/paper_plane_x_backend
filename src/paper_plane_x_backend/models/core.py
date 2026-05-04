@@ -269,7 +269,8 @@ class AgentTrace(BaseModel):
     trace_id: str = Field(..., description="唯一标识 (UUID)")
     agent_name: str = Field(..., description="Agent 名称")
     messages: list[dict[str, Any]] = Field(
-        default_factory=list, description="完整消息历史"
+        default_factory=lambda: cast(list[dict[str, Any]], []),
+        description="完整消息历史",
     )
     llm_model: str | None = Field(default=None, description="本次调用的模型标识")
     prompt_tokens: int | None = Field(default=None, description="输入 token 用量")
@@ -278,6 +279,9 @@ class AgentTrace(BaseModel):
     usage_payload: dict[str, Any] | None = Field(
         default=None,
         description="原始 usage 信息（兼容不同 provider 字段）",
+    )
+    tools: list[dict[str, Any]] | None = Field(
+        default=None, description="本次运行可用的工具注册表"
     )
     caller: str | None = Field(default=None, description="调用方标识")
     caller_id: str | None = Field(default=None, description="调用方业务 ID")
@@ -305,6 +309,13 @@ class AgentTrace(BaseModel):
                 data["usage_payload"] = parsed_usage_payload
             else:
                 data["usage_payload"] = None
+        tools_value = data.get("tools")
+        if tools_value and isinstance(tools_value, str):
+            parsed_tools = json.loads(tools_value)
+            if isinstance(parsed_tools, list):
+                data["tools"] = parsed_tools
+            else:
+                data["tools"] = None
 
         return cls.model_validate(data)
 
@@ -315,6 +326,7 @@ class AgentTrace(BaseModel):
         for field in [
             "messages",
             "usage_payload",
+            "tools",
         ]:
             if data.get(field) is not None:
                 data[field] = json.dumps(data[field], ensure_ascii=False)

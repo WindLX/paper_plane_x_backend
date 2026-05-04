@@ -5,7 +5,7 @@
 """
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,9 +17,8 @@ AGENT_NAMES: tuple[str, ...] = (
     "deep_diver",
     "query_builder",
     "global_finder",
-    "planner",
-    "writer",
-    "reviewer",
+    "researcher",
+    "subagent",
 )
 
 
@@ -63,17 +62,20 @@ class AgentLLMConfigEntry(BaseModel):
     """Agent LLM 配置条目.
 
     通过引用 Provider 名称 + 可选覆盖项来配置 Agent 的 LLM 参数。
-    向后兼容：若 provider_name 未设置，退回到全局默认配置。
     """
 
     model_config = ConfigDict(extra="ignore")
 
     provider_name: str = Field(default="default", description="引用的 Provider 名称")
-    temperature: float | None = Field(default=None, description="覆盖采样温度")
-    max_tokens: int | None = Field(default=None, description="覆盖最大生成 token 数")
-    thinking_enabled: bool | None = Field(default=None, description="覆盖思考模式开关")
-    reasoning_effort: str | None = Field(default=None, description="覆盖推理强度参数")
-    is_vlm: bool | None = Field(default=None, description="覆盖是否为视觉模型")
+    temperature: float = Field(default=0.7, description="采样温度")
+    max_tokens: int | None = Field(default=8192, description="最大生成 token 数")
+    timeout: float = Field(default=180.0, description="请求超时时间（秒）")
+    thinking_enabled: bool = Field(default=False, description="思考模式开关")
+    reasoning_effort: str | None = Field(default=None, description="推理强度参数")
+    extra_body: dict[str, Any] | None = Field(
+        default=None, description="额外请求体参数"
+    )
+    is_vlm: bool = Field(default=False, description="是否为视觉模型")
 
 
 class AgentLLMConfigs(BaseModel):
@@ -107,15 +109,12 @@ class AgentLLMConfigs(BaseModel):
         default=None, description="GlobalFinderAgent 配置"
     )
 
-    # Survey Agents
-    planner: AgentLLMConfigEntry | None = Field(
-        default=None, description="PlannerAgent 配置"
+    # Conversation Agents
+    researcher: AgentLLMConfigEntry | None = Field(
+        default=None, description="ResearcherAgent 配置"
     )
-    writer: AgentLLMConfigEntry | None = Field(
-        default=None, description="WriterAgent 配置"
-    )
-    reviewer: AgentLLMConfigEntry | None = Field(
-        default=None, description="ReviewerAgent 配置"
+    subagent: AgentLLMConfigEntry | None = Field(
+        default=None, description="SubAgent 配置"
     )
 
 
@@ -123,6 +122,7 @@ class LLMProvider(BaseModel):
     """LLM Provider 配置模型.
 
     用于在 Provider 池中定义一个可复用的 LLM 服务端点。
+    仅保留连接相关参数，其他参数在 agent_llm 中配置。
     """
 
     model_config = ConfigDict(strict=True, extra="forbid")
@@ -133,28 +133,6 @@ class LLMProvider(BaseModel):
     base_url: str | None = Field(
         default=None,
         description="API 基础 URL (VLLM: http://localhost:8000/v1)",
-    )
-    temperature: float = Field(default=0.7, description="采样温度")
-    max_tokens: int | None = Field(default=8192, description="最大生成 token 数")
-    timeout: float = Field(default=180.0, description="请求超时时间（秒）")
-    custom_headers: dict[str, str] | None = Field(
-        default=None, description="自定义 HTTP 请求头"
-    )
-    thinking_enabled: bool = Field(
-        default=False,
-        description="是否启用模型思考模式（由 LLMClient 映射到兼容参数）",
-    )
-    reasoning_effort: str | None = Field(
-        default=None,
-        description="推理强度参数（如 OpenAI reasoning_effort，按模型能力生效）",
-    )
-    extra_body: dict[str, Any] | None = Field(
-        default=None,
-        description="额外请求体参数，用于透传厂商私有扩展",
-    )
-    is_vlm: bool = Field(
-        default=False,
-        description="是否为视觉模型（启用多模态消息处理）",
     )
 
 
@@ -205,13 +183,11 @@ class AppSettings(BaseModel):
 
     # LLM Provider 池
     providers: list[LLMProvider] = Field(
-        default_factory=list, description="LLM Provider 列表"
+        default_factory=lambda: cast(list[LLMProvider], []),
+        description="LLM Provider 列表",
     )
 
-    # LLM 全局默认配置
-    llm: LLMConfig = Field(default_factory=LLMConfig)
-
-    # 各 Agent 独立 LLM 配置
+    # 各 Agent 独立 LLM 配置（不再继承全局默认配置，每个 Agent 必须手动配置）
     agent_llm: AgentLLMConfigs = Field(default_factory=AgentLLMConfigs)
 
     # MinerU 配置

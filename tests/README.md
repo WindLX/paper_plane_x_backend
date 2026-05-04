@@ -36,6 +36,8 @@
 - `Data Process` task API
 - `App health`
 - `Librarian` API
+- `Conversation` API + WebSocket
+- `HITL` WebSocket
 
 ## 3. 推荐执行方式
 

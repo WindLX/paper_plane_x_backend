@@ -222,7 +222,9 @@ class DataProcessorAgentGroup:
             extraction_result = await self.extraction_agent.run()
             self.extraction_trace_ids.extend(self.extraction_agent.trace_ids)
 
-            extraction_message = {"extraction_result": extraction_result.model_dump()}
+            extraction_message: dict[str, Any] = {
+                "extraction_result": extraction_result.model_dump()
+            }
             self.fact_check_agent1.append_assistant_message(
                 extraction_message,
                 name=self.extraction_agent.runtime_name,
@@ -232,10 +234,9 @@ class DataProcessorAgentGroup:
             self.extraction_fact_check_trace_ids.extend(
                 self.fact_check_agent1.trace_ids
             )
-            if fact_check_result is None:
-                raise RuntimeError("Fact check result is empty after fact check loop")
-
-            fact_check_message = {"fact_check_result": fact_check_result.model_dump()}
+            fact_check_message: dict[str, Any] = {
+                "fact_check_result": fact_check_result.model_dump()
+            }
             self.extraction_agent.append_assistant_message(
                 fact_check_message,
                 name=self.fact_check_agent1.runtime_name,
@@ -263,9 +264,7 @@ class DataProcessorAgentGroup:
 
             retry_count += 1
 
-        if fact_check_result is None:
-            raise RuntimeError("Fact check result is empty after fact check loop")
-
+        assert fact_check_result is not None
         if not fact_check_result.is_passed:
             logger.warning(
                 "event=data_processor.fact_check_waiting_human_review retries=%s",
@@ -306,7 +305,9 @@ class DataProcessorAgentGroup:
             analysis_result = await self.analysis_agent.run()
             self.analysis_trace_ids.extend(self.analysis_agent.trace_ids)
 
-            analysis_message = {"analysis_result": analysis_result.model_dump()}
+            analysis_message: dict[str, Any] = {
+                "analysis_result": analysis_result.model_dump()
+            }
             self.fact_check_agent2.append_assistant_message(
                 analysis_message,
                 name=self.analysis_agent.runtime_name,
@@ -314,10 +315,9 @@ class DataProcessorAgentGroup:
 
             fact_check_result = await self.fact_check_agent2.run()
             self.analysis_fact_check_trace_ids.extend(self.fact_check_agent2.trace_ids)
-            if fact_check_result is None:
-                raise RuntimeError("Fact check result is empty after fact check loop")
-
-            fact_check_message = {"fact_check_result": fact_check_result.model_dump()}
+            fact_check_message: dict[str, Any] = {
+                "fact_check_result": fact_check_result.model_dump()
+            }
             self.analysis_agent.append_assistant_message(
                 fact_check_message,
                 name=self.fact_check_agent2.runtime_name,
@@ -345,11 +345,7 @@ class DataProcessorAgentGroup:
 
             retry_count += 1
 
-        if fact_check_result is None:
-            raise RuntimeError(
-                "Fact check result is empty after analysis fact check loop"
-            )
-
+        assert fact_check_result is not None
         if not fact_check_result.is_passed:
             logger.warning(
                 "event=data_processor.analysis_fact_check_waiting_human_review retries=%s",

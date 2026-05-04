@@ -145,13 +145,14 @@ class ProjectRepository:
         )
 
     def delete(self, project_id: str) -> None:
-        """删除项目（含清理 paper_projects 关联）."""
+        """删除项目（含清理 paper_projects、conversations 级联关联）."""
         self.ensure_exists(project_id)
         detached_count = self.db.delete(
             "paper_projects",
             "project_id = ?",
             (project_id,),
         )
+        # 外键 ON DELETE CASCADE 会自动清理 conversations 和 conversation_messages
         self.db.delete("projects", "project_id = ?", (project_id,))
         logger.info(
             "event=project.deleted project_id=%s detached_papers=%s",

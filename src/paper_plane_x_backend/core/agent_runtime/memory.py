@@ -31,16 +31,13 @@ class MemoryManager:
         if short_memory_window <= 0:
             raise ValueError("short_memory_window must be greater than 0")
 
-        self.system_prompt = system_prompt
         self.short_memory_window = short_memory_window
         self.is_vlm = is_vlm
 
         self._messages: list[dict[str, Any]] = []
         self._system_message: dict[str, Any] | None = None
-        if self.system_prompt:
-            self._system_message = SystemMessage(
-                content=self.system_prompt
-            ).model_dump()
+        if system_prompt:
+            self._system_message = SystemMessage(content=system_prompt).model_dump()
 
     def reset_memory(self) -> None:
         self._messages = []
@@ -54,6 +51,10 @@ class MemoryManager:
             messages.append(dict(self._system_message))
         messages.extend(interaction_messages)
         return messages
+
+    def get_interaction_messages(self) -> list[dict[str, Any]]:
+        """获取所有交互消息（不含 system prompt）。"""
+        return list(self._messages)
 
     def has_role_message(self, role: str) -> bool:
         """判断当前会话是否存在指定 role 的消息。"""
@@ -99,6 +100,13 @@ class MemoryManager:
             inputs.pop("images", None)  # 移除 images 字段，避免干扰文本内容
             return json.dumps(inputs, ensure_ascii=False)
 
+    def set_system_prompt(self, system_prompt: str) -> None:
+        """设置系统提示词."""
+        if system_prompt:
+            self._system_message = SystemMessage(content=system_prompt).model_dump()
+        else:
+            self._system_message = None
+
     def append_user_message(self, user_input: dict[str, Any]) -> None:
         """追加当前 user 消息。"""
         self._messages.append(
@@ -115,7 +123,7 @@ class MemoryManager:
         """追加 assistant 消息。"""
         self._messages.append(
             AssistantMessage(
-                content=(f"[{name}] {content}" if name else content),
+                content=(content),
                 reasoning_content=reasoning_content,
                 name=name,
                 tool_calls=tool_calls,

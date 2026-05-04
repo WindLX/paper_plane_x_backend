@@ -49,7 +49,7 @@ async def test_stop_cancels_running_job_quickly(
     task_state = await manager.submit_task(
         DataProcessQueueTask(
             task_id="task-1",
-            paper_id="paper-1",
+            paper_id="pap-test-1",
             payload={"pdf_path": "/tmp/fake.pdf"},
         )
     )
@@ -89,7 +89,7 @@ async def test_stop_returns_when_running_job_cancels_slowly(
     await manager.submit_task(
         DataProcessQueueTask(
             task_id="task-slow-cancel",
-            paper_id="paper-1",
+            paper_id="pap-test-1",
             payload={"pdf_path": "/tmp/fake.pdf"},
         )
     )
@@ -124,7 +124,7 @@ async def test_task_fails_when_exceeding_max_execution_seconds(
     state = await manager.submit_task(
         DataProcessQueueTask(
             task_id="task-timeout",
-            paper_id="paper-1",
+            paper_id="pap-test-1",
             payload={"pdf_path": "/tmp/fake.pdf"},
         )
     )
@@ -176,7 +176,7 @@ async def test_cancel_running_task_transitions_to_canceled(
     task_state = await manager.submit_task(
         DataProcessQueueTask(
             task_id="task-running",
-            paper_id="paper-1",
+            paper_id="pap-test-1",
             payload={"pdf_path": "/tmp/fake.pdf"},
         )
     )
@@ -219,7 +219,7 @@ async def test_cleanup_path_is_removed_after_task_finishes(
     state = await manager.submit_task(
         DataProcessQueueTask(
             task_id="task-clean",
-            paper_id="paper-1",
+            paper_id="pap-test-1",
             payload={"pdf_path": "/tmp/fake.pdf"},
             cleanup_path=cleanup,
         )
@@ -256,7 +256,7 @@ async def test_completed_task_copies_trace_ids_from_processor_result(
     state = await manager.submit_task(
         DataProcessQueueTask(
             task_id="task-result-traces",
-            paper_id="paper-1",
+            paper_id="pap-test-1",
             payload={"pdf_path": "/tmp/fake.pdf"},
         )
     )
@@ -288,7 +288,7 @@ async def test_cancel_already_canceled_task_raises_value_error(
     task_state = await manager.submit_task(
         DataProcessQueueTask(
             task_id="task-repeat-cancel",
-            paper_id="paper-1",
+            paper_id="pap-test-1",
             payload={"pdf_path": "/tmp/fake.pdf"},
         )
     )
@@ -311,7 +311,7 @@ async def test_start_recovers_queued_tasks_from_database(
     state_store = DataProcessTaskStateStore(db)
     queued_state = DataProcessTaskState(
         task_id="task-recover-1",
-        paper_id="paper-1",
+        paper_id="pap-test-1",
         payload={"pdf_path": "/tmp/fake.pdf"},
         status=DataProcessTaskStatus.QUEUED,
         created_at=datetime.now(),

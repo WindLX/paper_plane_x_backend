@@ -29,7 +29,6 @@ class TestSettingsProviders:
                 "model": "gpt-4o",
                 "base_url": "http://localhost:8000/v1",
                 "api_key": "sk-test",
-                "temperature": 0.5,
             },
         )
         assert create_resp.status_code == 201
@@ -58,12 +57,11 @@ class TestSettingsProviders:
 
         resp = client.put(
             "/api/v1/settings/providers/to-update",
-            json={"model": "gpt-4-turbo", "temperature": 0.3},
+            json={"model": "gpt-4-turbo"},
         )
         assert resp.status_code == 200
         updated = resp.json()
         assert updated["model"] == "gpt-4-turbo"
-        assert updated["temperature"] == 0.3
         assert updated["name"] == "to-update"
 
     def test_update_provider_not_found(self, client: TestClient) -> None:
@@ -103,9 +101,8 @@ class TestSettingsAgentLLM:
             "deep_diver",
             "query_builder",
             "global_finder",
-            "planner",
-            "writer",
-            "reviewer",
+            "researcher",
+            "subagent",
         ):
             repo.update_agent_llm(name, {"provider_name": "default"})
 
@@ -113,7 +110,7 @@ class TestSettingsAgentLLM:
         resp = client.get("/api/v1/settings/agent_llm")
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data["items"]) == 9
+        assert len(data["items"]) == 8
         names = {item["agent_name"] for item in data["items"]}
         assert "extraction" in names
         assert "analysis" in names
@@ -169,34 +166,18 @@ class TestSettingsAgentLLM:
 
 
 class TestSettingsSections:
-    """Settings section (llm / mineru / data_process / librarian) API tests."""
+    """Settings section (mineru / data_process / librarian) API tests."""
 
     def test_get_full_app_settings(self, client: TestClient) -> None:
         resp = client.get("/api/v1/settings")
         assert resp.status_code == 200
         data = resp.json()
-        assert "llm" in data
         assert "mineru" in data
         assert "data_process" in data
         assert "librarian" in data
         assert "agent_llm" in data
         assert "providers" in data
-
-    def test_get_and_update_llm(self, client: TestClient) -> None:
-        get_resp = client.get("/api/v1/settings/llm")
-        assert get_resp.status_code == 200
-        original = get_resp.json()
-
-        resp = client.put(
-            "/api/v1/settings/llm",
-            json={"model": "gpt-4-turbo", "temperature": 0.9},
-        )
-        assert resp.status_code == 200
-        updated = resp.json()
-        assert updated["model"] == "gpt-4-turbo"
-        assert updated["temperature"] == 0.9
-        # 未修改字段保留
-        assert updated["timeout"] == original["timeout"]
+        assert "llm" not in data
 
     def test_get_and_update_mineru(self, client: TestClient) -> None:
         resp = client.put(
@@ -228,14 +209,14 @@ class TestSettingsSections:
 
     def test_persistence_across_requests(self, client: TestClient) -> None:
         client.put(
-            "/api/v1/settings/llm",
-            json={"model": "persist-test-model"},
+            "/api/v1/settings/mineru",
+            json={"base_url": "http://mineru-persist:7860"},
         )
 
-        resp = client.get("/api/v1/settings/llm")
+        resp = client.get("/api/v1/settings/mineru")
         assert resp.status_code == 200
-        assert resp.json()["model"] == "persist-test-model"
+        assert resp.json()["base_url"] == "http://mineru-persist:7860"
 
         # 通过全量接口也可见
         full_resp = client.get("/api/v1/settings")
-        assert full_resp.json()["llm"]["model"] == "persist-test-model"
+        assert full_resp.json()["mineru"]["base_url"] == "http://mineru-persist:7860"

@@ -12,22 +12,25 @@ from fastapi.templating import Jinja2Templates
 
 from paper_plane_x_backend.api.routers import (
     agent_traces,
+    conversation,
+    conversation_ws,
     data_process,
-    hitl,
+    hitl_ws,
     librarian,
     paper,
     project,
+    project_files,
 )
 from paper_plane_x_backend.api.routers import (
     settings as settings_router,
 )
 from paper_plane_x_backend.config import settings
 from paper_plane_x_backend.services import init_database
-from paper_plane_x_backend.services.app_settings import AppSettingsRepository
 from paper_plane_x_backend.services.data_process_tasks.lifecycle import (
     start_worker_pool,
     stop_worker_pool,
 )
+from paper_plane_x_backend.services.database import get_db
 from paper_plane_x_backend.utils.logging import (
     get_active_log_file_path,
     setup_logging,
@@ -60,8 +63,11 @@ app.include_router(project.router, prefix="/api/v1")
 app.include_router(agent_traces.router, prefix="/api/v1")
 app.include_router(librarian.router, prefix="/api/v1")
 app.include_router(data_process.router, prefix="/api/v1")
-app.include_router(hitl.router, prefix="/api/v1")
 app.include_router(settings_router.router, prefix="/api/v1")
+app.include_router(conversation.router, prefix="/api/v1")
+app.include_router(conversation_ws.router, prefix="/api/v1")
+app.include_router(hitl_ws.router, prefix="/api/v1")
+app.include_router(project_files.router, prefix="/api/v1")
 
 
 def _resolve_console_dist_dir() -> Path | None:
@@ -155,31 +161,18 @@ async def lifespan(app: FastAPI):
     settings.ensure_directories()
     init_database()
 
-    # 若 Provider 池为空，从全局 LLM 配置创建默认 Provider
-    from paper_plane_x_backend.models.app_settings import LLMProvider
-    from paper_plane_x_backend.services.app_settings import (
-        get_app_settings_repo,
-        init_app_settings_repo,
-    )
+    from paper_plane_x_backend.services.app_settings import init_app_settings_repo
 
-    app_settings_repo = init_app_settings_repo()
-    app_settings = app_settings_repo.get()
-    get_app_settings_repo().ensure_default_provider(
-        LLMProvider(
-            name="default",
-            model=app_settings.llm.model,
-            api_key=app_settings.llm.api_key,
-            base_url=app_settings.llm.base_url,
-            temperature=app_settings.llm.temperature,
-            max_tokens=app_settings.llm.max_tokens,
-            timeout=app_settings.llm.timeout,
-            custom_headers=app_settings.llm.custom_headers,
-            thinking_enabled=app_settings.llm.thinking_enabled,
-            reasoning_effort=app_settings.llm.reasoning_effort,
-            extra_body=app_settings.llm.extra_body,
-            is_vlm=app_settings.llm.is_vlm,
-        )
-    )
+    init_app_settings_repo()
+
+    db = get_db()
+    rows = db.fetchall("SELECT project_id FROM projects")
+    for row in rows:
+        project_id = row["project_id"]
+        sandbox_path = settings.data_dir / "projects" / project_id
+        sandbox_path.mkdir(parents=True, exist_ok=True)
+    if rows:
+        logger.info("event=app.sandbox_dirs_checked count=%s", len(rows))
 
     await start_worker_pool()
     logger.info(

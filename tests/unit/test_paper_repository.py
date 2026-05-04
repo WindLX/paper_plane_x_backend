@@ -17,7 +17,7 @@ class TestPaperRepository:
         """验证解析结果更新时 images_paths 会被正确序列化并可反序列化读取。"""
         now = datetime.now()
         project = Project(
-            project_id="proj-1",
+            project_id="prj-test-1",
             name="paper-repo-test",
             description=None,
             created_at=now,
@@ -58,6 +58,18 @@ class TestPaperRepository:
 
     def test_list_project_ids_after_link(self, db) -> None:
         """验证 link_to_project 和 list_project_ids 的交互。"""
+        # 先创建项目以满足外键约束
+        for pid in ["proj-a", "proj-b"]:
+            db.insert(
+                "projects",
+                {
+                    "project_id": pid,
+                    "name": f"Project {pid}",
+                    "created_at": datetime.now(),
+                    "updated_at": datetime.now(),
+                    "operation_logs": "[]",
+                },
+            )
         repo = PaperRepository(db)
         paper = repo.create()
 
@@ -179,6 +191,17 @@ class TestPaperRepository:
 
     def test_search_paper_supports_nested_groups_and_project_scope(self, db) -> None:
         """验证统一搜索支持嵌套条件组和 project 作用域。"""
+        # 先创建项目以满足外键约束
+        db.insert(
+            "projects",
+            {
+                "project_id": "proj-a",
+                "name": "Project A",
+                "created_at": datetime.now(),
+                "updated_at": datetime.now(),
+                "operation_logs": "[]",
+            },
+        )
         write_repo = PaperRepository(db)
         query_repo = PaperQueryRepository(db)
         p1 = write_repo.create(
