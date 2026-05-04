@@ -173,7 +173,7 @@ class PaperQueryRepository:
                 group_clause, group_params = self._build_search_group_predicate(
                     query_group
                 )
-                where_clauses.append(group_clause)
+                where_clauses.append(f"({group_clause})")
                 params.extend(group_params)
 
         status_clause, status_params = self._build_search_status_predicate()

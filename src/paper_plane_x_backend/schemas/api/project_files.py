@@ -37,6 +37,10 @@ class ProjectFileWriteRequest(BaseModel):
 
     file_path: str = Field(..., min_length=1, description="相对路径，如 /notes/idea.md")
     content: str = Field(..., description="文件内容")
+    is_dir: bool | None = Field(
+        default=False,
+        description="是否为目录，如果为 true 则 content 字段会被忽略",
+    )
 
 
 class ProjectFileWriteResponse(BaseModel):
@@ -46,6 +50,7 @@ class ProjectFileWriteResponse(BaseModel):
 
     file_path: str = Field(..., description="文件相对路径")
     bytes_written: int = Field(..., description="写入字节数")
+    is_dir: bool = Field(..., description="是否为目录")
 
 
 class ProjectFileDeleteResponse(BaseModel):

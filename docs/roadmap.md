@@ -123,15 +123,10 @@
 
 ---
 
-+ Prompt 优化，工具/cite
-+ 右侧边栏
-  + 文献的 detail
-  + trace 记录
-  + project 文件编辑
-  + project 文件导出
-+ 输入栏
-  + 文献选择
-  + 工具选择
-  + 图片上传
+## 下一阶段
+
+现在核心的 feature 都开发完毕了
+
++ SKILL 的实现
 + 消息的刷新/分支/编辑/删除
-+ hitl 测试
++ debug

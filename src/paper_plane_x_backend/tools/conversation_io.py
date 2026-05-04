@@ -36,12 +36,13 @@ def _build_project_file_shared_guides() -> dict[str, str]:
     }
 
 
-def resolve_sandbox_path(project_id: str, file_path: str) -> Path:
+def resolve_sandbox_path(project_id: str, file_path: str, is_dir: bool = False) -> Path:
     """解析并验证文件路径，确保不逃逸沙箱.
 
     Args:
         project_id: 项目 ID
         file_path: 相对路径（以 / 开头表示项目根目录）
+        is_dir: 是否为目录
 
     Returns:
         Path: 绝对路径
@@ -68,8 +69,12 @@ def resolve_sandbox_path(project_id: str, file_path: str) -> Path:
     if not str(target).startswith(str(resolved_root)):
         raise ValueError(f"Path escapes sandbox: {file_path}")
 
+    # 检查是否为空目录
+    if target.exists() and target.is_dir():
+        return target
+
     # 检查扩展名
-    if target.suffix.lower() not in _ALLOWED_EXTENSIONS:
+    if target.suffix.lower() not in _ALLOWED_EXTENSIONS and not is_dir:
         raise ValueError(
             f"File extension '{target.suffix}' not allowed. Allowed: {', '.join(_ALLOWED_EXTENSIONS)}"
         )
@@ -179,11 +184,9 @@ def read_project_file_lines(
         if start_line < 1 or resolved_end_line < start_line:
             return {"error": "Invalid line range"}
         if start_line > total_lines:
-            return {
-                "error": f"start_line out of range: {start_line} > {total_lines}"
-            }
+            return {"error": f"start_line out of range: {start_line} > {total_lines}"}
 
-        selected = []
+        selected: list[dict[str, Any]] = []
         for index in range(start_line, min(resolved_end_line, total_lines) + 1):
             selected.append(
                 {

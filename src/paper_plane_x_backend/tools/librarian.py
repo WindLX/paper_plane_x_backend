@@ -33,6 +33,7 @@ def _build_librarian_tool_shared_guides() -> dict[str, str]:
             [
                 "query_expr 使用括号、AND、OR 组织条件。",
                 "文本字段统一使用 CONTAINS，例如 (meta.title CONTAINS transformer)。",
+                '如果要检索的文本字段包含空格或特殊字符，请使用双引号括起来，例如 (meta.abstract CONTAINS "deep learning")。',
                 "年份仅支持 year / meta.year 的 BETWEEN，例如 (meta.year BETWEEN [2020, 2025])。",
                 "搜索会自动过滤 extraction / fact check 状态不合格的论文。",
             ]

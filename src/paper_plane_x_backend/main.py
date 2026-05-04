@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 from fastapi.templating import Jinja2Templates
 
 from paper_plane_x_backend.api.routers import (
@@ -195,11 +195,6 @@ app.router.lifespan_context = lifespan
 async def health_check():
     """健康检查接口."""
     return {"status": "ok", "app_name": settings.app_name}
-
-
-@app.get("/", include_in_schema=False)
-async def root_redirect() -> RedirectResponse:
-    return RedirectResponse(url="/projects", status_code=307)
 
 
 @app.get("/{resource_path:path}", include_in_schema=False)

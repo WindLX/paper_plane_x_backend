@@ -158,14 +158,14 @@ def read_project_sandbox_file(
 @router.put(
     "/content",
     response_model=ProjectFileWriteResponse,
-    summary="写入项目沙箱文件",
+    summary="写入项目沙箱文件或者创建目录",
 )
 def write_project_sandbox_file(
     db: DBDep,
     project_id: str,
     request: ProjectFileWriteRequest,
 ) -> ProjectFileWriteResponse:
-    """写入或覆盖项目沙箱中的文件.
+    """写入或覆盖项目沙箱中的文件或者创建目录.
 
     Args:
         project_id: 项目 ID
@@ -176,22 +176,29 @@ def write_project_sandbox_file(
         ProjectFileWriteResponse: 写入结果
     """
     _ensure_project_exists(db, project_id)
+    is_dir = request.is_dir or False
     try:
-        target = resolve_sandbox_path(project_id, request.file_path)
+        target = resolve_sandbox_path(project_id, request.file_path, is_dir)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    bytes_written = target.write_text(request.content, encoding="utf-8")
+    if is_dir:
+        target.mkdir(exist_ok=True)
+        bytes_written = 0
+    else:
+        bytes_written = target.write_text(request.content, encoding="utf-8")
     logger.info(
-        "event=project_file.write project_id=%s file_path=%s bytes=%s",
+        "event=project_file.write project_id=%s file_path=%s bytes=%s is_dir=%s",
         project_id,
         request.file_path,
         bytes_written,
+        is_dir,
     )
     return ProjectFileWriteResponse(
         file_path=request.file_path,
         bytes_written=bytes_written,
+        is_dir=is_dir,
     )
 
 
