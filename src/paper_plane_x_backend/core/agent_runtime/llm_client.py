@@ -5,6 +5,7 @@
 
 import logging
 from collections.abc import AsyncIterator
+from time import perf_counter
 from typing import Any, Literal, Protocol, TypeVar, cast
 
 from litellm import acompletion  # pyright: ignore[reportUnknownVariableType]
@@ -433,15 +434,40 @@ class LLMClient:
         request["stream_options"] = {"include_usage": True}
 
         logger.debug(
-            "event=llm.stream_request model=%s message_count=%s tool_count=%s",
+            "event=llm.stream_request model=%s provider=%s base_url=%s message_count=%s tool_count=%s timeout=%s",
             request["model"],
+            request.get("custom_llm_provider"),
+            request.get("base_url"),
             len(messages),
             0 if tools is None else len(tools),
+            request.get("timeout"),
         )
 
-        response = await acompletion(**request)
+        request_started_at = perf_counter()
+        try:
+          response = await acompletion(**request)
+        except Exception:
+            logger.exception(
+                "event=llm.stream_request_failed model=%s provider=%s base_url=%s message_count=%s tool_count=%s elapsed_ms=%.1f",
+                request["model"],
+                request.get("custom_llm_provider"),
+                request.get("base_url"),
+                len(messages),
+                0 if tools is None else len(tools),
+                (perf_counter() - request_started_at) * 1000,
+            )
+            raise
+
+        request_ready_elapsed_ms = (perf_counter() - request_started_at) * 1000
+        logger.debug(
+            "event=llm.stream_response_ready model=%s provider=%s elapsed_ms=%.1f",
+            request["model"],
+            request.get("custom_llm_provider"),
+            request_ready_elapsed_ms,
+        )
         last_model: str | None = None
         last_usage: dict[str, Any] = {}
+        first_chunk_elapsed_ms: float | None = None
 
         # 流式 tool_calls 需要按 index 累积
         indexed_tool_calls: dict[int, dict[str, Any]] = {}
@@ -464,107 +490,132 @@ class LLMClient:
             choices: list[_ChoiceLike]
             model: object
 
-        async for chunk in cast(AsyncIterator[_ChunkLike], response):
-            chunk_index += 1
-            chunk_model = chunk.model
-            last_model = chunk_model if isinstance(chunk_model, str) else last_model
-
-            # 提取 usage（stream_options 开启后最后一个 chunk 会携带）
-            raw_usage = getattr(chunk, "usage", None)
-            chunk_usage = self._normalize_usage(raw_usage)
-            if chunk_usage:
-                last_usage = chunk_usage
-
-            choice_count = len(chunk.choices)
-            finish_reason = None
-            if chunk.choices:
-                finish_reason = getattr(chunk.choices[0], "finish_reason", None)
-            usage_keys = sorted(chunk_usage.keys())
-
-            if chunk_index % 10 == 0:
-                logger.debug(
-                    "event=llm.stream_chunk_summary model=%s chunk_index=%s choices_len=%s finish_reason=%s has_usage=%s usage_type=%s usage_keys=%s",
-                    last_model or request["model"],
-                    chunk_index,
-                    choice_count,
-                    finish_reason,
-                    bool(chunk_usage),
-                    type(raw_usage).__name__ if raw_usage is not None else None,
-                    usage_keys,
-                )
-            # if raw_usage is not None or finish_reason is not None:
-            #     logger.debug(
-            #         "event=llm.stream_chunk_probe model=%s chunk_index=%s raw_usage_repr=%r normalized_usage=%s finish_reason=%s",
-            #         last_model or request["model"],
-            #         chunk_index,
-            #         raw_usage,
-            #         chunk_usage,
-            #         finish_reason,
-            #     )
-
-            if not chunk.choices:
-                if chunk_usage:
+        try:
+            async for chunk in cast(AsyncIterator[_ChunkLike], response):
+                chunk_index += 1
+                if first_chunk_elapsed_ms is None:
+                    first_chunk_elapsed_ms = (
+                        perf_counter() - request_started_at
+                    ) * 1000
                     logger.debug(
-                        "event=llm.stream_usage_chunk model=%s usage=%s",
+                        "event=llm.stream_first_chunk model=%s provider=%s elapsed_ms=%.1f",
+                        request["model"],
+                        request.get("custom_llm_provider"),
+                        first_chunk_elapsed_ms,
+                    )
+                chunk_model = chunk.model
+                last_model = chunk_model if isinstance(chunk_model, str) else last_model
+
+                # 提取 usage（stream_options 开启后最后一个 chunk 会携带）
+                raw_usage = getattr(chunk, "usage", None)
+                chunk_usage = self._normalize_usage(raw_usage)
+                if chunk_usage:
+                    last_usage = chunk_usage
+
+                choice_count = len(chunk.choices)
+                finish_reason = None
+                if chunk.choices:
+                    finish_reason = getattr(chunk.choices[0], "finish_reason", None)
+                usage_keys = sorted(chunk_usage.keys())
+
+                if chunk_index % 10 == 0:
+                    logger.debug(
+                        "event=llm.stream_chunk_summary model=%s chunk_index=%s choices_len=%s finish_reason=%s has_usage=%s usage_type=%s usage_keys=%s",
                         last_model or request["model"],
-                        chunk_usage,
+                        chunk_index,
+                        choice_count,
+                        finish_reason,
+                        bool(chunk_usage),
+                        type(raw_usage).__name__ if raw_usage is not None else None,
+                        usage_keys,
                     )
+
+                if not chunk.choices:
+                    if chunk_usage:
+                        logger.debug(
+                            "event=llm.stream_usage_chunk model=%s usage=%s",
+                            last_model or request["model"],
+                            chunk_usage,
+                        )
+                        yield LLMStreamChunk(
+                            model=last_model,
+                            usage=chunk_usage,
+                        )
+                    continue
+
+                choice = chunk.choices[0]
+                delta = choice.delta
+
+                content_delta = getattr(delta, "content", None)
+                if isinstance(content_delta, str):
+                    content_buffer += content_delta
+
+                reasoning_delta = getattr(delta, "reasoning_content", None)
+                if isinstance(reasoning_delta, str):
+                    reasoning_buffer += reasoning_delta
+
+                # 累积流式 tool_calls
+                raw_tcs = getattr(delta, "tool_calls", None)
+                if isinstance(raw_tcs, list):
+                    for tc in cast(list[Any], raw_tcs):
+                        idx = getattr(tc, "index", None)
+                        if isinstance(idx, int):
+                            entry = indexed_tool_calls.setdefault(idx, {})
+                            if not entry:
+                                entry["id"] = getattr(tc, "id", None) or ""
+                                entry["type"] = "function"
+                                entry["function"] = {"name": "", "arguments": ""}
+                            func_delta = getattr(tc, "function", None)
+                            if func_delta:
+                                name_part = getattr(func_delta, "name", None)
+                                if isinstance(name_part, str):
+                                    entry["function"]["name"] += name_part
+                                args_part = getattr(func_delta, "arguments", None)
+                                if isinstance(args_part, str):
+                                    entry["function"]["arguments"] += args_part
+
+                is_finished = choice.finish_reason is not None
+
+                if is_finished and indexed_tool_calls:
+                    sorted_tcs = [
+                        indexed_tool_calls[i] for i in sorted(indexed_tool_calls.keys())
+                    ]
                     yield LLMStreamChunk(
+                        content_delta=content_delta,
+                        reasoning_content_delta=reasoning_delta,
+                        tool_calls=self._parse_stream_tool_calls(sorted_tcs),
                         model=last_model,
-                        usage=chunk_usage,
+                        is_finished=True,
+                        usage=last_usage,
                     )
-                continue
+                else:
+                    yield LLMStreamChunk(
+                        content_delta=content_delta,
+                        reasoning_content_delta=reasoning_delta,
+                        model=last_model,
+                        is_finished=is_finished,
+                        usage=chunk_usage or (last_usage if is_finished else {}),
+                    )
+        except Exception:
+            logger.exception(
+                "event=llm.stream_iteration_failed model=%s provider=%s chunk_index=%s first_chunk_elapsed_ms=%s total_elapsed_ms=%.1f",
+                request["model"],
+                request.get("custom_llm_provider"),
+                chunk_index,
+                None if first_chunk_elapsed_ms is None else round(first_chunk_elapsed_ms, 1),
+                (perf_counter() - request_started_at) * 1000,
+            )
+            raise
 
-            choice = chunk.choices[0]
-            delta = choice.delta
-
-            content_delta = getattr(delta, "content", None)
-            if isinstance(content_delta, str):
-                content_buffer += content_delta
-
-            reasoning_delta = getattr(delta, "reasoning_content", None)
-            if isinstance(reasoning_delta, str):
-                reasoning_buffer += reasoning_delta
-
-            # 累积流式 tool_calls
-            raw_tcs = getattr(delta, "tool_calls", None)
-            if isinstance(raw_tcs, list):
-                for tc in cast(list[Any], raw_tcs):
-                    idx = getattr(tc, "index", None)
-                    if isinstance(idx, int):
-                        entry = indexed_tool_calls.setdefault(idx, {})
-                        if not entry:
-                            entry["id"] = getattr(tc, "id", None) or ""
-                            entry["type"] = "function"
-                            entry["function"] = {"name": "", "arguments": ""}
-                        func_delta = getattr(tc, "function", None)
-                        if func_delta:
-                            name_part = getattr(func_delta, "name", None)
-                            if isinstance(name_part, str):
-                                entry["function"]["name"] += name_part
-                            args_part = getattr(func_delta, "arguments", None)
-                            if isinstance(args_part, str):
-                                entry["function"]["arguments"] += args_part
-
-            is_finished = choice.finish_reason is not None
-
-            if is_finished and indexed_tool_calls:
-                sorted_tcs = [
-                    indexed_tool_calls[i] for i in sorted(indexed_tool_calls.keys())
-                ]
-                yield LLMStreamChunk(
-                    content_delta=content_delta,
-                    reasoning_content_delta=reasoning_delta,
-                    tool_calls=self._parse_stream_tool_calls(sorted_tcs),
-                    model=last_model,
-                    is_finished=True,
-                    usage=last_usage,
-                )
-            else:
-                yield LLMStreamChunk(
-                    content_delta=content_delta,
-                    reasoning_content_delta=reasoning_delta,
-                    model=last_model,
-                    is_finished=is_finished,
-                    usage=chunk_usage or (last_usage if is_finished else {}),
-                )
+        logger.debug(
+            "event=llm.stream_completed model=%s provider=%s chunk_count=%s first_chunk_elapsed_ms=%s total_elapsed_ms=%.1f content_chars=%s reasoning_chars=%s tool_call_count=%s usage_keys=%s",
+            last_model or request["model"],
+            request.get("custom_llm_provider"),
+            chunk_index,
+            None if first_chunk_elapsed_ms is None else round(first_chunk_elapsed_ms, 1),
+            (perf_counter() - request_started_at) * 1000,
+            len(content_buffer),
+            len(reasoning_buffer),
+            len(indexed_tool_calls),
+            sorted(last_usage.keys()),
+        )
