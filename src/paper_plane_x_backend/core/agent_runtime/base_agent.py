@@ -56,7 +56,7 @@ class BaseAgent:
         tools: list[Tool] | None = None,
         max_steps: int = 10,
         save_trace: bool = True,
-        short_memory_window: int = 50,
+        short_memory_window: int = 99999999,
         llm_config: LLMConfig | None = None,
         agent_name: str | None = None,
         tool_context: dict[str, Any] | None = None,
@@ -82,8 +82,10 @@ class BaseAgent:
             for tool in tools:
                 self.tool_registry.register(tool)
 
-        rendered_system_prompt = self.tool_registry.inject_shared_guide_into_system_prompt(
-            system_prompt or ""
+        rendered_system_prompt = (
+            self.tool_registry.inject_shared_guide_into_system_prompt(
+                system_prompt or ""
+            )
         )
 
         if llm_config is None:
@@ -92,9 +94,12 @@ class BaseAgent:
                 "Please configure the agent's LLM settings first."
             )
         self.llm = LLMClient.from_config(llm_config)
+        resolved_short_memory_window = llm_config.short_memory_window
+        if short_memory_window != 99999999:
+            resolved_short_memory_window = short_memory_window
         self.memory = MemoryManager(
             system_prompt=rendered_system_prompt,
-            short_memory_window=short_memory_window,
+            short_memory_window=resolved_short_memory_window,
             is_vlm=llm_config.is_vlm,
         )
 

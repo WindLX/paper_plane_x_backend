@@ -143,7 +143,7 @@ class NormalAgentRunner:
                     response = await self.agent.llm.generate(messages)
 
                 self.agent.memory.append_assistant_message(
-                    content=None if response.tool_calls else response.content,
+                    content=response.content,
                     name=self.agent.agent_name,
                     tool_calls=response.tool_calls or None,
                     reasoning_content=response.reasoning_content,
@@ -175,7 +175,7 @@ class NormalAgentRunner:
                     for tool_call in response.tool_calls:
                         tool_msg = await self.agent.tool_registry.execute_tool_call(
                             tool_call,
-                            context=tool_ctx,
+                            runtime_context=tool_ctx,
                         )
                         self.agent.memory.append_tool_message(tool_msg)
                     continue
@@ -400,7 +400,7 @@ class NormalAgentRunner:
 
             self.agent.ensure_not_cancelled()
             self.agent.memory.append_assistant_message(
-                content=None if final_tool_calls else full_content,
+                content=full_content or None,
                 name=self.agent.agent_name,
                 tool_calls=final_tool_calls or None,
                 reasoning_content=full_reasoning or None,
@@ -478,7 +478,7 @@ class NormalAgentRunner:
             self.agent.ensure_not_cancelled()
             tool_msg = await self.agent.tool_registry.execute_tool_call(
                 tool_call,
-                context=tool_ctx,
+                runtime_context=tool_ctx,
             )
             self.agent.memory.append_tool_message(tool_msg)
             yield AgentStreamChunk(

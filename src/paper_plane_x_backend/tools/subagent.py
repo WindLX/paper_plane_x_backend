@@ -30,13 +30,19 @@ logger = logging.getLogger(__name__)
         "\n"
         "\n注意：子 Agent 没有调用 subagent 的能力，因此不会引发递归。"
     ),
-    context_params={"project_id": "project_id"},
+    context_params={
+        "project_id": "project_id",
+        "caller": "_caller_agent_name",
+        "caller_id": "_caller_trace_id",
+    },
 )
 async def delegate_to_subagent(
     task: str,
     context: str | None = None,
     *,
     project_id: str,
+    caller: str | None = None,
+    caller_id: str | None = None,
 ) -> dict[str, Any]:
     """创建 SubAgent 并执行委派任务."""
     logger.info(
@@ -49,6 +55,8 @@ async def delegate_to_subagent(
         project_id=project_id,
         task=task,
         context=context,
+        caller=caller,
+        caller_id=caller_id,
     )
     try:
         result = await sub.run()

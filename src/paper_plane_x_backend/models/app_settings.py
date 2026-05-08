@@ -56,6 +56,11 @@ class LLMConfig(BaseModel):
         default=False,
         description="是否为视觉模型（启用多模态消息处理）",
     )
+    short_memory_window: int = Field(
+        default=99999999,
+        ge=1,
+        description="短期记忆窗口大小（保留最近多少条交互消息）",
+    )
 
 
 class AgentLLMConfigEntry(BaseModel):
@@ -76,6 +81,11 @@ class AgentLLMConfigEntry(BaseModel):
         default=None, description="额外请求体参数"
     )
     is_vlm: bool = Field(default=False, description="是否为视觉模型")
+    short_memory_window: int = Field(
+        default=99999999,
+        ge=1,
+        description="短期记忆窗口大小（保留最近多少条交互消息）",
+    )
 
 
 class AgentLLMConfigs(BaseModel):

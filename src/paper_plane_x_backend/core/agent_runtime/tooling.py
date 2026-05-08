@@ -68,7 +68,7 @@ class Tool(BaseModel):
     async def execute(
         self,
         *,
-        context: dict[str, Any] | None = None,
+        runtime_context: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> Any:
         if self.function is None:
@@ -79,11 +79,11 @@ class Tool(BaseModel):
             merged_kwargs[key] = value
 
         for param_name, context_key in self.context_params.items():
-            if context is None or context_key not in context:
+            if runtime_context is None or context_key not in runtime_context:
                 raise RuntimeError(
                     f"Tool '{self.name}' requires hidden context key '{context_key}'"
                 )
-            merged_kwargs[param_name] = context[context_key]
+            merged_kwargs[param_name] = runtime_context[context_key]
 
         if inspect.iscoroutinefunction(self.function):
             return await self.function(**merged_kwargs)
@@ -169,7 +169,7 @@ class ToolRegistry:
         self,
         tool_call: ToolCallMessage,
         *,
-        context: dict[str, Any] | None = None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> ToolMessage:
         """按 ToolCall 执行工具并返回标准 ToolMessage。"""
         tool_id = tool_call.id
@@ -201,7 +201,7 @@ class ToolRegistry:
             )
 
         try:
-            result = await tool.execute(context=context, **arguments)
+            result = await tool.execute(runtime_context=runtime_context, **arguments)
             if isinstance(result, str):
                 content = result
             elif isinstance(result, BaseModel):

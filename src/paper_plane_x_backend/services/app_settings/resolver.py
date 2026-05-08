@@ -22,6 +22,7 @@ class AgentConfigResponsePayload(TypedDict):
     reasoning_effort: str | None
     extra_body: dict[str, Any] | None
     is_vlm: bool
+    short_memory_window: int
     effective_model: str | None
     effective_base_url: str | None
 
@@ -81,6 +82,7 @@ def build_agent_config_response(agent_name: str) -> AgentConfigResponsePayload:
             "reasoning_effort": None,
             "extra_body": None,
             "is_vlm": False,
+            "short_memory_window": 99999999,
             "effective_model": None,
             "effective_base_url": None,
         }
@@ -97,6 +99,7 @@ def build_agent_config_response(agent_name: str) -> AgentConfigResponsePayload:
         "reasoning_effort": entry.reasoning_effort,
         "extra_body": entry.extra_body,
         "is_vlm": entry.is_vlm,
+        "short_memory_window": entry.short_memory_window,
         "effective_model": provider.model if provider else None,
         "effective_base_url": provider.base_url if provider else None,
     }

@@ -115,18 +115,6 @@ def messages_to_agent_format(
                 paper_refs = "\n".join(f"- {pid}" for pid in msg.paper_ids)
                 content = f"[用户关注以下文献]\n{paper_refs}\n\n{content}"
             entry = {"role": "user", "content": content}
-        elif msg.message_kind == "assistant_reasoning":
-            entry = {
-                "role": "assistant",
-                "content": "",
-                "reasoning_content": msg.reasoning_content or msg.content or "",
-            }
-        elif msg.message_kind == "assistant_tool_call":
-            entry = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": msg.tool_calls or [],
-            }
         elif msg.message_kind == "tool_result":
             entry = {
                 "role": "tool",
@@ -135,7 +123,12 @@ def messages_to_agent_format(
                 "name": msg.name or "",
             }
         else:
-            entry = {"role": "assistant", "content": msg.content or ""}
+            entry = {"role": "assistant"}
+            entry["content"] = msg.content or ""
+            if msg.reasoning_content is not None:
+                entry["reasoning_content"] = msg.reasoning_content
+            if msg.tool_calls:
+                entry["tool_calls"] = msg.tool_calls
 
         if msg.name:
             entry["name"] = msg.name

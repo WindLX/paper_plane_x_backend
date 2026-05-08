@@ -57,8 +57,15 @@ class AgentLLMConfigResponse(BaseModel):
     timeout: float = Field(default=180.0, description="请求超时时间（秒）")
     thinking_enabled: bool = Field(default=False, description="思考模式")
     reasoning_effort: str | None = Field(default=None, description="推理强度参数")
-    extra_body: dict[str, Any] | None = Field(default=None, description="额外请求体参数")
+    extra_body: dict[str, Any] | None = Field(
+        default=None, description="额外请求体参数"
+    )
     is_vlm: bool = Field(default=False, description="是否为视觉模型")
+    short_memory_window: int = Field(
+        default=99999999,
+        ge=1,
+        description="短期记忆窗口大小",
+    )
 
     # 解析后的有效配置预览
     effective_model: str | None = Field(default=None, description="解析后的模型名称")
@@ -78,8 +85,15 @@ class AgentLLMConfigUpdateRequest(BaseModel):
     timeout: float | None = Field(default=None, description="覆盖请求超时时间（秒）")
     thinking_enabled: bool | None = Field(default=None, description="覆盖思考模式")
     reasoning_effort: str | None = Field(default=None, description="覆盖推理强度")
-    extra_body: dict[str, Any] | None = Field(default=None, description="覆盖额外请求体参数")
+    extra_body: dict[str, Any] | None = Field(
+        default=None, description="覆盖额外请求体参数"
+    )
     is_vlm: bool | None = Field(default=None, description="覆盖是否为视觉模型")
+    short_memory_window: int | None = Field(
+        default=None,
+        ge=1,
+        description="覆盖短期记忆窗口大小",
+    )
 
 
 class ProviderListResponse(BaseModel):

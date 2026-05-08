@@ -25,7 +25,7 @@ class MemoryManager:
         self,
         *,
         system_prompt: str = "",
-        short_memory_window: int = 50,
+        short_memory_window: int = 99999999,
         is_vlm: bool = False,
     ) -> None:
         if short_memory_window <= 0:
@@ -44,7 +44,7 @@ class MemoryManager:
 
     def get_messages(self) -> list[dict[str, Any]]:
         """获取当前用于 LLM 调用的消息（system + 短期记忆窗口）。"""
-        interaction_messages = self._messages[-self.short_memory_window :]
+        interaction_messages = self._get_windowed_interaction_messages()
 
         messages: list[dict[str, Any]] = []
         if self._system_message is not None:
@@ -55,6 +55,32 @@ class MemoryManager:
     def get_interaction_messages(self) -> list[dict[str, Any]]:
         """获取所有交互消息（不含 system prompt）。"""
         return list(self._messages)
+
+    def _get_windowed_interaction_messages(self) -> list[dict[str, Any]]:
+        if len(self._messages) <= self.short_memory_window:
+            return list(self._messages)
+
+        start = len(self._messages) - self.short_memory_window
+        while start > 0 and self._messages[start].get("role") == "tool":
+            start -= 1
+
+        if (
+            start > 0
+            and self._messages[start].get("role") == "assistant"
+            and self._messages[start].get("tool_calls")
+        ):
+            tool_result_index = start + 1
+            while (
+                tool_result_index < len(self._messages)
+                and self._messages[tool_result_index].get("role") == "tool"
+            ):
+                tool_result_index += 1
+            if tool_result_index - start > self.short_memory_window:
+                return list(
+                    self._messages[tool_result_index - self.short_memory_window :]
+                )
+
+        return list(self._messages[start:])
 
     def has_role_message(self, role: str) -> bool:
         """判断当前会话是否存在指定 role 的消息。"""

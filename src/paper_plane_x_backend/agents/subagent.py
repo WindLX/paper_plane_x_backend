@@ -74,6 +74,8 @@ class SubAgent:
         context: str | None = None,
         llm_config: LLMConfig | None = None,
         max_steps: int = 15,
+        caller: str | None = None,
+        caller_id: str | None = None,
     ) -> None:
         self.project_id = project_id
         self.task = task
@@ -89,8 +91,8 @@ class SubAgent:
             llm_config=self.llm_config,
             agent_name=self.agent_name,
             tool_context={"project_id": project_id},
-            caller="SubAgent",
-            caller_id=None,
+            caller=caller,
+            caller_id=caller_id,
         )
 
         # 将任务注入 memory

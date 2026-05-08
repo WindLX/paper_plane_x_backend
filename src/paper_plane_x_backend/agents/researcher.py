@@ -132,11 +132,11 @@ class ResearcherAgent:
         self._agent.memory.reset_memory()
         for msg in messages:
             role = msg.get("role")
-            content = msg.get("content", "")
+            content = msg.get("content")
             if role == "system":
-                self._agent.memory.set_system_prompt(content)
+                self._agent.memory.set_system_prompt(content or "")
             elif role == "user":
-                self._agent.memory.append_user_message({"content": content})
+                self._agent.memory.append_user_message({"content": content or ""})
             elif role == "assistant":
                 tool_calls_raw = msg.get("tool_calls")
                 tool_calls: list[ToolCallMessage] | None = None
@@ -155,7 +155,7 @@ class ResearcherAgent:
                     ToolMessage(
                         tool_call_id=msg.get("tool_call_id", ""),
                         name=msg.get("name", ""),
-                        content=content,
+                        content=content or "",
                     )
                 )
 
