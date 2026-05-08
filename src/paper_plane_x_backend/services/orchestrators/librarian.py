@@ -101,6 +101,7 @@ class LibrarianOrchestrator:
         offset: int,
         sort_by: PaperSortKey,
         sort_order: SortOrder,
+        only_completed: bool = True,
     ) -> tuple[list[str], int]:
         try:
             query_group = (
@@ -116,6 +117,7 @@ class LibrarianOrchestrator:
                 offset=offset,
                 sort_by=sort_by,
                 sort_order=sort_order,
+                only_completed=only_completed,
             )
         except (PaperRepositoryError, LibrarianQueryError) as exc:
             self._raise_repo_error(exc)
@@ -246,16 +248,16 @@ class LibrarianOrchestrator:
         available_count: int = _coerce_int(year_dist_raw.get("available_count"))
         missing_count: int = _coerce_int(year_dist_raw.get("missing_count"))
         outlier_count: int = _coerce_int(year_dist_raw.get("outlier_count"))
-        low_outlier_count: int = _coerce_int(
-            year_dist_raw.get("low_outlier_count")
-        )
-        high_outlier_count: int = _coerce_int(
-            year_dist_raw.get("high_outlier_count")
-        )
+        low_outlier_count: int = _coerce_int(year_dist_raw.get("low_outlier_count"))
+        high_outlier_count: int = _coerce_int(year_dist_raw.get("high_outlier_count"))
         year_dist = YearDistribution(
             available_count=available_count,
             missing_count=missing_count,
-            mean=year_dist_raw.get("mean") if isinstance(year_dist_raw.get("mean"), (int, float)) else None,
+            mean=(
+                year_dist_raw.get("mean")
+                if isinstance(year_dist_raw.get("mean"), (int, float))
+                else None
+            ),
             variance=(
                 year_dist_raw.get("variance")
                 if isinstance(year_dist_raw.get("variance"), (int, float))
@@ -271,8 +273,16 @@ class LibrarianOrchestrator:
                 for year in cast(list[object], year_dist_raw.get("mode_years", []))
                 if isinstance(year, int)
             ],
-            q25=year_dist_raw.get("q25") if isinstance(year_dist_raw.get("q25"), (int, float)) else None,
-            q75=year_dist_raw.get("q75") if isinstance(year_dist_raw.get("q75"), (int, float)) else None,
+            q25=(
+                year_dist_raw.get("q25")
+                if isinstance(year_dist_raw.get("q25"), (int, float))
+                else None
+            ),
+            q75=(
+                year_dist_raw.get("q75")
+                if isinstance(year_dist_raw.get("q75"), (int, float))
+                else None
+            ),
             outlier_count=outlier_count,
             low_outlier_count=low_outlier_count,
             high_outlier_count=high_outlier_count,
@@ -287,9 +297,11 @@ class LibrarianOrchestrator:
         top_tags = [
             TagCount(
                 tag=str(tag_dict.get("tag", "")),
-                count=tag_dict.get("count", 0)
-                if isinstance(tag_dict.get("count"), int)
-                else 0,
+                count=(
+                    tag_dict.get("count", 0)
+                    if isinstance(tag_dict.get("count"), int)
+                    else 0
+                ),
             )
             for t in top_tags_raw
             if isinstance(t, dict)
@@ -297,12 +309,16 @@ class LibrarianOrchestrator:
         ]
 
         stats = GlobalFinderStats(
-            paper_count=stats_raw.get("paper_count", 0)
-            if isinstance(stats_raw.get("paper_count"), int)
-            else 0,
-            top_tags_limit=stats_raw.get("top_tags_limit", 0)
-            if isinstance(stats_raw.get("top_tags_limit"), int)
-            else 0,
+            paper_count=(
+                stats_raw.get("paper_count", 0)
+                if isinstance(stats_raw.get("paper_count"), int)
+                else 0
+            ),
+            top_tags_limit=(
+                stats_raw.get("top_tags_limit", 0)
+                if isinstance(stats_raw.get("top_tags_limit"), int)
+                else 0
+            ),
             year_range=(
                 stats_raw.get("year_range")
                 if isinstance(stats_raw.get("year_range"), str)

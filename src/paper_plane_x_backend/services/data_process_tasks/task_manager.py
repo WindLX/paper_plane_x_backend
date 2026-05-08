@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import MutableMapping
+from collections.abc import Awaitable, Callable, MutableMapping
 from datetime import datetime
 from pathlib import Path
 
@@ -37,6 +37,9 @@ class DataProcessTaskManager:
         state_store: DataProcessTaskStateStore | None = None,
         shutdown_timeout: float = 5.0,
         task_max_seconds: float = 600.0,
+        on_status_change: (
+            Callable[[DataProcessTaskState], Awaitable[None]] | None
+        ) = None,
     ) -> None:
         self.worker_count = max(1, worker_count)
         self._queue: asyncio.Queue[DataProcessQueueTask | None] | None = None
@@ -52,6 +55,19 @@ class DataProcessTaskManager:
         self._shutdown_timeout = max(0.1, shutdown_timeout)
         self._task_max_seconds = max(0.1, task_max_seconds)
         self._task_states_view = TaskStateStoreView(self._state_store)
+        self._on_status_change = on_status_change
+
+    async def _notify_status_change(self, state: DataProcessTaskState) -> None:
+        """如果注册了状态变更回调，则异步调用。"""
+        if self._on_status_change is not None:
+            try:
+                await self._on_status_change(state)
+            except Exception:
+                logger.debug(
+                    "event=task_manager.notify_failed task_id=%s",
+                    state.task_id,
+                    exc_info=True,
+                )
 
     async def _wait_tasks_with_timeout(
         self,
@@ -219,6 +235,7 @@ class DataProcessTaskManager:
             task.task_id,
             task.paper_id,
         )
+        await self._notify_status_change(state)
         return state
 
     def list_tasks(
@@ -280,6 +297,7 @@ class DataProcessTaskManager:
                 running.cancel()
             logger.info("event=task_manager.task_cancel_requested task_id=%s", task_id)
         self._state_store.upsert(state)
+        asyncio.create_task(self._notify_status_change(state))
         return state
 
     async def _worker_loop(self, worker_id: int) -> None:
@@ -308,6 +326,7 @@ class DataProcessTaskManager:
                     worker_id,
                     task.task_id,
                 )
+                await self._notify_status_change(state)
                 self._queue.task_done()
                 continue
 
@@ -320,6 +339,7 @@ class DataProcessTaskManager:
                 task.task_id,
                 task.paper_id,
             )
+            await self._notify_status_change(state)
 
             try:
                 job = asyncio.create_task(self._run_data_process_task(task))
@@ -376,6 +396,7 @@ class DataProcessTaskManager:
                 )
             finally:
                 self._state_store.upsert(state)
+                await self._notify_status_change(state)
                 self._running_jobs.pop(task.task_id, None)
                 self._cancel_requests.discard(task.task_id)
                 if task.cleanup_path and task.cleanup_path.exists():

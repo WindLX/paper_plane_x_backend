@@ -15,6 +15,7 @@ from paper_plane_x_backend.api.routers import (
     conversation,
     conversation_ws,
     data_process,
+    data_process_ws,
     hitl_ws,
     librarian,
     paper,
@@ -66,6 +67,7 @@ app.include_router(data_process.router, prefix="/api/v1")
 app.include_router(settings_router.router, prefix="/api/v1")
 app.include_router(conversation.router, prefix="/api/v1")
 app.include_router(conversation_ws.router, prefix="/api/v1")
+app.include_router(data_process_ws.router, prefix="/api/v1")
 app.include_router(hitl_ws.router, prefix="/api/v1")
 app.include_router(project_files.router, prefix="/api/v1")
 

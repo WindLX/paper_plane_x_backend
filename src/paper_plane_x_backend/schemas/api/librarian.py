@@ -59,9 +59,10 @@ class LibrarianUnifiedSearchRequest(BaseModel):
     sort_order: SortOrder = Field(
         default=SortOrder.DESC, description="排序方向，asc 或 desc"
     )
-
-    # query_expr 不再在 schema 层强制验证语法合法性；
-    # 运行时若 DSL 解析失败会自动退化为简单模式搜索（全字段 CONTAINS）。
+    only_completed: bool = Field(
+        default=True,
+        description="是否仅返回解析完毕的 paper",
+    )
 
 
 class LibrarianUnifiedSearchResponse(BaseModel):

@@ -39,12 +39,13 @@ logger = logging.getLogger(__name__)
         "\n"
         "\n注意：此工具会阻塞等待人类回答，请确保问题表述清晰，不要同时发起多个 ask_human。"
     ),
+    context_params={"project_id": "project_id", "conversation_id": "conversation_id"},
 )
 async def ask_human(
     questions: list[dict[str, Any]],
     *,
     project_id: str,
-    conversation_id: str | None = None,
+    conversation_id: str,
 ) -> dict[str, Any]:
     """向人类提问并等待回答."""
     manager = get_hitl_manager()

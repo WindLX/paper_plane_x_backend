@@ -66,6 +66,7 @@ def run_search_paper(
             offset=request.offset,
             sort_by=request.sort_by,
             sort_order=request.sort_order,
+            only_completed=request.only_completed,
         )
     except LibrarianDomainError as exc:
         _raise_as_http(exc)

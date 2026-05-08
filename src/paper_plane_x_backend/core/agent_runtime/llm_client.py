@@ -480,16 +480,18 @@ class LLMClient:
             if chunk.choices:
                 finish_reason = getattr(chunk.choices[0], "finish_reason", None)
             usage_keys = sorted(chunk_usage.keys())
-            logger.debug(
-                "event=llm.stream_chunk_summary model=%s chunk_index=%s choices_len=%s finish_reason=%s has_usage=%s usage_type=%s usage_keys=%s",
-                last_model or request["model"],
-                chunk_index,
-                choice_count,
-                finish_reason,
-                bool(chunk_usage),
-                type(raw_usage).__name__ if raw_usage is not None else None,
-                usage_keys,
-            )
+
+            if chunk_index % 10 == 0:
+                logger.debug(
+                    "event=llm.stream_chunk_summary model=%s chunk_index=%s choices_len=%s finish_reason=%s has_usage=%s usage_type=%s usage_keys=%s",
+                    last_model or request["model"],
+                    chunk_index,
+                    choice_count,
+                    finish_reason,
+                    bool(chunk_usage),
+                    type(raw_usage).__name__ if raw_usage is not None else None,
+                    usage_keys,
+                )
             # if raw_usage is not None or finish_reason is not None:
             #     logger.debug(
             #         "event=llm.stream_chunk_probe model=%s chunk_index=%s raw_usage_repr=%r normalized_usage=%s finish_reason=%s",

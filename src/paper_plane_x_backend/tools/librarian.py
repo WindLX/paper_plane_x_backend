@@ -136,6 +136,7 @@ def search_paper(
             query_group=query_group,
             limit=limit,
             offset=offset,
+            only_completed=True,
         )
     except (PaperRepositoryError, LibrarianQueryError) as exc:
         return {

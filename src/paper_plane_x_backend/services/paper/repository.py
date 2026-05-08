@@ -157,6 +157,7 @@ class PaperQueryRepository:
         offset: int,
         sort_by: PaperSortKey = PaperSortKey.CREATED_AT,
         sort_order: SortOrder = SortOrder.DESC,
+        only_completed: bool = True,
     ) -> tuple[list[str], int]:
         """统一搜索：可选 project + 组合条件 + 自动质量过滤。"""
         where_clauses: list[str] = []
@@ -176,9 +177,10 @@ class PaperQueryRepository:
                 where_clauses.append(f"({group_clause})")
                 params.extend(group_params)
 
-        status_clause, status_params = self._build_search_status_predicate()
-        where_clauses.append(status_clause)
-        params.extend(status_params)
+        if only_completed:
+            status_clause, status_params = self._build_search_status_predicate()
+            where_clauses.append(status_clause)
+            params.extend(status_params)
 
         where_sql = ""
         if where_clauses:

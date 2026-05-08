@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
         "\n"
         "\n注意：子 Agent 没有调用 subagent 的能力，因此不会引发递归。"
     ),
+    context_params={"project_id": "project_id"},
 )
 async def delegate_to_subagent(
     task: str,
