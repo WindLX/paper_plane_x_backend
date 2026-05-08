@@ -26,6 +26,10 @@ from paper_plane_x_backend.utils.ids import generate_message_id
 AgentMessagePayload: TypeAlias = dict[str, Any]
 
 
+class UserStopRequested(Exception):
+    """Raised when the client requests to stop the running stream."""
+
+
 async def stream_agent_with_cancel(
     agent: ResearcherAgent,
     websocket: WebSocket,
@@ -82,7 +86,7 @@ async def stream_agent_with_cancel(
                         await producer_task
                     except asyncio.CancelledError:
                         pass
-                    raise asyncio.CancelledError("User stopped")
+                    raise UserStopRequested("User stopped")
                 continue
 
         while not chunk_queue.empty():
@@ -114,13 +118,13 @@ def messages_to_agent_format(
         elif msg.message_kind == "assistant_reasoning":
             entry = {
                 "role": "assistant",
-                "content": msg.content or "",
+                "content": "",
                 "reasoning_content": msg.reasoning_content or msg.content or "",
             }
         elif msg.message_kind == "assistant_tool_call":
             entry = {
                 "role": "assistant",
-                "content": msg.content or "",
+                "content": "",
                 "tool_calls": msg.tool_calls or [],
             }
         elif msg.message_kind == "tool_result":
@@ -128,6 +132,7 @@ def messages_to_agent_format(
                 "role": "tool",
                 "content": msg.content or "",
                 "tool_call_id": msg.tool_call_id or "",
+                "name": msg.name or "",
             }
         else:
             entry = {"role": "assistant", "content": msg.content or ""}
@@ -241,6 +246,8 @@ class ConversationTurnStreamSession:
         *,
         trace_target: ConversationMessage | None,
         trace_ids: list[str],
+        completion_status: str = "completed",
+        stopped_by_user: bool = False,
     ) -> None:
         """发送 turn 完成事件."""
         await self.websocket.send_json(
@@ -253,6 +260,8 @@ class ConversationTurnStreamSession:
                 ),
                 "sequence_no": trace_target.sequence_no if trace_target else None,
                 "trace_ids": trace_ids,
+                "completion_status": completion_status,
+                "stopped_by_user": stopped_by_user,
             }
         )
 
@@ -300,7 +309,7 @@ class ConversationTurnStreamSession:
             self.active_reasoning_msg = self._create_event_message(
                 role="assistant",
                 message_kind="assistant_reasoning",
-                content_value="",
+                content_value=None,
                 name=self.agent.runtime_name,
                 reasoning_content="",
             )
@@ -312,7 +321,7 @@ class ConversationTurnStreamSession:
         self.message_repo.update_fields(
             self.active_reasoning_msg.message_id,
             {
-                "content": new_reasoning,
+                "content": None,
                 "reasoning_content": new_reasoning,
             },
         )
@@ -378,8 +387,8 @@ class ConversationTurnStreamSession:
         tool_call_msg = self._create_event_message(
             role="assistant",
             message_kind="assistant_tool_call",
-            content_value=tool_call_name,
-            name=tool_call_name,
+            content_value=None,
+            name=self.agent.runtime_name,
             tool_calls=tool_call_payload,
         )
         await self.websocket.send_json(

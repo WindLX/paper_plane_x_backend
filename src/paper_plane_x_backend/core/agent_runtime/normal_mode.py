@@ -143,7 +143,7 @@ class NormalAgentRunner:
                     response = await self.agent.llm.generate(messages)
 
                 self.agent.memory.append_assistant_message(
-                    content=response.content,
+                    content=None if response.tool_calls else response.content,
                     name=self.agent.agent_name,
                     tool_calls=response.tool_calls or None,
                     reasoning_content=response.reasoning_content,
@@ -400,7 +400,7 @@ class NormalAgentRunner:
 
             self.agent.ensure_not_cancelled()
             self.agent.memory.append_assistant_message(
-                content=full_content,
+                content=None if final_tool_calls else full_content,
                 name=self.agent.agent_name,
                 tool_calls=final_tool_calls or None,
                 reasoning_content=full_reasoning or None,

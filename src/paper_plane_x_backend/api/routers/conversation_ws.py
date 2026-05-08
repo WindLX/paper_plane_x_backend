@@ -19,6 +19,7 @@ from paper_plane_x_backend.services.conversation.repository import (
 )
 from paper_plane_x_backend.services.conversation.streaming import (
     ConversationTurnStreamSession,
+    UserStopRequested,
     messages_to_agent_format,
     stream_agent_with_cancel,
 )
@@ -220,6 +221,20 @@ async def conversation_websocket(
                 try:
                     async for chunk in stream_agent_with_cancel(agent, websocket):
                         await turn_session.handle_chunk(chunk)
+                except UserStopRequested:
+                    logger.info(
+                        "event=conversation_ws.user_stopped conversation_id=%s",
+                        conversation_id,
+                    )
+                    convo_repo.touch(conversation_id)
+                    trace_target = turn_session.finalize(agent.trace_ids)
+                    await turn_session.send_stream_complete(
+                        trace_target=trace_target,
+                        trace_ids=agent.trace_ids,
+                        completion_status="stopped",
+                        stopped_by_user=True,
+                    )
+                    continue
                 except asyncio.CancelledError:
                     logger.info(
                         "event=conversation_ws.user_cancelled conversation_id=%s",
@@ -253,6 +268,8 @@ async def conversation_websocket(
                         "type": "stream_complete",
                         "message_id": None,
                         "trace_ids": [],
+                        "completion_status": "stopped",
+                        "stopped_by_user": True,
                     }
                 )
 

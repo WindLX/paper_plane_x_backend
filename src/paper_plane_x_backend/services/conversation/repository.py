@@ -284,6 +284,7 @@ class ConversationMessageRepository:
                     role=cast(Literal["assistant", "tool"], message.role),
                     message_kind=message.message_kind,
                     content=message.content,
+                    reasoning_content=message.reasoning_content,
                     name=message.name,
                     tool_calls=message.tool_calls,
                     tool_call_id=message.tool_call_id,
