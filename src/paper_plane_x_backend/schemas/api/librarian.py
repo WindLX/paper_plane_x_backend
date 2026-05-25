@@ -106,3 +106,41 @@ class LibrarianQueryBuilderResponse(BaseModel):
         ...,
         description="对生成查询的简要说明",
     )
+
+
+class LibrarianMatrixRequest(BaseModel):
+    """按论文和字段路径读取结构化矩阵。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    paper_ids: list[str] = Field(..., min_length=1, description="论文 ID 列表")
+    field_paths: list[str] = Field(..., min_length=1, description="字段路径列表")
+
+
+class LibrarianMatrixResponse(BaseModel):
+    """结构化矩阵响应。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    paper_ids: list[str]
+    field_paths: list[str]
+    items: dict[str, dict[str, object]]
+
+
+class LibrarianDeepDiveRequest(BaseModel):
+    """单篇论文深度分析请求。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    paper_id: str = Field(..., min_length=1, description="论文 ID")
+    question: str = Field(default="", description="需要深挖的问题")
+
+
+class LibrarianDeepDiveResponse(BaseModel):
+    """单篇论文深度分析响应。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    paper_id: str
+    question: str
+    answer: object

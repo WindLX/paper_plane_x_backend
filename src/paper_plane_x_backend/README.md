@@ -1,53 +1,123 @@
-# paper_plane_x_backend 包说明
+# `paper_plane_x_backend` Package Guide
 
-该目录是后端核心代码包，按职责分层组织。
+该目录是后端核心代码包，按 API、业务编排、服务、Agent runtime、tools、schemas 分层组织。
 
 ## 目录结构
 
-- api/routers
-	- FastAPI 路由（project、paper、data_process、hitl）
-- services/orchestrators
-	- 业务编排入口（project、paper、data_process）
-- services
-	- 数据访问与任务管理（paper/repository、database、data_process_tasks）
-- core/agent_runtime
-	- Agent 运行时（BaseAgent、LLMClient、tooling、memory）
-- schemas
-	- API 与 Agent I/O schema
-- tools
-	- Agent 可调用工具
+- `main.py`
+  - FastAPI app 入口，注册 routers，管理 lifespan。
+- `api/routers/`
+  - HTTP / WebSocket 路由：project、paper、project_files、librarian、data_process、conversation、hitl_ws、agent_traces、settings。
+- `api/dependencies.py`
+  - FastAPI 依赖注入，主要提供数据库和 task manager。
+- `services/orchestrators/`
+  - 业务编排入口：project、paper、data_process、librarian。
+- `services/`
+  - 数据库、repository、任务管理、PDF 解析、Librarian 服务、Conversation、HITL、settings。
+- `core/agent_runtime/`
+  - BaseAgent、LLMClient、tooling、memory、stream types、输出校验。
+- `agents/`
+  - ResearcherAgent、SubAgent、DataProcessorAgentGroup、QueryBuilder、GlobalFinder、DeepDiver。
+- `tools/`
+  - Agent 可调用工具：conversation_io、librarian、paper、hitl、subagent。
+- `schemas/`
+  - API schemas 与 Agent I/O schemas。
+- `models/`
+  - 核心领域模型与枚举。
+- `cli.py`
+  - `ppx` HTTP CLI，供外部 agent 和脚本调用后端能力。
 
-## Data Process 主链路
+## 核心链路
 
-1. `POST /api/v1/papers` 接收上传请求并创建/复用论文。
-2. `orchestrators/paper.py` 触发 `orchestrators/data_process.py` 入队任务。
-3. `data_process_tasks/task_manager.py` 持久化任务并由 worker 池执行。
-4. `paper/` 目录下 `parser.py`、`processor.py`、`repository.py` 分别执行解析、提取编排与数据访问。
+### Data Process
+
+1. `POST /api/v1/papers` 接收 PDF 上传。
+2. `PaperOrchestrator` 创建或复用 paper，启动 data-process task。
+3. `DataProcessTaskManager` 持久化任务并交给 worker pool。
+4. `PaperParser` 生成 Markdown / 图片。
+5. `DataProcessorAgentGroup` 执行 Extraction / Analysis / Fact Check。
+6. `PaperProcessor` 写回 `papers` 表。
 
 关键文件：
 
-- services/orchestrators/paper.py
-- services/orchestrators/data_process.py
-- services/orchestrators/project.py
-- services/data_process_tasks/
-- services/paper/
-- api/routers/paper.py
-- api/routers/data_process.py
+- `api/routers/paper.py`
+- `api/routers/data_process.py`
+- `services/orchestrators/paper.py`
+- `services/orchestrators/data_process.py`
+- `services/data_process_tasks/`
+- `services/paper/parser.py`
+- `services/paper/processor.py`
+- `services/paper/repository.py`
+
+### Researcher Conversation
+
+1. REST 创建 conversation。
+2. WebSocket `/api/v1/ws/conversations/{conversation_id}` 接收用户消息。
+3. `ResearcherAgent` 恢复 conversation memory。
+4. `BaseAgent` 执行 LLM/tool-call 循环。
+5. 流式返回文本、reasoning、tool_call、complete 事件。
+6. 消息和 trace ids 持久化。
+
+关键文件：
+
+- `api/routers/conversation.py`
+- `api/routers/conversation_ws.py`
+- `services/conversation/`
+- `agents/researcher.py`
+- `core/agent_runtime/normal_mode.py`
+
+### Librarian
+
+1. `search` 用 DSL 返回 `paper_ids`。
+2. `matrix` 按 `paper_ids` 和 `field_paths` 拉取结构化字段。
+3. `global-finder` 聚合项目论文概览和统计。
+4. `deep-dive` 调用 DeepDiverAgent 回答单篇论文问题。
+
+关键文件：
+
+- `api/routers/librarian.py`
+- `services/orchestrators/librarian.py`
+- `services/librarian/`
+- `tools/librarian.py`
+- `schemas/api/librarian.py`
+
+### External Agent Integration
+
+`ppx` CLI 是外部 agent 的稳定调用面：
+
+- `ppx context show/set`
+- `ppx project global-finder`
+- `ppx librarian search/matrix/deep-dive`
+- `ppx files list/read/lines/find/write/replace-lines/replace-text/patch/delete`
+- `ppx paper-note get/write/delete`
+
+Skill 目录：
+
+- `skills/paper-plane-x-researcher/SKILL.md`
+- `skills/paper-plane-x-researcher/references/tool-guide.md`
 
 ## 代码约定
 
-- 不使用 ORM，统一走 SQLite 原生封装。
-- 业务错误在服务层收敛，路由层负责 HTTP 映射。
+- API 层保持薄：参数校验、依赖注入、HTTP 错误映射。
+- 业务流程放 orchestrator。
+- 数据访问放 repository，不使用 ORM。
+- Agent tool 的隐藏上下文使用 `runtime_context` 注入。
 - Agent 输出必须通过 schema 校验。
-- 关键流程日志统一采用 `event=` 字段。
+- 关键流程日志使用 `event=` 字段。
+- 新 API、新 CLI、新 tool 需要同步测试和文档。
 
 ## Console 前端集成
 
-- 前端构建产物默认输出到：`paper_plane_x_backend/data/console`
-- 构建命令（在 frontend 目录）：
-	- `pnpm build:console`
-- 快捷命令（在 backend 目录）：
-	- `./scripts/build_console.sh`
-- 后端会自动将构建产物挂载到：
-	- `/`
-	- 并支持 SPA history fallback（如 `/tasks/:id`）
+后端会尝试托管已构建的前端 console：
+
+1. `settings.api.console_dist_dir`
+2. `../paper_plane_x_frontend/dist`
+
+构建快捷命令：
+
+```bash
+./scripts/build_console.sh
+```
+
+如果没有构建产物，根路径会返回 `404 Console build not found`，API 不受影响。
+

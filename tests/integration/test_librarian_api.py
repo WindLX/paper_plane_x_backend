@@ -180,6 +180,54 @@ class TestLibrarianAPI:
         payload = response.json()
         assert payload["detail"]["code"] == "invalid_field"
 
+    def test_matrix_endpoint_returns_field_matrix(
+        self, client: TestClient, db: Database
+    ) -> None:
+        _insert_paper(db, "paper-matrix-1")
+
+        response = client.post(
+            "/api/v1/librarian/matrix",
+            json={
+                "paper_ids": ["paper-matrix-1"],
+                "field_paths": ["quick_scan.verdict"],
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["paper_ids"] == ["paper-matrix-1"]
+        assert payload["items"]["paper-matrix-1"]["quick_scan.verdict"] == "include"
+
+    async def test_deep_dive_endpoint_returns_agent_result(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def fake_deep_dive(**kwargs):
+            return {
+                "result": {
+                    "is_answered": True,
+                    "answer": "focused answer",
+                    "citations": [{"paper_id": kwargs["paper_id"]}],
+                }
+            }
+
+        monkeypatch.setattr(
+            "paper_plane_x_backend.api.routers.librarian.deep_dive",
+            fake_deep_dive,
+        )
+
+        response = client.post(
+            "/api/v1/librarian/deep-dive",
+            json={"paper_id": "paper-deep-1", "question": "why?"},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["paper_id"] == "paper-deep-1"
+        assert payload["answer"]["answer"] == "focused answer"
+        assert "citations" not in payload["answer"]
+
 
 class TestLibrarianQueryBuilderAPI:
     """Librarian Query Builder API 测试。"""

@@ -1,139 +1,128 @@
-# Paper Plane X 后端开发路线图
+# Paper Plane X Backend Roadmap
 
-## 文档目的
-本路线图用于同步当前代码真实进度、阶段目标与下一步优先级。
-更新时间：2026-04-19（基于仓库代码与测试现状审查）。
+更新时间：2026-05-25
 
-## 审查结论（2026-04-19）
+这份文档记录当前真实状态和下一步优先级。它不是历史设计稿。
 
-1. 核心后端链路已经打通：Project/Paper CRUD、Data Process 异步任务、任务持久化与恢复可用。
-2. Librarian 已有可用 MVP：`/projection`、`/matrix`、`/search` 三类能力可用。
-3. HITL 与 Survey Writer 仍处于占位阶段：路由前缀已保留，但业务尚未落地。
-4. 测试基线总体稳定：本地执行为 154 通过、1 失败；失败位于 `tests/unit/test_tools_librarian.py`，属于文案断言不一致。
+## 当前状态快照
 
----
+后端当前已经具备完整可用的科研文献工作流：
 
-## Phase 1: 基础骨架（已完成）
+- Project / Paper CRUD 与项目-论文关联。
+- PDF 上传、异步 Data Process、任务持久化、取消、重试、删除。
+- Extraction / Analysis / Fact Check 结构化处理链。
+- Paper detail、人工回填、paper note。
+- Librarian search / matrix / deep-dive / global-finder / query-builder。
+- Project file sandbox：list/read/write/delete/export/find/lines/replace/patch。
+- ResearcherAgent 项目级 WebSocket 对话。
+- HITL WebSocket 与 `ask_human`。
+- SubAgent 委派。
+- Agent trace 查询与列表。
+- Settings API。
+- `ppx` HTTP CLI。
+- `skills/paper-plane-x-researcher` 外部 agent skill。
+- 测试基线：`362 passed`。
 
-目标：搭建可运行 FastAPI 项目骨架，支持 Project 管理。
+## 已完成阶段
 
-| 任务                       | 说明                                   | 状态     |
-| -------------------------- | -------------------------------------- | -------- |
-| 1.1 项目结构完善           | `main.py`、`config.py`、uv + pyproject | ✅ 已完成 |
-| 1.2 数据库连接层           | SQLite 原生连接封装、基础 CRUD、FTS5   | ✅ 已完成 |
-| 1.3 Project/Paper 数据模型 | Pydantic 模型与序列化                  | ✅ 已完成 |
-| 1.4 Project API            | 项目 CRUD + 项目论文关系               | ✅ 已完成 |
-| 1.5 测试框架               | pytest + fixtures + API 集测           | ✅ 已完成 |
+### Phase 1: 后端基础骨架
 
-交付物：可通过 API 创建/维护项目与论文实体。
+| 能力 | 状态 |
+| --- | --- |
+| FastAPI app、配置系统、uv 项目结构 | 已完成 |
+| SQLite 封装、schema 初始化、迁移兼容 | 已完成 |
+| Project / Paper 数据模型 | 已完成 |
+| Project API | 已完成 |
+| 单元/集成测试基础 | 已完成 |
 
----
+### Phase 2: Agent Runtime
 
-## Phase 2: Agent 引擎核心（已完成）
+| 能力 | 状态 |
+| --- | --- |
+| LiteLLM client | 已完成 |
+| Memory 与 OpenAI-compatible message schema | 已完成 |
+| ToolRegistry 与 `@tool` | 已完成 |
+| `runtime_context` hidden parameter injection | 已完成 |
+| BaseAgent normal 模式与 trace 落库 | 已完成 |
+| structured output 校验 | 已完成 |
 
-目标：实现可复用的 Agent Runtime，支持结构化输出与工具调用。
+### Phase 3: Data Process
 
-| 任务               | 说明                             | 状态     |
-| ------------------ | -------------------------------- | -------- |
-| 2.1 LiteLLM 集成   | 统一 LLMClient，多模型后端适配   | ✅ 已完成 |
-| 2.2 消息模型       | OpenAI 兼容消息模型              | ✅ 已完成 |
-| 2.3 工具系统       | ToolRegistry + `@tool` 装饰器    | ✅ 已完成 |
-| 2.4 Agent 异常     | 运行、校验、工具异常分层         | ✅ 已完成 |
-| 2.5 BaseAgent 核心 | `api/normal` 双模式 + trace 落库 | ✅ 已完成 |
-| 2.6 单元测试       | Agent/Tool/LLM 核心覆盖          | ✅ 已完成 |
+| 能力 | 状态 |
+| --- | --- |
+| PDF 上传与 paper 创建/复用 | 已完成 |
+| MinerU 解析 | 已完成 |
+| Extraction / Analysis / Fact Check | 已完成 |
+| task manager、worker pool、持久化 | 已完成 |
+| cancel / retry / delete task | 已完成 |
+| paper reprocess | 已完成 |
+| 人工回填 | 已完成 |
 
-交付物：可低成本扩展新 Agent，且 I/O 受 Pydantic 严格约束。
+### Phase 4: Librarian 与项目资产
 
----
+| 能力 | 状态 |
+| --- | --- |
+| `POST /api/v1/librarian/search` | 已完成 |
+| `POST /api/v1/librarian/matrix` | 已完成 |
+| `POST /api/v1/librarian/deep-dive` | 已完成 |
+| `POST /api/v1/librarian/global-finder` | 已完成 |
+| `POST /api/v1/librarian/query-builder` | 已完成 |
+| `POST /api/v1/projects/{project_id}/search` | 已完成 |
+| Project file sandbox API | 已完成 |
+| Paper note API | 已完成 |
 
-## Phase 3: Data Process Workflow（已完成）
+### Phase 5: Researcher Workflow
 
-目标：实现单篇论文上传到结构化数据入库的完整流程。
+| 能力 | 状态 |
+| --- | --- |
+| Conversation REST | 已完成 |
+| Conversation WebSocket streaming | 已完成 |
+| ResearcherAgent tools | 已完成 |
+| HITL WebSocket | 已完成 |
+| `ask_human` | 已完成 |
+| `delegate_to_subagent` / SubAgent | 已完成 |
 
-| 任务                              | 说明                                       | 状态     |
-| --------------------------------- | ------------------------------------------ | -------- |
-| 3.1 PDF 解析                      | MinerU：PDF -> Markdown + 图片             | ✅ 已完成 |
-| 3.2 Extraction/Analysis/FactCheck | 三智能体串联 + 事实核查闭环                | ✅ 已完成 |
-| 3.3 上传即入队                    | `POST /api/v1/papers`                      | ✅ 已完成 |
-| 3.4 重跑能力                      | `POST /api/v1/papers/{paper_id}/reprocess` | ✅ 已完成 |
-| 3.5 人工回填                      | `PATCH /api/v1/papers/{paper_id}`          | ✅ 已完成 |
-| 3.6 任务可观测与控制              | `/data-process/tasks` + cancel/retry       | ✅ 已完成 |
-| 3.7 任务持久化                    | SQLite `data_process_tasks`                | ✅ 已完成 |
-| 3.8 生命周期接管                  | FastAPI lifespan 启停 worker pool          | ✅ 已完成 |
+### Phase 6: External Agent Integration
 
-交付物：上传 PDF -> 异步处理 -> 结果入库的完整后端闭环。
+| 能力 | 状态 |
+| --- | --- |
+| `ppx` HTTP CLI | 已完成 |
+| CLI context：flag > env > saved config | 已完成 |
+| CLI commands：librarian / files / paper-note / context | 已完成 |
+| `paper-plane-x-researcher` skill | 已完成 |
+| Skill 包含 Researcher 行为、工具说明、field paths、query rules | 已完成 |
 
----
+## 当前优先级
 
-## Phase 4: 检索与数据能力增强（进行中）
+### P0: 文档和使用体验
 
-目标：增强检索可组合性与跨论文对比能力。
+- 保持 README、quickstart、architecture、librarian、skill 同步。
+- 为外部 agent 安装/复制 skill 的路径补充更明确说明。
+- 为 `ppx` 增加更友好的 `--help` 示例或 docs 生成。
 
-| 任务                    | 说明                                        | 状态            |
-| ----------------------- | ------------------------------------------- | --------------- |
-| 4.1 Librarian 路由      | `/projection`、`/matrix`、`/search`         | ✅ 已完成（MVP） |
-| 4.2 项目维度统一搜索    | `POST /api/v1/projects/{project_id}/search` | ✅ 已完成        |
-| 4.3 Chroma 向量检索深化 | 扩展索引字段、排序与融合策略                | ⏳ 进行中        |
-| 4.4 检索工具原子化      | 面向 Agent 的可组合检索能力                 | ⏳ 进行中        |
-| 4.5 CLI 安全治理        | 路径白名单、超时、输出治理                  | ⏳ 规划中        |
+### P1: CLI 与 API 可用性
 
-当前里程碑：
-- 已完成可用检索 MVP 与字段投影能力。
-- 下一步聚焦向量检索深化与原子工具编排。
+- `ppx` 支持从文件读取长内容，例如 `--content-file`。
+- `ppx` 支持更稳定的大 JSON 输出裁剪或保存到文件。
+- 为 `ppx` 添加更多 smoke tests，覆盖 files patch / paper-note / matrix 错误路径。
 
----
+### P2: Researcher 工作流增强
 
-## Phase 5: HITL 与 Survey Workflow（进行中）
+- 对长任务和离开页面后的 streaming 恢复做更强支持。
+- 优化消息编辑、分支、刷新后的状态一致性。
+- 改善 trace 与 conversation 的互相跳转体验。
 
-目标：引入人机协作决策与综述写作链路。
+### P3: 部署与生态
 
-| 任务                        | 说明                                           | 状态     |
-| --------------------------- | ---------------------------------------------- | -------- |
-| 5.1 HITL 基础设施           | `HITLManager` + WebSocket 广播 + 等待/超时机制 | ✅ 已完成 |
-| 5.2 `ask_human` 工具        | ResearcherAgent 可向人类提问并等待回答         | ✅ 已完成 |
-| 5.3 HITL WebSocket API      | `/api/v1/ws/hitl` 接收问题、提交回答           | ✅ 已完成 |
-| 5.4 SubAgent 委派           | `delegate_to_subagent` 工具 + SubAgent 实现    | ✅ 已完成 |
-| 5.5 Conversation 系统       | 项目级流式对话 + WebSocket + REST CRUD         | ✅ 已完成 |
-| 5.6 Writer/Reviewer/Planner | Survey 多 Agent 协作流程                       | 待开始   |
-| 5.7 导出链路                | 结构化输出到文稿导出                           | 待开始   |
+- Docker / compose 文档与生产配置样例加强。
+- 评估 MCP server，作为 `ppx` CLI 之外的第二种外部 agent 集成方式。
+- 对接更多聊天平台或任务调度入口。
 
-说明：
-- ResearcherAgent 当前可用工具集：文件沙箱、Librarian 检索、paper 笔记、subagent 委派、ask_human。
-- SubAgent 拥有与 ResearcherAgent 相同的工具集（不含 `delegate_to_subagent`），防止递归。
-- HITL 每个问题支持单选/多选 + 自定义回答选项，10 分钟超时保护。
+## 维护原则
 
----
+1. 新 API 必须有 integration test。
+2. 新 tool 必须同步更新 Researcher prompt、skill、tool-guide。
+3. 修改 CLI 命令必须同步更新 README、quickstart、librarian docs。
+4. 修改数据库 schema 必须包含迁移和测试。
+5. 文档只描述当前真实实现；历史设计和废弃接口不要保留在主文档正文。
 
-## 当前后端快照
-
-1. 路由分组：`project`、`paper`、`librarian`、`data_process` 已接入；`hitl` 仅路由前缀。
-2. 任务系统：支持排队、执行、取消、重试；状态持久化；服务重启后恢复待处理任务。
-3. 数据模型：论文状态已拆分为 `extraction_status`、`extraction_fact_check_status`、`analysis_fact_check_status`。
-4. 数据库迁移：已具备迁移前自动备份与历史字段兼容迁移。
-
----
-
-## 开发原则
-
-1. 先跑通再优化：优先端到端可用。
-2. 测试驱动：核心流程需有单测/集测支撑。
-3. 类型安全：Pydantic + pyright 约束。
-4. 可追溯：保留 Agent 交互 trace 与关键状态。
-5. 数据库变更纪律：涉及 schema 变更必须包含迁移逻辑与迁移前备份。
-
----
-
-## 下一阶段
-
-现在核心的 feature 都开发完毕了
-
-+ SKILL 的实现
-+ MCP 的实现
-+ 异步任务（书签）
-+ 定时任务
-+ 对接聊天平台
-+ 沙箱，bash
-+ debug
-  + 流式传输在离开页面时仍然断开的 bug
-  + 每个页面的 api 操作后状态不更新的 bug
-  + 消息的刷新/分支/编辑/删除 的 bug

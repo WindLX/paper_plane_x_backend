@@ -1,318 +1,322 @@
-# Librarian 系统详细设计方案
+# Librarian, Project Files, Paper Notes, and External Researcher Tools
 
-Librarian 不是一个单一的搜索框，而是一个提供**“精准寻址、多维检索、矩阵拼装”**的服务层。设计分为四层结构。
+这份文档面向用户、前端开发者、后端开发者和外部 agent。它描述当前真实可用的检索、矩阵、deep dive、项目文件、论文笔记、`ppx` CLI 与 Researcher skill。
 
-## Layer 1: 基础寻址与精细投影层 (Data Projection Layer)
+## 1. 能力概览
 
-这一层解决最基础的问题：**“我已经知道了 `paper_id`，我如何极其精准地只拿我想要的那一丁点数据，绝不带冗余上下文？”**
+Librarian 不是一个普通搜索框，而是一组面向研究工作流的能力：
 
-### 设计方案：基于 JSON Path 的点索引（Dot-Notation）寻址
-利用 SQLite 原生极度强大的 `json_extract` 函数，实现任意层级、任意节点的精准提取。
+- `global-finder`：项目级文献总览和统计。
+- `search`：使用 DSL 在项目或全库范围内搜索 paper ids。
+- `matrix`：按 `paper_ids` 和 `field_paths` 拉取结构化字段，适合跨论文比较。
+- `deep-dive`：对单篇论文提出具体问题，调用 DeepDiverAgent 返回结构化答案。
+- `query-builder`：把自然语言查询转换为 Librarian DSL。
 
-**核心基础函数：`fetch_by_path(paper_id: str, field_path: str)`**
+Researcher 还配套两类项目资产工具：
 
-*   `field_path` 的语法规范：
-    *   `meta` (获取整棵元数据树：title, authors, year等)
-    *   `quick_scan.verdict` (直接获取字符串："推荐精读")
-    *   `synthesis_data.methodology.innovation` (获取完整的 `CitedText` 对象)
-    *   `analysis_report.derivation_steps` (获取列表)
-**Python/SQL 伪代码实现思路：**
-```python
-def fetch_by_path(paper_id: str, field_path: str):
-    # 路由映射表：判断根节点属于哪个 SQLite Column
-    root_col_map = {
-        "meta": "meta_json",
-        "quick_scan": "quick_scan",
-        "synthesis_data": "synthesis_data",
-        "analysis_report": "theory_data"
-    }
-    root, *rest = field_path.split(".")
-    column = root_col_map[root]
-    
-    # 构建 SQLite JSON Path (如：'$.methodology.innovation')
-    json_path = "$." + ".".join(rest) if rest else "$"
-    
-    query = f"SELECT json_extract({column}, ?) FROM papers WHERE id = ?"
-    cursor.execute(query, (json_path, paper_id))
-    result = cursor.fetchone()[0]
-    
-    value = json.loads(result) # 返回精准切片数据
-    return value
-```
+- Project files：项目沙箱里的 Markdown / text / JSON / CSV / YAML 文件。
+- Paper notes：单篇论文的长期 AI 笔记 `agent_note`。
 
----
+外部 agent 使用这些能力时，推荐走 `ppx` CLI 或 `skills/paper-plane-x-researcher`。
 
-## Layer 2: 统一搜索引擎层 (Unified Search Engine)
+## 2. API
 
-这一层解决：**“我不知道 `paper_id`，我如何用统一表达式找到满足条件的论文集合？”**
+### 2.1 Librarian
 
-Layer 2 使用单一引擎：**Unified Filter Engine**。
-
-### 输入契约
-
-Unified Filter Engine 输入包含：
-
-1. `project_id`（可选）：
-   *   指定时仅在项目内搜索。
-   *   不指定时在全库搜索。
-2. 组合条件表达式（新 DSL）：
-   *   支持嵌套 `and/or` 条件组。
-   *   条件字段通过 projection 语法指定，可定位 JSON 的任意层级路径。
-   *   支持的根对象：
-       *   `meta`（如 `meta.title`, `meta.year`）
-       *   `md_content`
-       *   `quick_scan`（如 `quick_scan.verdict`）
-       *   `synthesis_data`（如 `synthesis_data.methodology.innovation.text`）
-       *   `analysis_report`（如 `analysis_report.core_formulation.objective_function.text`）
-3. 分页参数（可选）：`limit` / `offset`。
-
-### 条件语义
-
-*   `year`：仅支持范围语义（`BETWEEN`）。
-*   其他字段：仅支持 `CONTAINS` 字符串包含匹配。
-*   `CONTAINS` 匹配规则：
-    *   大小写不敏感。
-    *   对 JSON 字段按文本化后匹配（可命中 JSON 子结构中的目标字符串）。
-
-### 输出契约
-
-*   搜索返回结果为 `list[paper_id]`（可附带 `total/limit/offset` 分页元信息）。
-*   Layer 2 不返回大体量正文切片，避免上下文膨胀。
-
-### 自动质量过滤（强制）
-
-Unified Filter Engine 在任意查询下都会自动追加以下过滤条件：
-
-*   `extraction_status` 必须为 `COMPLETED` 或 `HUMAN_COMPLETED`
-*   `extraction_fact_check_status` 必须为 `PASSED` 或 `HUMAN_PASSED`
-*   `analysis_fact_check_status` 必须为 `PASSED` 或 `HUMAN_PASSED`
-
-不满足上述条件的论文不会进入结果集。
-
----
-
-## Layer 3: 高级组合检索能力 (Agent Toolbox Layer)
-
-这一层是将 Layer 1 和 Layer 2 进行有机组合，包装成符合 LiteLLM Tool-Calling 规范的、面向 Agent（或前端页面）的超级工具。
-
-当前实现中，`global_finder`、`matrix_compare` 与 `search_paper` 都可作为 Agent Tool 使用。
-
-### Tool: 全局发现者 (Global Finder)
-**能力**：聚合指定 project 下全部已关联论文的最基础信息，帮助 Agent 先建立对整批文献的整体感觉。
-
-*   **返回内容**：
-    *   `project_id`：项目 ID
-    *   `papers`：每篇论文的 `paper_id / title / authors / year / quick_scan`
-    *   `agent_summary`：项目级 AI 总结（如已写入）
-    *   `stats`：全体统计信息
-        *   `paper_count`
-        *   `year_distribution`
-        *   `top_tags`
-*   **年份统计字段**：
-    *   `mean`
-    *   `variance`
-    *   `median`
-    *   `mode_years`
-    *   `q25`
-    *   `q75`
-    *   `outlier_count`
-    *   `low_outlier_count`
-    *   `high_outlier_count`
-*   **离群值口径**：
-    *   小于 5% 分位数的年份计入 `low_outlier_count`
-    *   大于 95% 分位数的年份计入 `high_outlier_count`
-*   **热门标签口径**：
-    *   统计 `quick_scan.tags` 出现次数
-    *   默认返回前 8 个标签（可通过配置 `librarian.top_tags_limit` 调整）
-
-### Tool: 矩阵分析仪 (Matrix Compare) - **最核心能力！**
-**能力**：利用 Layer 1 的点索引能力，在多篇论文间进行“横向拉网式”的数据穿透。
-实现上，矩阵由 librarian 层循环调用 `fetch_by_path` 组装（而非 repository 内置 `matrix_fetch`）。
-*   **Input Schema**:
-    ```json
-    {
-      "paper_ids": ["doc_1", "doc_2", "doc_3"],
-      "field_paths": [
-        "synthesis_data.methodology.innovation",
-        "analysis_report.core_formulation.objective_function"
-      ]
-    }
-    ```
-*   **Output (二维矩阵)**:
-    ```json
-    {
-      "doc_1": {
-        "synthesis_data.methodology.innovation": {"text": "...", "citations": [...]},
-        "analysis_report.core_formulation.objective_function": {"text": "...", "citations": [...]}
-      },
-      "doc_2": { ... }
-    }
-    ```
-*   **价值**：Writer Agent 撰写综述“对比分析”章节时，无需通读原文，瞬间拿到带引用的二维对比表格，直接开始撰写。
-
-`projection` 仍主要通过 API 路由提供；`search_paper` 则同时支持 API 与 Agent Tool。
-
-### Agent 工具扩展（Project / Paper 作用域）
-
-除 Librarian 核心工具外，系统还提供 project 与 paper 作用域的 Agent 笔记工具：
-
-- **Project 工具**（`tools/project.py`）：project_id 通过 context 自动注入
-  - `get_project_agent_summary` — 查看当前项目的 agent_summary
-  - `write_project_agent_summary` — 写入项目总结（覆盖）
-  - `update_project_agent_summary` — 更新项目总结
-  - `delete_project_agent_summary` — 删除项目总结
-
-- **Paper 工具**（`tools/paper.py`）：paper_id 作为参数显式传入
-  - `get_paper_agent_note` — 查看指定论文的 agent_note
-  - `write_paper_agent_note` — 写入论文笔记（覆盖）
-  - `update_paper_agent_note` — 更新论文笔记
-  - `delete_paper_agent_note` — 删除论文笔记
-
-### 当前已落地能力
-
-- 当前已落地能力包括 `global_finder`、`projection`、`search`、`matrix`、`deep_dive`，其中 `global_finder` / `search_paper` / `matrix_compare` / `deep_dive` 也可供 Agent 调用。
-
----
-
-## Layer 4: FastAPI 架构落地规范
-
-为了让 Claude Code 快速实现，以下是目录结构和代码组织建议：
-
-1.  **数据库访问层 (`src/database/repository.py`)**
-    负责实现 Layer 1 和 Layer 2 的所有 SQL/Chroma 裸操作，不涉及业务逻辑。
-    包含 `get_json_path()`, `fts_search()`, `chroma_search()` 等。
-
-2.  **核心服务层 (`src/tools/librarian.py`)**
-    实现 Layer 3 的业务逻辑。
-    ```python
-    class LibrarianService:
-        def __init__(self, db_repo):
-            self.repo = db_repo
-            
-        def global_finder(self, request: GlobalFinderReq) -> list[dict]: ...
-        def matrix_compare(self, request: MatrixCompareReq) -> dict: ...
-        def deep_diver(self, request: DeepDiverReq) -> str: ...
-    ```
-
-3.  **Agent 工具绑定 (`src/agents/tools_config.py`)**
-    将 `LibrarianService` 中的方法映射为 LLM 可以调用的 JSON Schema。
-    ```python
-    LIBRARIAN_TOOLS = [
-        {
-            "type": "function",
-            "function": {
-                "name": "matrix_compare",
-                "description": "当需要对比多篇论文的特定细节时调用此工具。必须传入合法的 paper_ids 和点索引 field_paths。",
-                "parameters": MatrixCompareReq.model_json_schema() # Pydantic 魔法直接生成 Schema
-            }
-        },
-        # ... 其他工具
-    ]
-    ```
-
-4.  **前端人类 API (`src/api/routers/librarian.py`)**
-    除了供 Agent 使用，这套 Service 完全可以通过 FastAPI 的 `@router.post("/api/librarian/matrix")` 直接暴露给 Vue 前端。
-    人类在前端工作台（Workspace）中，勾选几篇论文，选择想要对比的字段，就能立刻生成一个强大的**可视化知识比对表格**。
-
----
-
-## 已实现接口（当前代码）
-
-- `POST /api/v1/librarian/projection`
-- `POST /api/v1/librarian/matrix`
-- `POST /api/v1/librarian/search`
 - `POST /api/v1/librarian/global-finder`
-- `GET /api/v1/librarian/guide`
+- `POST /api/v1/librarian/global-finder/agent-summary`
+- `POST /api/v1/librarian/search`
+- `POST /api/v1/librarian/matrix`
+- `POST /api/v1/librarian/deep-dive`
+- `POST /api/v1/librarian/query-builder`
+- `POST /api/v1/projects/{project_id}/search`
 
-### Global Finder 请求示例
+### 2.2 Project files
+
+- `GET /api/v1/projects/{project_id}/files?dir_path=/`
+- `GET /api/v1/projects/{project_id}/files/content?file_path=/notes/a.md`
+- `PUT /api/v1/projects/{project_id}/files/content`
+- `DELETE /api/v1/projects/{project_id}/files/content?file_path=/notes/a.md`
+- `GET /api/v1/projects/{project_id}/files/lines`
+- `GET /api/v1/projects/{project_id}/files/find`
+- `PATCH /api/v1/projects/{project_id}/files/lines`
+- `PATCH /api/v1/projects/{project_id}/files/text`
+- `PATCH /api/v1/projects/{project_id}/files/patch`
+- `POST /api/v1/projects/{project_id}/files/export`
+
+### 2.3 Paper notes
+
+- `GET /api/v1/papers/{paper_id}/agent-note`
+- `PUT /api/v1/papers/{paper_id}/agent-note`
+- `PATCH /api/v1/papers/{paper_id}/agent-note`
+- `DELETE /api/v1/papers/{paper_id}/agent-note`
+
+## 3. Query DSL
+
+`query_expr` 使用括号、`AND`、`OR` 组织条件。
+
+示例：
+
+```text
+(meta.title CONTAINS transformer)
+(md_content CONTAINS lyapunov)
+(meta.year BETWEEN [2020, 2025])
+(meta.year BETWEEN [2020, 2025]) AND (quick_scan.verdict CONTAINS 推荐)
+(meta.title CONTAINS "deep learning") OR (meta.publication CONTAINS NeurIPS)
+```
+
+规则：
+
+- 文本字段使用 `CONTAINS`。
+- 年份仅支持 `year` / `meta.year` 的 `BETWEEN [start, end]`。
+- 文本包含空格或特殊字符时使用双引号。
+- 搜索会自动过滤 extraction / fact check 状态不合格的论文。
+
+## 4. Field Paths
+
+常用根路径：
+
+- `md_content`
+- `meta`
+- `quick_scan`
+- `synthesis_data`
+- `analysis_report`
+
+常用字段：
+
+- `meta.title`
+- `meta.authors`
+- `meta.year`
+- `meta.publication`
+- `meta.doi`
+- `meta.custom_meta`
+- `quick_scan.tags`
+- `quick_scan.verdict`
+- `quick_scan.reason`
+- `quick_scan.quick_summary`
+- `synthesis_data.research_gap.context.text`
+- `synthesis_data.research_gap.existing_limit.text`
+- `synthesis_data.research_gap.motivation.text`
+- `synthesis_data.methodology.approach_name`
+- `synthesis_data.methodology.core_logic.text`
+- `synthesis_data.methodology.innovation.text`
+- `synthesis_data.methodology.disadvantage.text`
+- `synthesis_data.methodology.future_direction.text`
+- `synthesis_data.key_results.dataset_env.text`
+- `synthesis_data.key_results.baseline.text`
+- `synthesis_data.key_results.performance.text`
+- `synthesis_data.review_summary.text`
+- `analysis_report.prerequisites[0].concept_name`
+- `analysis_report.prerequisites[0].brief_explanation`
+- `analysis_report.prerequisites[0].relevance_to_paper.text`
+- `analysis_report.core_formulation.problem_definition.text`
+- `analysis_report.core_formulation.objective_function.text`
+- `analysis_report.core_formulation.algorithm_flow.text`
+- `analysis_report.derivation_steps[0].step_name`
+- `analysis_report.derivation_steps[0].detail_explanation.text`
+- `analysis_report.related_references[0].title`
+- `analysis_report.related_references[0].reason`
+
+数组使用 `[index]` 访问，例如：
+
+```text
+analysis_report.prerequisites[0].concept_name
+analysis_report.derivation_steps[0].detail_explanation.text
+```
+
+完整 field path guide 已内置在 [../skills/paper-plane-x-researcher/SKILL.md](../skills/paper-plane-x-researcher/SKILL.md)。
+
+## 5. API 示例
+
+### 5.1 Global finder
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/global-finder \
+  -H "Content-Type: application/json" \
+  -d '{"project_id":"prj_x"}'
+```
+
+返回重点：
+
+- `papers[]`: `paper_id`, `title`, `authors`, `year`, `quick_scan`
+- `stats.paper_count`
+- `stats.year_distribution`
+- `stats.top_tags`
+- `agent_summary`
+
+### 5.2 Search
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_id":"prj_x",
+    "query_expr":"(quick_scan.tags CONTAINS 强化学习)",
+    "limit":20,
+    "offset":0
+  }'
+```
+
+返回：
 
 ```json
 {
-    "project_id": "proj_1"
+  "project_id": "prj_x",
+  "limit": 20,
+  "offset": 0,
+  "total": 12,
+  "paper_ids": ["pap-a", "pap-b"]
 }
 ```
 
-### Global Finder 响应示例
+### 5.3 Matrix
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/matrix \
+  -H "Content-Type: application/json" \
+  -d '{
+    "paper_ids":["pap-a","pap-b"],
+    "field_paths":[
+      "meta.title",
+      "quick_scan.quick_summary",
+      "synthesis_data.methodology.innovation.text"
+    ]
+  }'
+```
+
+返回：
 
 ```json
 {
-    "project_id": "proj_1",
-    "papers": [
-        {
-            "paper_id": "paper_123",
-            "title": "A Great Paper",
-            "authors": ["Alice", "Bob"],
-            "year": 2024,
-            "quick_scan": {
-                "tags": ["优化算法", "控制策略"],
-                "verdict": "推荐精读",
-                "reason": "方法和实验都比较扎实",
-                "quick_summary": "..."
-            }
-        }
-    ],
-    "stats": {
-        "paper_count": 12,
-        "top_tags_limit": 8,
-        "year_distribution": {
-            "available_count": 10,
-            "missing_count": 2,
-            "mean": 2022.4,
-            "variance": 1.84,
-            "median": 2022.0,
-            "mode_years": [2022],
-            "q25": 2021.25,
-            "q75": 2024.0,
-            "outlier_count": 1,
-            "low_outlier_count": 0,
-            "high_outlier_count": 1
-        },
-        "top_tags": [
-            {"tag": "优化算法", "count": 6},
-            {"tag": "控制策略", "count": 4}
-        ]
+  "paper_ids": ["pap-a", "pap-b"],
+  "field_paths": ["meta.title"],
+  "items": {
+    "pap-a": {
+      "meta.title": "..."
     }
+  }
 }
 ```
 
-### Unified Search 请求示例
+### 5.4 Deep dive
 
-`search` 现在支持两种输入模式：
-
-1. `paper_id` 精确搜索
-2. `query_expr` 条件表达式搜索
-
-### Unified Search 请求示例（query_expr）
-
-```json
-{
-    "project_id": "proj_1",
-    "query_expr": "(meta.year BETWEEN [2020, 2025]) AND (quick_scan.verdict CONTAINS 推荐)",
-    "limit": 20,
-    "offset": 0
-}
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/deep-dive \
+  -H "Content-Type: application/json" \
+  -d '{
+    "paper_id":"pap-a",
+    "question":"这篇论文的核心创新是什么？请简短回答。"
+  }'
 ```
 
-### Unified Search 请求示例（paper_id）
+## 6. `ppx` CLI
 
-```json
-{
-    "project_id": "proj_1",
-    "paper_id": "paper_123",
-    "limit": 20,
-    "offset": 0
-}
+`ppx` 是外部 agent 推荐使用的入口。
+
+```bash
+uv run ppx context set --base-url http://127.0.0.1:8000/api/v1 --project-id prj_x
+uv run ppx context show
 ```
 
-### Layer1 返回语义
+Librarian：
 
-- API 的 `projection` / `matrix` 返回原始结构，包含 `citations`。
-- Agent Tool `matrix_compare_by_paths` 会在工具层剥离 `citations`，减少上下文膨胀。
+```bash
+uv run ppx project global-finder
+uv run ppx librarian search --query-expr "(meta.title CONTAINS transformer)" --limit 20
+uv run ppx librarian matrix --paper-ids pap-a,pap-b --field-paths meta.title,quick_scan.quick_summary
+uv run ppx librarian deep-dive --paper-id pap-a --question "核心创新是什么？"
+```
 
-### 错误码约定（细分）
+Project files：
 
-- `404 not_found`：实体不存在
-- `422 invalid_field`：字段不在白名单
-- `422 invalid_operator`：操作符非法
-- `422 invalid_value`：值类型或约束不合法
-- `422 invalid_query_expr`：条件表达式语法不合法
+```bash
+uv run ppx files list --dir /
+uv run ppx files read --path /notes/survey.md
+uv run ppx files lines --path /notes/survey.md --start-line 1 --end-line 20
+uv run ppx files find --path /notes/survey.md --query "Related Work"
+uv run ppx files write --path /notes/idea.md --content "..."
+uv run ppx files replace-lines --path /notes/idea.md --start-line 2 --end-line 3 --new-text "..."
+uv run ppx files replace-text --path /notes/idea.md --old-text "old" --new-text "new"
+uv run ppx files patch --path /notes/idea.md --action insert_after --anchor-text "## Section\n" --content "..."
+uv run ppx files delete --path /notes/tmp.md
+```
+
+Paper notes：
+
+```bash
+uv run ppx paper-note get --paper-id pap-a
+uv run ppx paper-note write --paper-id pap-a --content "..."
+uv run ppx paper-note delete --paper-id pap-a
+```
+
+## 7. Project File Editing Guide
+
+项目文件工具和 ResearcherAgent 的编辑原则一致：
+
+- 优先选择最小修改范围。
+- 开始编辑前，先 list，再 read / lines。
+- 定位文本时用 find。
+- 已知行号时用 replace-lines。
+- 旧文本稳定时用 replace-text。
+- 围绕锚点插入、替换、删除时用 patch。
+- 只有准备整体重写时才用 write。
+- replace-text 和 patch 默认校验命中次数；命中数量不对时应先重新查找。
+- 行号是 1-based，`end_line` 包含端点。
+- 文件必须在项目沙箱内，扩展名仅允许 `.md`, `.txt`, `.json`, `.csv`, `.yaml`, `.yml`。
+- 单文件大小上限为 1MB。
+
+## 8. Researcher Skill
+
+外部 agent 使用：
+
+- [../skills/paper-plane-x-researcher/SKILL.md](../skills/paper-plane-x-researcher/SKILL.md)
+- [../skills/paper-plane-x-researcher/references/tool-guide.md](../skills/paper-plane-x-researcher/references/tool-guide.md)
+
+Skill 包含：
+
+- Researcher 工作原则。
+- Toolset shared guide。
+- Librarian query rules。
+- 完整 field paths。
+- Project file / paper note / librarian 工具说明。
+- `ppx` CLI 映射。
+
+Skill 不暴露内置 ResearcherAgent 的 `ask_human` 和 `delegate_to_subagent`。外部 agent 需要用户决策时直接问当前用户；复杂任务拆分由宿主 agent 自己处理。
+
+## 9. 推荐研究流程
+
+### 用户问一个研究问题
+
+1. `global-finder` 建立项目整体感。
+2. `search` 找候选论文。
+3. `matrix` 拉取结构化证据。
+4. 信息不够时对关键论文 `deep-dive`。
+5. 回答中只引用实际查过的论文，格式为 `[[paper_id | short_title]]`。
+
+### 用户要求写综述或草稿
+
+1. `files list` 检查已有草稿。
+2. `files read` / `lines` 读取上下文。
+3. `search` / `matrix` 补证据。
+4. 生成 Markdown。
+5. 用 `files write` 或 patch 类命令保存。
+
+### 用户要求比较多篇论文
+
+1. 明确比较维度。
+2. 用 `matrix` 拉取对应字段。
+3. 个别关键细节用 `deep-dive`。
+4. 输出先给结论，再给维度化对比。
+
+## 10. 错误处理
+
+常见错误：
+
+- `404 not_found`：project / paper / task / file 不存在。
+- `400 bad_request`：路径非法、文件类型不允许、文件过大、编辑锚点不匹配。
+- `422 invalid_field`：query 或 field_path 不合法。
+- `422 invalid_query_expr`：DSL 语法不合法。
+- `500 agent_execution_error`：deep-dive 或 LLM 调用失败。
+
+CLI 中所有错误都会以 JSON 打到 stderr，并返回非零退出码。
+

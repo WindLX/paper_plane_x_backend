@@ -170,7 +170,7 @@ async def test_deep_dive_tool_passes_caller_and_caller_id_via_context(
     result = await librarian.deep_dive_tool.execute(
         paper_id="paper-ctx",
         question="q",
-        context={
+        runtime_context={
             "_caller_agent_name": "ParentAgent",
             "_caller_trace_id": "parent-trace-123",
         },

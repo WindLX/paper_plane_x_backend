@@ -1,61 +1,67 @@
 # Backend Testing Guide
 
-这份文档说明后端测试目录如何组织、平时怎么跑，以及新增测试时该放哪里。
+这份文档说明测试目录如何组织、如何运行，以及新增功能时应该补哪些测试。
+
+当前基线：`362 passed`。
 
 ## 1. 测试分层
 
-当前测试分成两层：
-
 - `tests/unit/`
-  - 纯单元测试
-  - 重点验证函数、类、配置合并、数据库逻辑、Agent runtime 细节
+  - 验证单个函数、类、repository、runtime、工具、配置。
+  - 不依赖真实 HTTP 路由。
 - `tests/integration/`
-  - API 与业务编排集成测试
-  - 重点验证路由、依赖注入、数据库交互与主流程
-
-共享 fixture 放在：
-
+  - 使用 `TestClient` 验证 API、依赖注入、数据库交互和业务路径。
+  - 覆盖 router + orchestrator + repository 的组合行为。
 - `tests/conftest.py`
+  - 测试数据库、TestClient、task manager、LLM provider/app settings fixture。
 
 ## 2. 当前覆盖重点
 
-### 2.1 Unit
+### Unit
 
 - Agent runtime / LLM client / memory / tooling
+- Tool context injection
 - `DataProcessTaskManager`
 - `Database` schema 初始化与迁移
 - `PaperRepository`
+- `ProjectRepository`
+- `ConversationRepository`
 - `PaperProcessor`
 - `PaperParser`
-- `Settings` 配置合并与 profile 行为
+- `Settings` 配置合并
+- `ppx` CLI context 解析、HTTP 请求构造、错误输出
 
-### 2.2 Integration
+### Integration
 
-- `Project` API
-- `Paper` API
-- `Data Process` task API
-- `App health`
-- `Librarian` API
-- `Conversation` API + WebSocket
-- `HITL` WebSocket
+- App health
+- Project API
+- Paper API
+- Paper agent note API
+- Project files API
+- Data Process task API
+- Librarian API
+- Conversation API + WebSocket
+- HITL WebSocket
+- Agent traces API
+- Settings API
 
 ## 3. 推荐执行方式
 
-### 3.1 全量测试
+全量测试：
 
 ```bash
 cd paper_plane_x_backend
 ./scripts/test.sh
 ```
 
-### 3.2 跑指定文件
+指定文件：
 
 ```bash
-./scripts/test.sh tests/unit/test_config_settings.py
-./scripts/test.sh tests/integration/test_project_api.py
+./scripts/test.sh tests/unit/test_cli.py
+./scripts/test.sh tests/integration/test_librarian_api.py
 ```
 
-### 3.3 推荐本地回归顺序
+常用回归：
 
 ```bash
 uv run ruff check .
@@ -63,39 +69,80 @@ uv run pyright
 ./scripts/test.sh
 ```
 
-## 4. 测试环境约定
+如果在受限沙箱里运行，`uv` 可能需要写 cache；此时需要允许 `uv run ...` 使用 cache 目录。
 
-测试运行时会使用测试专用运行目录和测试安全配置，不应污染你的日常开发数据。
+## 4. 新增功能时补什么测试
 
-当前测试重点约束：
+### 新 API
 
-- 临时数据目录独立
-- 日志输出可控
-- 测试数据库与开发数据库隔离
-- 测试 client 通过依赖覆盖注入测试 DB 与测试 task manager
+补 integration test，验证：
 
-## 5. 新增测试时怎么判断位置
+- 成功响应。
+- 404 / 400 / 422 等关键错误。
+- 数据库状态变化。
+- response model 的关键字段。
 
-### 放进 `unit/` 的情况
+### 新 repository / service 行为
 
-- 不依赖 HTTP 路由
-- 只验证单个类、函数或模块行为
-- 只需要 mock / fixture，不需要完整 app lifecycle
+补 unit test，验证：
 
-### 放进 `integration/` 的情况
+- 正常路径。
+- 边界值。
+- 领域错误。
+- 迁移或兼容逻辑。
 
-- 需要 `TestClient`
-- 需要真实 router / dependency / database 交互
-- 需要验证一条完整业务路径
+### 新 Agent tool
+
+补 unit test，验证：
+
+- tool schema 生成。
+- `runtime_context` 注入。
+- 成功与错误 payload。
+- shared guide 是否包含必要说明。
+
+同时更新：
+
+- `prompts/researcher/System.md`
+- `skills/paper-plane-x-researcher/SKILL.md`
+- `skills/paper-plane-x-researcher/references/tool-guide.md`
+- `docs/librarian.md`
+
+### 新 `ppx` CLI 命令
+
+补 unit test，验证：
+
+- argparse 参数。
+- context 优先级。
+- HTTP method / path / JSON body / query params。
+- 错误输出到 stderr 且返回非零退出码。
+
+同时更新：
+
+- `README.md`
+- `docs/workflow_quickstart.md`
+- `docs/librarian.md`
+- skill tool guide
+
+## 5. 测试环境约定
+
+- 测试使用临时运行目录，不污染开发数据。
+- 测试数据库由 fixture 初始化。
+- `TestClient` 通过 dependency override 注入测试 DB 与测试 task manager。
+- LLM provider/app settings 在测试启动时写入测试配置。
+- 大多数 agent 相关测试 mock LLM 响应，不依赖真实外部模型。
 
 ## 6. 命名约定
 
-- 文件名使用 `test_*.py`
-- 测试名描述行为，不描述实现细节
-- 修 bug 时，优先补最小可复现测试
+- 文件名：`test_*.py`
+- 测试名描述行为，而不是实现细节。
+- 修 bug 时，优先写最小复现测试。
+- API 测试按 router 放在 `tests/integration/test_*_api.py`。
 
 ## 7. 维护原则
 
-- 如果修改了配置系统，优先更新 `test_config_settings.py`
-- 如果修改了路由语义，优先更新对应 integration tests
-- 如果修改了数据库结构或迁移逻辑，优先更新 `test_database_service.py`
+- 修改路由语义，更新对应 integration tests。
+- 修改 schemas，检查 response model 和 pyright。
+- 修改 tool runtime，至少跑 `test_agent_runtime*` 和相关 `test_tools_*`。
+- 修改 data-process，至少跑 data-process API、task manager、orchestrator 相关测试。
+- 修改 docs/skill/CLI，不一定需要全量测试，但至少跑受影响的 CLI/API 单元或集成测试。
+

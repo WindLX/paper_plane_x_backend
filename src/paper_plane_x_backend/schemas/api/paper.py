@@ -96,6 +96,23 @@ class PaperStatusCountResponse(BaseModel):
     )
 
 
+class PaperAgentNoteRequest(BaseModel):
+    """论文 agent_note 写入请求。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    content: str = Field(..., description="论文级 AI 笔记内容")
+
+
+class PaperAgentNoteResponse(BaseModel):
+    """论文 agent_note 响应。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    paper_id: str
+    agent_note: str | None = Field(default=None, description="论文级 AI 笔记")
+
+
 class PaperDetailResponse(PaperResponse):
     """论文详情响应（包含提取数据）。"""
 

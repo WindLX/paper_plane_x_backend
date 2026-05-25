@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 
 from paper_plane_x_backend.agents.query_builder import QueryBuilderAgent
 from paper_plane_x_backend.api.dependencies import DBDep
+from paper_plane_x_backend.core.agent_runtime import AgentExecutionError
 from paper_plane_x_backend.core.query_parser import (
     LibrarianQueryError,
     parse_librarian_query_expr,
@@ -14,18 +15,25 @@ from paper_plane_x_backend.core.query_parser import (
 from paper_plane_x_backend.schemas.agent_io.librarian import QueryBuilderAgentInput
 from paper_plane_x_backend.schemas.api import (
     LibrarianAgentSummaryResponse,
+    LibrarianDeepDiveRequest,
+    LibrarianDeepDiveResponse,
     LibrarianGlobalFinderRequest,
     LibrarianGlobalFinderResponse,
+    LibrarianMatrixRequest,
+    LibrarianMatrixResponse,
     LibrarianQueryBuilderRequest,
     LibrarianQueryBuilderResponse,
     LibrarianUnifiedSearchRequest,
     LibrarianUnifiedSearchResponse,
 )
 from paper_plane_x_backend.services.app_settings import get_app_settings_repo
+from paper_plane_x_backend.services.librarian.deep_diver import deep_dive
 from paper_plane_x_backend.services.orchestrators.librarian import (
     LibrarianDomainError,
     LibrarianOrchestrator,
 )
+from paper_plane_x_backend.services.paper.repository import PaperRepositoryError
+from paper_plane_x_backend.utils.schema_utils import strip_citations_recursively
 
 router = APIRouter(prefix="/librarian", tags=["librarian"])
 logger = logging.getLogger(__name__)
@@ -77,6 +85,69 @@ def run_search_paper(
         offset=request.offset,
         total=total,
         paper_ids=paper_ids,
+    )
+
+
+@router.post(
+    "/matrix",
+    response_model=LibrarianMatrixResponse,
+    summary="按论文和字段路径读取结构化矩阵",
+)
+def run_matrix(
+    request: LibrarianMatrixRequest,
+    db: DBDep,
+) -> LibrarianMatrixResponse:
+    orchestrator = _build_orchestrator(db)
+    try:
+        items = strip_citations_recursively(
+            orchestrator.run_matrix(
+                paper_ids=request.paper_ids,
+                field_paths=request.field_paths,
+            )
+        )
+    except LibrarianDomainError as exc:
+        _raise_as_http(exc)
+
+    return LibrarianMatrixResponse(
+        paper_ids=request.paper_ids,
+        field_paths=request.field_paths,
+        items=items,
+    )
+
+
+@router.post(
+    "/deep-dive",
+    response_model=LibrarianDeepDiveResponse,
+    summary="对单篇论文执行深度分析",
+)
+async def run_deep_dive(
+    request: LibrarianDeepDiveRequest,
+    db: DBDep,
+) -> LibrarianDeepDiveResponse:
+    orchestrator = _build_orchestrator(db)
+    try:
+        result = await deep_dive(
+            repo=orchestrator.paper_repo,
+            paper_id=request.paper_id,
+            question=request.question,
+            caller="api",
+            caller_id=None,
+        )
+    except PaperRepositoryError as exc:
+        raise HTTPException(
+            status_code=404 if exc.error_code == "not_found" else 400,
+            detail={"code": exc.error_code, "message": exc.message},
+        ) from exc
+    except AgentExecutionError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "agent_execution_error", "message": exc.message},
+        ) from exc
+
+    return LibrarianDeepDiveResponse(
+        paper_id=request.paper_id,
+        question=request.question,
+        answer=strip_citations_recursively(result["result"]),
     )
 
 

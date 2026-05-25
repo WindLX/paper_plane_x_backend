@@ -61,6 +61,97 @@ class ProjectFileDeleteResponse(BaseModel):
     removed: str = Field(..., description="被删除的文件/目录路径")
 
 
+class ProjectFileReadLinesResponse(BaseModel):
+    """按行读取文件响应。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    file_path: str
+    start_line: int
+    end_line: int
+    total_lines: int
+    lines: list[dict[str, object]]
+
+
+class ProjectFileFindResponse(BaseModel):
+    """文件内查找响应。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    file_path: str
+    query: str
+    total_matches: int
+    matches: list[dict[str, object]]
+
+
+class ProjectFileReplaceLinesRequest(BaseModel):
+    """按行替换文件请求。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    file_path: str = Field(..., min_length=1)
+    start_line: int = Field(..., ge=1)
+    end_line: int = Field(..., ge=1)
+    new_text: str
+
+
+class ProjectFileReplaceLinesResponse(BaseModel):
+    """按行替换文件响应。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    file_path: str
+    start_line: int
+    end_line: int
+    lines_replaced: int
+    bytes_written: int
+
+
+class ProjectFileReplaceTextRequest(BaseModel):
+    """按精确文本替换文件请求。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    file_path: str = Field(..., min_length=1)
+    old_text: str = Field(..., min_length=1)
+    new_text: str
+    replace_all: bool = False
+    expected_occurrences: int = Field(default=1, ge=1)
+
+
+class ProjectFileReplaceTextResponse(BaseModel):
+    """按精确文本替换文件响应。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    file_path: str
+    replacements: int
+    bytes_written: int
+
+
+class ProjectFilePatchRequest(BaseModel):
+    """基于锚点 patch 文件请求。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    file_path: str = Field(..., min_length=1)
+    action: str = Field(..., description="replace, insert_before, insert_after, delete")
+    anchor_text: str = Field(..., min_length=1)
+    content: str = ""
+    expected_occurrences: int = Field(default=1, ge=1)
+
+
+class ProjectFilePatchResponse(BaseModel):
+    """基于锚点 patch 文件响应。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    file_path: str
+    action: str
+    occurrences: int
+    bytes_written: int
+
+
 class ProjectFileExportRequest(BaseModel):
     """导出文件请求."""
 

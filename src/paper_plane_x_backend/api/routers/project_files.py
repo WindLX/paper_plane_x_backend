@@ -15,8 +15,16 @@ from paper_plane_x_backend.schemas.api.project_files import (
     ProjectFileContentResponse,
     ProjectFileDeleteResponse,
     ProjectFileExportRequest,
+    ProjectFileFindResponse,
     ProjectFileItem,
     ProjectFileListResponse,
+    ProjectFilePatchRequest,
+    ProjectFilePatchResponse,
+    ProjectFileReadLinesResponse,
+    ProjectFileReplaceLinesRequest,
+    ProjectFileReplaceLinesResponse,
+    ProjectFileReplaceTextRequest,
+    ProjectFileReplaceTextResponse,
     ProjectFileWriteRequest,
     ProjectFileWriteResponse,
 )
@@ -29,6 +37,11 @@ from paper_plane_x_backend.services.pandoc import (
 from paper_plane_x_backend.services.project.repository import ProjectRepository
 from paper_plane_x_backend.tools.conversation_io import (
     MAX_FILE_SIZE,
+    find_in_project_file,
+    patch_project_file,
+    read_project_file_lines,
+    replace_project_file_lines,
+    replace_project_file_text,
     resolve_sandbox_path,
 )
 
@@ -54,6 +67,16 @@ def _resolve_dir_path(project_id: str, dir_path: str) -> Path:
     if not str(target).startswith(str(resolved_root)):
         raise ValueError(f"Path escapes sandbox: {dir_path}")
     return target
+
+
+def _raise_tool_error(payload: dict[str, object]) -> None:
+    error = payload.get("error")
+    if error is None:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={"code": "project_file_tool_error", "message": str(error)},
+    )
 
 
 @router.get(
@@ -155,6 +178,56 @@ def read_project_sandbox_file(
     return ProjectFileContentResponse(file_path=file_path, content=content)
 
 
+@router.get(
+    "/lines",
+    response_model=ProjectFileReadLinesResponse,
+    summary="按行读取项目沙箱文件内容",
+)
+def read_project_sandbox_file_lines(
+    db: DBDep,
+    project_id: str,
+    file_path: str = Query(..., description="相对文件路径，如 /notes/idea.md"),
+    start_line: int = Query(..., ge=1, description="起始行号，1-based"),
+    end_line: int | None = Query(default=None, ge=1, description="结束行号，含端点"),
+) -> ProjectFileReadLinesResponse:
+    _ensure_project_exists(db, project_id)
+    assert read_project_file_lines.function is not None
+    payload = read_project_file_lines.function(
+        file_path=file_path,
+        start_line=start_line,
+        end_line=end_line,
+        project_id=project_id,
+    )
+    _raise_tool_error(payload)
+    return ProjectFileReadLinesResponse.model_validate(payload)
+
+
+@router.get(
+    "/find",
+    response_model=ProjectFileFindResponse,
+    summary="在项目沙箱文件内查找文本",
+)
+def find_project_sandbox_file_text(
+    db: DBDep,
+    project_id: str,
+    file_path: str = Query(..., description="相对文件路径，如 /notes/idea.md"),
+    query: str = Query(..., min_length=1, description="查找文本"),
+    case_sensitive: bool = Query(default=False),
+    max_matches: int = Query(default=20, ge=1, le=200),
+) -> ProjectFileFindResponse:
+    _ensure_project_exists(db, project_id)
+    assert find_in_project_file.function is not None
+    payload = find_in_project_file.function(
+        file_path=file_path,
+        query=query,
+        case_sensitive=case_sensitive,
+        max_matches=max_matches,
+        project_id=project_id,
+    )
+    _raise_tool_error(payload)
+    return ProjectFileFindResponse.model_validate(payload)
+
+
 @router.put(
     "/content",
     response_model=ProjectFileWriteResponse,
@@ -200,6 +273,77 @@ def write_project_sandbox_file(
         bytes_written=bytes_written,
         is_dir=is_dir,
     )
+
+
+@router.patch(
+    "/lines",
+    response_model=ProjectFileReplaceLinesResponse,
+    summary="按行号区间替换项目沙箱文件内容",
+)
+def replace_project_sandbox_file_lines(
+    db: DBDep,
+    project_id: str,
+    request: ProjectFileReplaceLinesRequest,
+) -> ProjectFileReplaceLinesResponse:
+    _ensure_project_exists(db, project_id)
+    assert replace_project_file_lines.function is not None
+    payload = replace_project_file_lines.function(
+        file_path=request.file_path,
+        start_line=request.start_line,
+        end_line=request.end_line,
+        new_text=request.new_text,
+        project_id=project_id,
+    )
+    _raise_tool_error(payload)
+    return ProjectFileReplaceLinesResponse.model_validate(payload)
+
+
+@router.patch(
+    "/text",
+    response_model=ProjectFileReplaceTextResponse,
+    summary="按精确文本替换项目沙箱文件内容",
+)
+def replace_project_sandbox_file_text(
+    db: DBDep,
+    project_id: str,
+    request: ProjectFileReplaceTextRequest,
+) -> ProjectFileReplaceTextResponse:
+    _ensure_project_exists(db, project_id)
+    assert replace_project_file_text.function is not None
+    payload = replace_project_file_text.function(
+        file_path=request.file_path,
+        old_text=request.old_text,
+        new_text=request.new_text,
+        replace_all=request.replace_all,
+        expected_occurrences=request.expected_occurrences,
+        project_id=project_id,
+    )
+    _raise_tool_error(payload)
+    return ProjectFileReplaceTextResponse.model_validate(payload)
+
+
+@router.patch(
+    "/patch",
+    response_model=ProjectFilePatchResponse,
+    summary="基于锚点 patch 项目沙箱文件内容",
+)
+def patch_project_sandbox_file(
+    db: DBDep,
+    project_id: str,
+    request: ProjectFilePatchRequest,
+) -> ProjectFilePatchResponse:
+    _ensure_project_exists(db, project_id)
+    assert patch_project_file.function is not None
+    payload = patch_project_file.function(
+        file_path=request.file_path,
+        action=request.action,
+        anchor_text=request.anchor_text,
+        content=request.content,
+        expected_occurrences=request.expected_occurrences,
+        project_id=project_id,
+    )
+    _raise_tool_error(payload)
+    return ProjectFilePatchResponse.model_validate(payload)
 
 
 @router.delete(

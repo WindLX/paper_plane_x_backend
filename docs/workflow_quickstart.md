@@ -1,18 +1,22 @@
 # Backend Quickstart
 
-这份文档用于快速验证后端是否真的能工作。目标不是覆盖所有功能，而是用最短路径确认：
+这份文档用于快速验证 Paper Plane X Backend 是否能工作。目标是让用户和开发者能复制命令完成一条最小闭环：
 
-1. 服务能启动
-2. 项目能创建
-3. PDF 能上传并进入任务队列
-4. 能查看任务和论文结果
+1. 启动服务
+2. 创建项目
+3. 上传并处理论文
+4. 关联项目
+5. 查询结果
+6. 用 Librarian / `ppx` 做项目级研究操作
+7. 可选验证 Conversation 和 HITL
 
 ## 1. 前置条件
 
-- 已在仓库根目录或 `paper_plane_x_backend/` 目录
-- Python 与 `uv` 可用
-- 后端依赖已安装
-- 如需完整跑通处理链，MinerU 与 LLM 配置可用
+- Python 3.12+
+- `uv`
+- 本地 SQLite 可用
+- 如需完整处理 PDF：MinerU 可用，且后端已配置 LLM Provider（见第 3 步）
+- 可选：`jq`、`websocat`
 
 ## 2. 启动服务
 
@@ -20,7 +24,7 @@
 cd paper_plane_x_backend
 uv sync
 cp .env.example .env
-./scripts/dev_api.sh
+uv run app
 ```
 
 健康检查：
@@ -29,13 +33,48 @@ cp .env.example .env
 curl -s http://127.0.0.1:8000/health
 ```
 
-期望返回：
+期望：
 
 ```json
 {"status":"ok","app_name":"Paper Plane X"}
 ```
 
-## 3. 创建项目
+OpenAPI 文档：
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+## 3. 首次配置 LLM Provider
+
+上传和处理论文需要 LLM。Provider 不在 `.env` 中配置，而是通过 Settings API 管理。
+
+创建第一个 Provider（以 deepseek 为例）：
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/v1/settings/providers \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "default",
+    "model": "deepseek-chat",
+    "api_key": "your-api-key",
+    "base_url": "https://api.deepseek.com/v1"
+  }'
+```
+
+然后把每个 Agent 绑定到这个 Provider：
+
+```bash
+for agent in extraction analysis fact_check deep_diver query_builder global_finder researcher subagent; do
+  curl -s -X PUT "http://127.0.0.1:8000/api/v1/settings/agent-llm/${agent}" \
+    -H "Content-Type: application/json" \
+    -d '{"provider_name": "default"}'
+done
+```
+
+也可以用控制台 UI（`http://127.0.0.1:8000`）在 Settings 页面图形化配置。
+
+## 4. 创建项目
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/v1/projects \
@@ -49,7 +88,7 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/projects \
 export PROJECT_ID="replace-with-project-id"
 ```
 
-## 4. 上传 PDF
+## 5. 上传 PDF
 
 ```bash
 export PDF_PATH="/absolute/path/to/your/test.pdf"
@@ -76,25 +115,24 @@ cat /tmp/ppx_start_resp.json
 - HTTP 状态码通常为 `202`
 - 返回 `paper_id` 或 `resource_id`
 - 返回 `task_id`
-- 返回状态说明
 
-提取环境变量：
+提取变量：
 
 ```bash
 export PAPER_ID="$(jq -r '.resource_id // .paper_id' /tmp/ppx_start_resp.json)"
 export TASK_ID="$(jq -r '.task_id' /tmp/ppx_start_resp.json)"
 ```
 
-## 5. 关联到项目
+## 6. 关联论文到项目
 
-上传不会自动关联到指定项目，如需放入项目中，需要显式调用：
+上传论文不会自动绑定项目。显式关联：
 
 ```bash
 curl -s -X POST \
   "http://127.0.0.1:8000/api/v1/projects/${PROJECT_ID}/papers/${PAPER_ID}"
 ```
 
-## 6. 查看任务状态
+## 7. 查看任务和论文
 
 列出任务：
 
@@ -108,88 +146,156 @@ curl -s "http://127.0.0.1:8000/api/v1/data-process/tasks"
 curl -s "http://127.0.0.1:8000/api/v1/data-process/tasks/${TASK_ID}"
 ```
 
-重点字段：
-
-- `status`
-- `error`
-- `retry_of_task_id`
-- `started_at`
-- `finished_at`
-
-## 7. 查看论文详情
+查看论文详情：
 
 ```bash
 curl -s "http://127.0.0.1:8000/api/v1/papers/${PAPER_ID}"
 ```
 
-建议重点看：
+重点字段：
 
 - `extraction_status`
 - `extraction_fact_check_status`
 - `analysis_fact_check_status`
-- `raw_pdf_path`
 - `quick_scan`
 - `synthesis_data`
 - `analysis_report`
+- `agent_note`
 
-## 8. 常见操作
+## 8. Librarian API 快速验证
 
-### 8.1 取消任务
-
-```bash
-curl -s -X POST \
-  "http://127.0.0.1:8000/api/v1/data-process/tasks/${TASK_ID}/cancel"
-```
-
-### 8.2 重试任务
+### 7.1 项目级总览
 
 ```bash
-curl -s -X POST \
-  "http://127.0.0.1:8000/api/v1/data-process/tasks/${TASK_ID}/retry"
+curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/global-finder \
+  -H "Content-Type: application/json" \
+  -d "{\"project_id\":\"${PROJECT_ID}\"}"
 ```
 
-### 8.3 重跑指定论文
+### 7.2 搜索项目论文
 
 ```bash
-curl -s -X POST \
-  "http://127.0.0.1:8000/api/v1/papers/${PAPER_ID}/reprocess" \
-  -F "pdf_file=@${PDF_PATH};type=application/pdf"
+curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/search \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"project_id\":\"${PROJECT_ID}\",
+    \"query_expr\":\"(quick_scan.tags CONTAINS 强化学习)\",
+    \"limit\":10,
+    \"offset\":0
+  }"
 ```
 
-### 8.4 查看项目内论文
+### 7.3 矩阵读取结构化字段
 
 ```bash
-curl -s "http://127.0.0.1:8000/api/v1/projects/${PROJECT_ID}/papers"
+curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/matrix \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"paper_ids\":[\"${PAPER_ID}\"],
+    \"field_paths\":[
+      \"meta.title\",
+      \"quick_scan.quick_summary\",
+      \"synthesis_data.methodology.innovation.text\"
+    ]
+  }"
 ```
 
-## 9. Conversation 流式对话快速验证
+### 7.4 单篇论文 deep dive
 
-### 9.1 创建对话
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/deep-dive \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"paper_id\":\"${PAPER_ID}\",
+    \"question\":\"这篇论文的核心创新是什么？请简短回答。\"
+  }"
+```
+
+## 9. `ppx` CLI 快速验证
+
+`ppx` 是外部 agent 和脚本的推荐入口。它调用 HTTP API，并输出 JSON。
+
+```bash
+uv run ppx context set \
+  --base-url http://127.0.0.1:8000/api/v1 \
+  --project-id "$PROJECT_ID"
+
+uv run ppx context show
+uv run ppx project global-finder
+```
+
+常用命令：
+
+```bash
+uv run ppx librarian search \
+  --query-expr "(quick_scan.tags CONTAINS 强化学习)" \
+  --limit 10
+
+uv run ppx librarian matrix \
+  --paper-ids "$PAPER_ID" \
+  --field-paths meta.title,quick_scan.verdict,quick_scan.quick_summary
+
+uv run ppx librarian deep-dive \
+  --paper-id "$PAPER_ID" \
+  --question "这篇论文解决什么问题？"
+```
+
+## 10. 项目文件和论文笔记
+
+### 9.1 Project files
+
+```bash
+uv run ppx files list --dir /
+uv run ppx files write --path /notes/quickstart.md --content "# Quickstart Notes"
+uv run ppx files read --path /notes/quickstart.md
+uv run ppx files find --path /notes/quickstart.md --query Quickstart
+uv run ppx files lines --path /notes/quickstart.md --start-line 1 --end-line 5
+```
+
+小范围编辑：
+
+```bash
+uv run ppx files patch \
+  --path /notes/quickstart.md \
+  --action insert_after \
+  --anchor-text "# Quickstart Notes" \
+  --content "\n\nValidated with Paper Plane X.\n"
+```
+
+### 9.2 Paper note
+
+```bash
+uv run ppx paper-note get --paper-id "$PAPER_ID"
+uv run ppx paper-note write --paper-id "$PAPER_ID" --content "初步结论：..."
+uv run ppx paper-note delete --paper-id "$PAPER_ID"
+```
+
+## 11. Conversation 流式对话
+
+创建对话：
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/v1/conversations \
   -H "Content-Type: application/json" \
-  -d "{\"project_id\":\"${PROJECT_ID}\",\"title\":\"Test Chat\"}"
+  -d "{\"project_id\":\"${PROJECT_ID}\",\"title\":\"Quickstart Chat\"}"
 ```
 
-保存返回中的 `conversation_id`：
+保存：
 
 ```bash
 export CONV_ID="replace-with-conversation-id"
 ```
 
-### 9.2 WebSocket 流式对话
-
-使用 `websocat` 或浏览器开发者工具连接：
+连接 WebSocket：
 
 ```bash
 websocat "ws://127.0.0.1:8000/api/v1/ws/conversations/${CONV_ID}"
 ```
 
-发送用户消息：
+发送：
 
 ```json
-{"type":"user_message","content":"请帮我搜索项目中关于深度学习的论文"}
+{"type":"user_message","content":"请帮我搜索项目中关于强化学习的论文"}
 ```
 
 期望收到：
@@ -201,29 +307,21 @@ websocat "ws://127.0.0.1:8000/api/v1/ws/conversations/${CONV_ID}"
 {"type":"stream_complete","message_id":"msg-xxx","trace_ids":["trc-xxx"]}
 ```
 
-### 9.3 查看对话历史
+查看历史：
 
 ```bash
 curl -s "http://127.0.0.1:8000/api/v1/conversations/${CONV_ID}/messages"
 ```
 
-## 10. HITL 人机交互快速验证
+## 11. HITL 人机交互
 
-### 10.1 连接 HITL WebSocket
+连接 HITL WebSocket：
 
 ```bash
 websocat "ws://127.0.0.1:8000/api/v1/ws/hitl"
 ```
 
-### 10.2 触发 ask_human（通过对话）
-
-在 conversation WebSocket 中发送：
-
-```json
-{"type":"user_message","content":"请帮我总结这些论文，但先问一下我应该关注哪个方向"}
-```
-
-如果 ResearcherAgent 决定调用 `ask_human`，HITL WebSocket 会收到：
+当 ResearcherAgent 调用 `ask_human`，HITL WebSocket 会收到：
 
 ```json
 {
@@ -245,9 +343,7 @@ websocat "ws://127.0.0.1:8000/api/v1/ws/hitl"
 }
 ```
 
-### 10.3 提交回答
-
-在 HITL WebSocket 中发送：
+提交回答：
 
 ```json
 {
@@ -259,44 +355,42 @@ websocat "ws://127.0.0.1:8000/api/v1/ws/hitl"
 }
 ```
 
-期望收到确认：
+## 12. 成功验收标准
 
-```json
-{"type":"hitl_answered","question_id":"hit-xxx"}
-```
+如果下面这些成立，说明后端主链路可用：
 
-Agent 随后会继续执行并返回结果。
+1. Health check 返回 200。
+2. 可以创建项目。
+3. 上传 PDF 后可以拿到 `task_id`。
+4. 任务进入 `QUEUED` / `RUNNING` / `COMPLETED` / `FAILED` 之一。
+5. `GET /api/v1/papers/{paper_id}` 返回论文记录。
+6. 可以把论文关联到项目。
+7. `librarian/search` 或 `ppx librarian search` 返回项目内论文。
+8. `ppx files list --dir /` 可以访问项目文件沙箱。
+9. Conversation WebSocket 可以流式返回。
 
-## 11. 成功验收标准
-
-如果下面这些都成立，说明后端主链路基本可用：
-
-1. 健康检查返回 200
-2. 可以创建项目
-3. 上传 PDF 后可以拿到 `task_id`
-4. 任务能进入 `QUEUED/RUNNING/COMPLETED/FAILED` 之一
-5. `GET /api/v1/papers/{paper_id}` 能返回论文记录
-6. `raw_pdf_path` 落到了本地数据目录
-7. 可以创建 conversation 并通过 WebSocket 进行流式对话
-8. HITL WebSocket 能接收和响应问题（当 Agent 调用 `ask_human` 时）
-
-## 10. 常见问题
+## 13. 常见问题
 
 ### 上传成功但任务最后失败
 
 优先检查：
 
-- MinerU 是否可访问
-- LLM API key 是否正确
-- 后端日志是否有具体报错
+- MinerU 是否可访问。
+- LLM provider 和 Agent LLM 绑定是否配置。
+- 后端日志是否有 `event=data_process.*` 或 `event=agent.*` 错误。
 
 ### 一直停留在 `QUEUED`
 
 优先检查：
 
-- worker pool 是否正常启动
-- `data_process.worker_count` 是否大于 0
+- worker pool 是否正常启动。
+- `data_process.worker_count` 是否大于 0。
 
-### 没看到 console
+### `ppx` 报连接错误
 
-后端只会托管已经构建好的前端静态资源。若未构建 console，根路径不会自动出现前端页面。
+优先检查：
+
+- `ppx context show` 的 `base_url` 是否包含 `/api/v1`。
+- 后端是否正在运行。
+- 当前机器是否能访问该 host/port。
+

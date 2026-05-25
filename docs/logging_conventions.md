@@ -2,7 +2,7 @@
 
 本文定义 Paper Plane X 后端日志分级与字段约定，用于统一检索、告警和问题定位。
 
-最近审阅时间：2026-04-14。
+最近审阅时间：2026-05-25。
 
 ## 1. 目标
 
@@ -106,14 +106,22 @@ logger.exception(
 本轮已对齐以下后端模块日志：
 
 - `core/agent_runtime/*`
+- `agents/*`
 - `services/data_process_tasks/*`
 - `services/orchestrators/*`
 - `services/paper/*`
+- `services/librarian/*`
+- `services/conversation/*`
+- `services/hitl/*`
 - `services/mineru.py`
 - `api/routers/project.py`
 - `api/routers/paper.py`
 - `api/routers/data_process.py`
+- `api/routers/librarian.py`
+- `api/routers/project_files.py`
+- `api/routers/conversation.py`
+- `api/routers/conversation_ws.py`
+- `api/routers/hitl_ws.py`
 - `api/dependencies.py`
-- `agents/data_processor.py`
 - `main.py`
 - `services/database.py`

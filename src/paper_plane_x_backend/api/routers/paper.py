@@ -16,6 +16,8 @@ from paper_plane_x_backend.schemas.api import (
     DataProcessManualUpdateRequest,
     DataProcessSubmitResponse,
     MessageResponse,
+    PaperAgentNoteRequest,
+    PaperAgentNoteResponse,
     PaperDetailResponse,
     PaperListResponse,
     PaperResponse,
@@ -25,6 +27,7 @@ from paper_plane_x_backend.services.orchestrators.paper import (
     PaperDomainError,
     PaperOrchestrator,
 )
+from paper_plane_x_backend.services.paper.repository import PaperRepositoryError
 
 router = APIRouter(prefix="/papers", tags=["papers"])
 logger = logging.getLogger(__name__)
@@ -47,6 +50,14 @@ def _raise_as_http(exc: PaperDomainError) -> NoReturn:
         exc.detail,
     )
     raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+def _raise_repo_as_http(exc: PaperRepositoryError) -> NoReturn:
+    status_code = 404 if exc.error_code == "not_found" else 400
+    raise HTTPException(
+        status_code=status_code,
+        detail={"code": exc.error_code, "message": exc.message},
+    )
 
 
 def _to_paper_response(orchestrator: PaperOrchestrator, paper: Paper) -> PaperResponse:
@@ -201,6 +212,84 @@ async def get_paper(
     except PaperDomainError as exc:
         _raise_as_http(exc)
     return _to_paper_detail_response(orchestrator, paper)
+
+
+@router.get(
+    "/{paper_id}/agent-note",
+    response_model=PaperAgentNoteResponse,
+    summary="获取论文 agent_note",
+)
+async def get_paper_agent_note(
+    paper_id: str,
+    db: DBDep,
+    task_manager: TaskManagerDep,
+) -> PaperAgentNoteResponse:
+    orchestrator = _build_orchestrator(db, task_manager)
+    try:
+        note = orchestrator.repo.get_agent_note(paper_id)
+    except PaperRepositoryError as exc:
+        _raise_repo_as_http(exc)
+    return PaperAgentNoteResponse(paper_id=paper_id, agent_note=note)
+
+
+@router.put(
+    "/{paper_id}/agent-note",
+    response_model=PaperAgentNoteResponse,
+    summary="写入论文 agent_note",
+)
+async def write_paper_agent_note(
+    paper_id: str,
+    request: PaperAgentNoteRequest,
+    db: DBDep,
+    task_manager: TaskManagerDep,
+) -> PaperAgentNoteResponse:
+    orchestrator = _build_orchestrator(db, task_manager)
+    try:
+        orchestrator.repo.set_agent_note(paper_id, request.content)
+        note = orchestrator.repo.get_agent_note(paper_id)
+    except PaperRepositoryError as exc:
+        logger.warning("event=paper.agent_note_write_failed paper_id=%s", paper_id)
+        _raise_repo_as_http(exc)
+    return PaperAgentNoteResponse(paper_id=paper_id, agent_note=note)
+
+
+@router.patch(
+    "/{paper_id}/agent-note",
+    response_model=PaperAgentNoteResponse,
+    summary="更新论文 agent_note",
+)
+async def update_paper_agent_note(
+    paper_id: str,
+    request: PaperAgentNoteRequest,
+    db: DBDep,
+    task_manager: TaskManagerDep,
+) -> PaperAgentNoteResponse:
+    return await write_paper_agent_note(
+        paper_id=paper_id,
+        request=request,
+        db=db,
+        task_manager=task_manager,
+    )
+
+
+@router.delete(
+    "/{paper_id}/agent-note",
+    response_model=PaperAgentNoteResponse,
+    summary="删除论文 agent_note",
+)
+async def delete_paper_agent_note(
+    paper_id: str,
+    db: DBDep,
+    task_manager: TaskManagerDep,
+) -> PaperAgentNoteResponse:
+    orchestrator = _build_orchestrator(db, task_manager)
+    try:
+        orchestrator.repo.delete_agent_note(paper_id)
+        note = orchestrator.repo.get_agent_note(paper_id)
+    except PaperRepositoryError as exc:
+        logger.warning("event=paper.agent_note_delete_failed paper_id=%s", paper_id)
+        _raise_repo_as_http(exc)
+    return PaperAgentNoteResponse(paper_id=paper_id, agent_note=note)
 
 
 @router.patch("/{paper_id}", response_model=PaperDetailResponse, summary="手动更新论文")
