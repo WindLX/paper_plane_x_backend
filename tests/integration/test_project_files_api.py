@@ -61,3 +61,27 @@ def test_project_file_replace_lines(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.json()["lines_replaced"] == 2
+
+
+def test_project_file_upload(client: TestClient) -> None:
+    project_id = _create_project(client)
+
+    response = client.post(
+        f"/api/v1/projects/{project_id}/files/upload",
+        data={"file_path": "/notes/uploaded.md"},
+        files={"file": ("uploaded.md", b"# Uploaded\n", "text/markdown")},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "file_path": "/notes/uploaded.md",
+        "bytes_written": 11,
+        "is_dir": False,
+    }
+
+    read_response = client.get(
+        f"/api/v1/projects/{project_id}/files/content",
+        params={"file_path": "/notes/uploaded.md"},
+    )
+    assert read_response.status_code == 200
+    assert read_response.json()["content"] == "# Uploaded\n"

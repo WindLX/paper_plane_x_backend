@@ -57,7 +57,7 @@ cd paper_plane_x_backend
 指定文件：
 
 ```bash
-./scripts/test.sh tests/unit/test_cli.py
+uv run --project ../paper_plane_x_cli pytest ../paper_plane_x_cli/tests/test_cli.py
 ./scripts/test.sh tests/integration/test_librarian_api.py
 ```
 
@@ -103,15 +103,15 @@ uv run pyright
 同时更新：
 
 - `prompts/researcher/System.md`
-- `skills/paper-plane-x-researcher/SKILL.md`
-- `skills/paper-plane-x-researcher/references/tool-guide.md`
+- `../paper_plane_x_cli/skills/paper-plane-x-researcher/SKILL.md`
+- `../paper_plane_x_cli/skills/paper-plane-x-researcher/references/tool-guide.md`
 - `docs/librarian.md`
 
 ### 新 `ppx` CLI 命令
 
-补 unit test，验证：
+在兄弟包 `../paper_plane_x_cli` 中补 unit test，验证：
 
-- argparse 参数。
+- CLI 参数。
 - context 优先级。
 - HTTP method / path / JSON body / query params。
 - 错误输出到 stderr 且返回非零退出码。
@@ -121,7 +121,7 @@ uv run pyright
 - `README.md`
 - `docs/workflow_quickstart.md`
 - `docs/librarian.md`
-- skill tool guide
+- `../paper_plane_x_cli/skills/paper-plane-x-researcher/references/tool-guide.md`
 
 ## 5. 测试环境约定
 
@@ -145,4 +145,3 @@ uv run pyright
 - 修改 tool runtime，至少跑 `test_agent_runtime*` 和相关 `test_tools_*`。
 - 修改 data-process，至少跑 data-process API、task manager、orchestrator 相关测试。
 - 修改 docs/skill/CLI，不一定需要全量测试，但至少跑受影响的 CLI/API 单元或集成测试。
-

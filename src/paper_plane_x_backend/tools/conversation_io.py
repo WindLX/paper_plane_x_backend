@@ -12,8 +12,8 @@ from paper_plane_x_backend.core.agent_runtime.tooling import tool
 
 logger = logging.getLogger(__name__)
 
-MAX_FILE_SIZE = 1024 * 1024  # 1MB
-_ALLOWED_EXTENSIONS = {".md", ".txt", ".json", ".csv", ".yaml", ".yml"}
+MAX_FILE_SIZE = 1024 * 1024 * 10  # 10MB
+_ALLOWED_EXTENSIONS = {".md", ".txt", ".json", ".csv", ".yaml", ".yml", ".toml"}
 
 
 def _build_project_file_shared_guides() -> dict[str, str]:

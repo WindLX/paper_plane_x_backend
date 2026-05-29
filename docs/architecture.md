@@ -214,8 +214,10 @@ Librarian 使用 DSL 查询和 field_paths 做精确提取。详见 [librarian.m
 
 入口：
 
-- `src/paper_plane_x_backend/cli.py`
-- console script：`ppx = "paper_plane_x_backend.cli:main"`
+- `../../paper_plane_x_cli/src/paper_plane_x_cli/cli.py`
+- console script：`ppx = "paper_plane_x_cli.cli:main"`
+- 本地安装：`uv tool install ../paper_plane_x_cli`（从 backend 目录执行）
+- 一次性运行：`uvx --from ../paper_plane_x_cli ppx --help`（从 backend 目录执行）
 
 特点：
 
@@ -227,18 +229,18 @@ Librarian 使用 DSL 查询和 field_paths 做精确提取。详见 [librarian.m
 常用：
 
 ```bash
-uv run ppx context set --base-url http://127.0.0.1:8000/api/v1 --project-id prj_x
-uv run ppx project global-finder
-uv run ppx librarian search --query-expr "(meta.title CONTAINS transformer)"
-uv run ppx files list --dir /
+ppx context set --base-url http://127.0.0.1:8000/api/v1 --project-id prj_x
+ppx project global-finder
+ppx librarian search --query-expr "(meta.title CONTAINS transformer)"
+ppx files list --dir /
 ```
 
 ### Researcher Skill
 
 目录：
 
-- `skills/paper-plane-x-researcher/SKILL.md`
-- `skills/paper-plane-x-researcher/references/tool-guide.md`
+- `../../paper_plane_x_cli/skills/paper-plane-x-researcher/SKILL.md`
+- `../../paper_plane_x_cli/skills/paper-plane-x-researcher/references/tool-guide.md`
 
 用途：
 
@@ -320,4 +322,3 @@ uv run ppx files list --dir /
 - 新 API 必须补 integration test。
 - 修改 tool context 语义时必须跑 agent runtime tests。
 - 文档里不保留已经删除的路由或旧设计草稿。
-

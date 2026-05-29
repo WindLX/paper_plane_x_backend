@@ -7,7 +7,16 @@ import logging
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import (
+    APIRouter,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 
 from paper_plane_x_backend.api.dependencies import DBDep
 from paper_plane_x_backend.config import settings
@@ -272,6 +281,56 @@ def write_project_sandbox_file(
         file_path=request.file_path,
         bytes_written=bytes_written,
         is_dir=is_dir,
+    )
+
+
+@router.post(
+    "/upload",
+    response_model=ProjectFileWriteResponse,
+    summary="上传本地文件到项目沙箱",
+)
+async def upload_project_sandbox_file(
+    db: DBDep,
+    project_id: str,
+    file: UploadFile = File(..., description="要上传的文件"),
+    file_path: str = Form(..., description="目标相对文件路径，如 /notes/idea.md"),
+) -> ProjectFileWriteResponse:
+    """上传文件到项目沙箱.
+
+    Upload 复用项目文件沙箱的安全约束：路径不能逃逸项目目录、扩展名必须在白名单内、
+    单文件大小不能超过 MAX_FILE_SIZE。
+    """
+    _ensure_project_exists(db, project_id)
+    try:
+        target = resolve_sandbox_path(project_id, file_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if target.exists() and target.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Path is a directory: {file_path}",
+        )
+
+    content = await file.read(MAX_FILE_SIZE + 1)
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large (>{MAX_FILE_SIZE} bytes): {file_path}",
+        )
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+    logger.info(
+        "event=project_file.upload project_id=%s file_path=%s bytes=%s filename=%s",
+        project_id,
+        file_path,
+        len(content),
+        file.filename,
+    )
+    return ProjectFileWriteResponse(
+        file_path=file_path,
+        bytes_written=len(content),
+        is_dir=False,
     )
 
 

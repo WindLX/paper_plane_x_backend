@@ -2,7 +2,7 @@
 
 这组文档面向两类读者：
 
-- **用户 / 外部 Agent 使用者**：想启动服务、上传论文、检索项目文献、使用 `ppx` CLI 或 Researcher skill。
+- **用户 / 外部 Agent 使用者**：想启动服务、上传论文、检索项目文献、使用兄弟包 `../paper_plane_x_cli` 提供的 `ppx` CLI 或 Researcher skill。
 - **开发者**：想理解后端结构、扩展 API / Agent / tools、维护测试和部署。
 
 ## 建议阅读顺序
@@ -57,7 +57,7 @@
 - `global-finder` / `search` / `matrix` / `deep-dive`
 - Project files 和 paper notes
 - `ppx` CLI 到 Researcher tools 的映射
-- `skills/paper-plane-x-researcher` 的定位
+- `../paper_plane_x_cli/skills/paper-plane-x-researcher` 的定位
 
 ### `architecture.md`
 
@@ -88,4 +88,3 @@
   - [architecture.md](./architecture.md)
   - [librarian.md](./librarian.md)（如果影响检索/Researcher/CLI）
 - 修改测试方式时，同步更新 [../tests/README.md](../tests/README.md)。
-

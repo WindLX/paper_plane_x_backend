@@ -216,26 +216,29 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/deep-dive \
 `ppx` 是外部 agent 和脚本的推荐入口。它调用 HTTP API，并输出 JSON。
 
 ```bash
-uv run ppx context set \
+uvx --from ../paper_plane_x_cli ppx --help
+uv tool install ../paper_plane_x_cli
+
+ppx context set \
   --base-url http://127.0.0.1:8000/api/v1 \
   --project-id "$PROJECT_ID"
 
-uv run ppx context show
-uv run ppx project global-finder
+ppx context show
+ppx project global-finder
 ```
 
 常用命令：
 
 ```bash
-uv run ppx librarian search \
+ppx librarian search \
   --query-expr "(quick_scan.tags CONTAINS 强化学习)" \
   --limit 10
 
-uv run ppx librarian matrix \
+ppx librarian matrix \
   --paper-ids "$PAPER_ID" \
   --field-paths meta.title,quick_scan.verdict,quick_scan.quick_summary
 
-uv run ppx librarian deep-dive \
+ppx librarian deep-dive \
   --paper-id "$PAPER_ID" \
   --question "这篇论文解决什么问题？"
 ```
@@ -245,17 +248,19 @@ uv run ppx librarian deep-dive \
 ### 9.1 Project files
 
 ```bash
-uv run ppx files list --dir /
-uv run ppx files write --path /notes/quickstart.md --content "# Quickstart Notes"
-uv run ppx files read --path /notes/quickstart.md
-uv run ppx files find --path /notes/quickstart.md --query Quickstart
-uv run ppx files lines --path /notes/quickstart.md --start-line 1 --end-line 5
+ppx files list --dir /
+ppx files write --path /notes/quickstart.md --content "# Quickstart Notes"
+printf "# Local Notes\n" > /tmp/ppx-local-notes.md
+ppx files upload --source /tmp/ppx-local-notes.md --path /notes/local-notes.md
+ppx files read --path /notes/quickstart.md
+ppx files find --path /notes/quickstart.md --query Quickstart
+ppx files lines --path /notes/quickstart.md --start-line 1 --end-line 5
 ```
 
 小范围编辑：
 
 ```bash
-uv run ppx files patch \
+ppx files patch \
   --path /notes/quickstart.md \
   --action insert_after \
   --anchor-text "# Quickstart Notes" \
@@ -265,9 +270,9 @@ uv run ppx files patch \
 ### 9.2 Paper note
 
 ```bash
-uv run ppx paper-note get --paper-id "$PAPER_ID"
-uv run ppx paper-note write --paper-id "$PAPER_ID" --content "初步结论：..."
-uv run ppx paper-note delete --paper-id "$PAPER_ID"
+ppx paper-note get --paper-id "$PAPER_ID"
+ppx paper-note write --paper-id "$PAPER_ID" --content "初步结论：..."
+ppx paper-note delete --paper-id "$PAPER_ID"
 ```
 
 ## 11. Conversation 流式对话
@@ -393,4 +398,3 @@ websocat "ws://127.0.0.1:8000/api/v1/ws/hitl"
 - `ppx context show` 的 `base_url` 是否包含 `/api/v1`。
 - 后端是否正在运行。
 - 当前机器是否能访问该 host/port。
-

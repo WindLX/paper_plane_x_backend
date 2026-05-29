@@ -86,11 +86,21 @@ done
 
 ## ppx CLI
 
+`ppx` 已拆到兄弟包 `../paper_plane_x_cli`，通过 HTTP 调用本服务。一次性运行或全局安装：
+
 ```bash
-uv run ppx context set --base-url http://127.0.0.1:8000/api/v1 --project-id prj_x
-uv run ppx project global-finder
-uv run ppx librarian search --query-expr "(meta.title CONTAINS transformer)"
-uv run ppx files list --dir /
+uvx --from ../paper_plane_x_cli ppx --help
+uv tool install ../paper_plane_x_cli
+```
+
+安装后：
+
+```bash
+ppx context set --base-url http://127.0.0.1:8000/api/v1 --project-id prj_x
+ppx project global-finder
+ppx librarian search --query-expr "(meta.title CONTAINS transformer)"
+ppx files list --dir /
+ppx files upload --source ./notes.md --path /notes/notes.md
 ```
 
 ## 开发
@@ -109,4 +119,3 @@ uv run pyright             # Type check
 - [Librarian](docs/librarian.md)
 - [Logging](docs/logging_conventions.md)
 - [Roadmap](docs/roadmap.md)
-

@@ -19,8 +19,8 @@
 - SubAgent 委派。
 - Agent trace 查询与列表。
 - Settings API。
-- `ppx` HTTP CLI。
-- `skills/paper-plane-x-researcher` 外部 agent skill。
+- 兄弟包 `paper_plane_x_cli` 中的 `ppx` HTTP CLI。
+- `paper_plane_x_cli/skills/paper-plane-x-researcher` 外部 agent skill。
 - 测试基线：`362 passed`。
 
 ## 已完成阶段
@@ -125,4 +125,3 @@
 3. 修改 CLI 命令必须同步更新 README、quickstart、librarian docs。
 4. 修改数据库 schema 必须包含迁移和测试。
 5. 文档只描述当前真实实现；历史设计和废弃接口不要保留在主文档正文。
-

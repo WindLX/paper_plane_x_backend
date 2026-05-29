@@ -15,7 +15,6 @@ dependencies = [
     "jinja2>=3.1.6",
     "httpx>=0.28.1",
     "rtoml>=0.13.0",
-    "typer>=0.23.1",
 ]
 
 [dependency-groups]
@@ -31,7 +30,6 @@ dev = [
 [project.scripts]
 app = "paper_plane_x_backend.main:run"
 debug = "paper_plane_x_backend.main:debug"
-ppx = "paper_plane_x_backend.cli:main"
 
 [build-system]
 requires = ["hatchling"]

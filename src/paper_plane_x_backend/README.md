@@ -24,8 +24,8 @@
   - API schemas 与 Agent I/O schemas。
 - `models/`
   - 核心领域模型与枚举。
-- `cli.py`
-  - `ppx` HTTP CLI，供外部 agent 和脚本调用后端能力。
+- `../paper_plane_x_cli/src/paper_plane_x_cli/cli.py`
+  - `ppx` HTTP CLI 位于兄弟包 `paper_plane_x_cli`，供外部 agent 和脚本调用后端能力。
 
 ## 核心链路
 
@@ -88,13 +88,13 @@
 - `ppx context show/set`
 - `ppx project global-finder`
 - `ppx librarian search/matrix/deep-dive`
-- `ppx files list/read/lines/find/write/replace-lines/replace-text/patch/delete`
+- `ppx files list/read/lines/find/write/upload/replace-lines/replace-text/patch/delete`
 - `ppx paper-note get/write/delete`
 
 Skill 目录：
 
-- `skills/paper-plane-x-researcher/SKILL.md`
-- `skills/paper-plane-x-researcher/references/tool-guide.md`
+- `../paper_plane_x_cli/skills/paper-plane-x-researcher/SKILL.md`
+- `../paper_plane_x_cli/skills/paper-plane-x-researcher/references/tool-guide.md`
 
 ## 代码约定
 
@@ -104,7 +104,7 @@ Skill 目录：
 - Agent tool 的隐藏上下文使用 `runtime_context` 注入。
 - Agent 输出必须通过 schema 校验。
 - 关键流程日志使用 `event=` 字段。
-- 新 API、新 CLI、新 tool 需要同步测试和文档。
+- 新 API、新 CLI、新 tool 需要同步测试和文档。CLI 代码与测试维护在兄弟包 `paper_plane_x_cli`。
 
 ## Console 前端集成
 
@@ -120,4 +120,3 @@ Skill 目录：
 ```
 
 如果没有构建产物，根路径会返回 `404 Console build not found`，API 不受影响。
-

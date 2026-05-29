@@ -17,7 +17,7 @@ Researcher 还配套两类项目资产工具：
 - Project files：项目沙箱里的 Markdown / text / JSON / CSV / YAML 文件。
 - Paper notes：单篇论文的长期 AI 笔记 `agent_note`。
 
-外部 agent 使用这些能力时，推荐走 `ppx` CLI 或 `skills/paper-plane-x-researcher`。
+外部 agent 使用这些能力时，推荐走 `ppx` CLI 或 `../paper_plane_x_cli/skills/paper-plane-x-researcher`。
 
 ## 2. API
 
@@ -36,6 +36,7 @@ Researcher 还配套两类项目资产工具：
 - `GET /api/v1/projects/{project_id}/files?dir_path=/`
 - `GET /api/v1/projects/{project_id}/files/content?file_path=/notes/a.md`
 - `PUT /api/v1/projects/{project_id}/files/content`
+- `POST /api/v1/projects/{project_id}/files/upload`
 - `DELETE /api/v1/projects/{project_id}/files/content?file_path=/notes/a.md`
 - `GET /api/v1/projects/{project_id}/files/lines`
 - `GET /api/v1/projects/{project_id}/files/find`
@@ -124,7 +125,7 @@ analysis_report.prerequisites[0].concept_name
 analysis_report.derivation_steps[0].detail_explanation.text
 ```
 
-完整 field path guide 已内置在 [../skills/paper-plane-x-researcher/SKILL.md](../skills/paper-plane-x-researcher/SKILL.md)。
+完整 field path guide 已内置在 [Researcher Skill](../../paper_plane_x_cli/skills/paper-plane-x-researcher/SKILL.md)。
 
 ## 5. API 示例
 
@@ -214,39 +215,42 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/deep-dive \
 `ppx` 是外部 agent 推荐使用的入口。
 
 ```bash
-uv run ppx context set --base-url http://127.0.0.1:8000/api/v1 --project-id prj_x
-uv run ppx context show
+uvx --from ../paper_plane_x_cli ppx --help
+uv tool install ../paper_plane_x_cli
+ppx context set --base-url http://127.0.0.1:8000/api/v1 --project-id prj_x
+ppx context show
 ```
 
 Librarian：
 
 ```bash
-uv run ppx project global-finder
-uv run ppx librarian search --query-expr "(meta.title CONTAINS transformer)" --limit 20
-uv run ppx librarian matrix --paper-ids pap-a,pap-b --field-paths meta.title,quick_scan.quick_summary
-uv run ppx librarian deep-dive --paper-id pap-a --question "核心创新是什么？"
+ppx project global-finder
+ppx librarian search --query-expr "(meta.title CONTAINS transformer)" --limit 20
+ppx librarian matrix --paper-ids pap-a,pap-b --field-paths meta.title,quick_scan.quick_summary
+ppx librarian deep-dive --paper-id pap-a --question "核心创新是什么？"
 ```
 
 Project files：
 
 ```bash
-uv run ppx files list --dir /
-uv run ppx files read --path /notes/survey.md
-uv run ppx files lines --path /notes/survey.md --start-line 1 --end-line 20
-uv run ppx files find --path /notes/survey.md --query "Related Work"
-uv run ppx files write --path /notes/idea.md --content "..."
-uv run ppx files replace-lines --path /notes/idea.md --start-line 2 --end-line 3 --new-text "..."
-uv run ppx files replace-text --path /notes/idea.md --old-text "old" --new-text "new"
-uv run ppx files patch --path /notes/idea.md --action insert_after --anchor-text "## Section\n" --content "..."
-uv run ppx files delete --path /notes/tmp.md
+ppx files list --dir /
+ppx files read --path /notes/survey.md
+ppx files lines --path /notes/survey.md --start-line 1 --end-line 20
+ppx files find --path /notes/survey.md --query "Related Work"
+ppx files write --path /notes/idea.md --content "..."
+ppx files upload --source ./idea.md --path /notes/idea.md
+ppx files replace-lines --path /notes/idea.md --start-line 2 --end-line 3 --new-text "..."
+ppx files replace-text --path /notes/idea.md --old-text "old" --new-text "new"
+ppx files patch --path /notes/idea.md --action insert_after --anchor-text "## Section\n" --content "..."
+ppx files delete --path /notes/tmp.md
 ```
 
 Paper notes：
 
 ```bash
-uv run ppx paper-note get --paper-id pap-a
-uv run ppx paper-note write --paper-id pap-a --content "..."
-uv run ppx paper-note delete --paper-id pap-a
+ppx paper-note get --paper-id pap-a
+ppx paper-note write --paper-id pap-a --content "..."
+ppx paper-note delete --paper-id pap-a
 ```
 
 ## 7. Project File Editing Guide
@@ -263,14 +267,14 @@ uv run ppx paper-note delete --paper-id pap-a
 - replace-text 和 patch 默认校验命中次数；命中数量不对时应先重新查找。
 - 行号是 1-based，`end_line` 包含端点。
 - 文件必须在项目沙箱内，扩展名仅允许 `.md`, `.txt`, `.json`, `.csv`, `.yaml`, `.yml`。
-- 单文件大小上限为 1MB。
+- 单文件大小上限为 10MB。
 
 ## 8. Researcher Skill
 
 外部 agent 使用：
 
-- [../skills/paper-plane-x-researcher/SKILL.md](../skills/paper-plane-x-researcher/SKILL.md)
-- [../skills/paper-plane-x-researcher/references/tool-guide.md](../skills/paper-plane-x-researcher/references/tool-guide.md)
+- [Researcher Skill](../../paper_plane_x_cli/skills/paper-plane-x-researcher/SKILL.md)
+- [Tool Guide](../../paper_plane_x_cli/skills/paper-plane-x-researcher/references/tool-guide.md)
 
 Skill 包含：
 
@@ -299,7 +303,7 @@ Skill 不暴露内置 ResearcherAgent 的 `ask_human` 和 `delegate_to_subagent`
 2. `files read` / `lines` 读取上下文。
 3. `search` / `matrix` 补证据。
 4. 生成 Markdown。
-5. 用 `files write` 或 patch 类命令保存。
+5. 用 `files write`、`files upload` 或 patch 类命令保存。
 
 ### 用户要求比较多篇论文
 
@@ -319,4 +323,3 @@ Skill 不暴露内置 ResearcherAgent 的 `ask_human` 和 `delegate_to_subagent`
 - `500 agent_execution_error`：deep-dive 或 LLM 调用失败。
 
 CLI 中所有错误都会以 JSON 打到 stderr，并返回非零退出码。
-
