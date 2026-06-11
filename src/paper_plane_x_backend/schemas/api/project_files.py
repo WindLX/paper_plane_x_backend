@@ -36,7 +36,7 @@ class ProjectFileWriteRequest(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
     file_path: str = Field(..., min_length=1, description="相对路径，如 /notes/idea.md")
-    content: str = Field(..., description="文件内容")
+    content: str = Field(default="", description="文件内容；创建目录时可省略")
     is_dir: bool | None = Field(
         default=False,
         description="是否为目录，如果为 true 则 content 字段会被忽略",

@@ -111,9 +111,7 @@ class ConversationTurnEventResponse(BaseModel):
         "assistant_final",
     ] = Field(..., description="事件类型")
     content: str | None = Field(default=None, description="消息内容")
-    reasoning_content: str | None = Field(
-        default=None, description="思考过程内容"
-    )
+    reasoning_content: str | None = Field(default=None, description="思考过程内容")
     name: str | None = Field(default=None, description="工具名称或 Agent 名")
     tool_calls: list[dict[str, Any]] | None = Field(
         default=None,

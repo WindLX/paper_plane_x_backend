@@ -32,6 +32,7 @@ from paper_plane_x_backend.services.data_process_tasks.lifecycle import (
     stop_worker_pool,
 )
 from paper_plane_x_backend.services.database import get_db
+from paper_plane_x_backend.services.project.files import get_project_file_manager
 from paper_plane_x_backend.utils.logging import (
     get_active_log_file_path,
     setup_logging,
@@ -169,12 +170,10 @@ async def lifespan(app: FastAPI):
 
     db = get_db()
     rows = db.fetchall("SELECT project_id FROM projects")
-    for row in rows:
-        project_id = row["project_id"]
-        sandbox_path = settings.data_dir / "projects" / project_id
-        sandbox_path.mkdir(parents=True, exist_ok=True)
-    if rows:
-        logger.info("event=app.sandbox_dirs_checked count=%s", len(rows))
+    project_ids = [row["project_id"] for row in rows]
+    checked_count = get_project_file_manager().ensure_project_sandboxes(project_ids)
+    if checked_count:
+        logger.info("event=app.sandbox_dirs_checked count=%s", checked_count)
 
     await start_worker_pool()
     logger.info(

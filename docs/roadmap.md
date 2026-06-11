@@ -27,69 +27,69 @@
 
 ### Phase 1: 后端基础骨架
 
-| 能力 | 状态 |
-| --- | --- |
-| FastAPI app、配置系统、uv 项目结构 | 已完成 |
+| 能力                                 | 状态   |
+| ------------------------------------ | ------ |
+| FastAPI app、配置系统、uv 项目结构   | 已完成 |
 | SQLite 封装、schema 初始化、迁移兼容 | 已完成 |
-| Project / Paper 数据模型 | 已完成 |
-| Project API | 已完成 |
-| 单元/集成测试基础 | 已完成 |
+| Project / Paper 数据模型             | 已完成 |
+| Project API                          | 已完成 |
+| 单元/集成测试基础                    | 已完成 |
 
 ### Phase 2: Agent Runtime
 
-| 能力 | 状态 |
-| --- | --- |
-| LiteLLM client | 已完成 |
-| Memory 与 OpenAI-compatible message schema | 已完成 |
-| ToolRegistry 与 `@tool` | 已完成 |
+| 能力                                         | 状态   |
+| -------------------------------------------- | ------ |
+| LiteLLM client                               | 已完成 |
+| Memory 与 OpenAI-compatible message schema   | 已完成 |
+| ToolRegistry 与 `@tool`                      | 已完成 |
 | `runtime_context` hidden parameter injection | 已完成 |
-| BaseAgent normal 模式与 trace 落库 | 已完成 |
-| structured output 校验 | 已完成 |
+| BaseAgent normal 模式与 trace 落库           | 已完成 |
+| structured output 校验                       | 已完成 |
 
 ### Phase 3: Data Process
 
-| 能力 | 状态 |
-| --- | --- |
-| PDF 上传与 paper 创建/复用 | 已完成 |
-| MinerU 解析 | 已完成 |
+| 能力                               | 状态   |
+| ---------------------------------- | ------ |
+| PDF 上传与 paper 创建/复用         | 已完成 |
+| MinerU 解析                        | 已完成 |
 | Extraction / Analysis / Fact Check | 已完成 |
-| task manager、worker pool、持久化 | 已完成 |
-| cancel / retry / delete task | 已完成 |
-| paper reprocess | 已完成 |
-| 人工回填 | 已完成 |
+| task manager、worker pool、持久化  | 已完成 |
+| cancel / retry / delete task       | 已完成 |
+| paper reprocess                    | 已完成 |
+| 人工回填                           | 已完成 |
 
 ### Phase 4: Librarian 与项目资产
 
-| 能力 | 状态 |
-| --- | --- |
-| `POST /api/v1/librarian/search` | 已完成 |
-| `POST /api/v1/librarian/matrix` | 已完成 |
-| `POST /api/v1/librarian/deep-dive` | 已完成 |
-| `POST /api/v1/librarian/global-finder` | 已完成 |
-| `POST /api/v1/librarian/query-builder` | 已完成 |
+| 能力                                        | 状态   |
+| ------------------------------------------- | ------ |
+| `POST /api/v1/librarian/search`             | 已完成 |
+| `POST /api/v1/librarian/matrix`             | 已完成 |
+| `POST /api/v1/librarian/deep-dive`          | 已完成 |
+| `POST /api/v1/librarian/global-finder`      | 已完成 |
+| `POST /api/v1/librarian/query-builder`      | 已完成 |
 | `POST /api/v1/projects/{project_id}/search` | 已完成 |
-| Project file sandbox API | 已完成 |
-| Paper note API | 已完成 |
+| Project file sandbox API                    | 已完成 |
+| Paper note API                              | 已完成 |
 
 ### Phase 5: Researcher Workflow
 
-| 能力 | 状态 |
-| --- | --- |
-| Conversation REST | 已完成 |
-| Conversation WebSocket streaming | 已完成 |
-| ResearcherAgent tools | 已完成 |
-| HITL WebSocket | 已完成 |
-| `ask_human` | 已完成 |
+| 能力                              | 状态   |
+| --------------------------------- | ------ |
+| Conversation REST                 | 已完成 |
+| Conversation WebSocket streaming  | 已完成 |
+| ResearcherAgent tools             | 已完成 |
+| HITL WebSocket                    | 已完成 |
+| `ask_human`                       | 已完成 |
 | `delegate_to_subagent` / SubAgent | 已完成 |
 
 ### Phase 6: External Agent Integration
 
-| 能力 | 状态 |
-| --- | --- |
-| `ppx` HTTP CLI | 已完成 |
-| CLI context：flag > env > saved config | 已完成 |
-| CLI commands：librarian / files / paper-note / context | 已完成 |
-| `paper-plane-x-researcher` skill | 已完成 |
+| 能力                                                           | 状态   |
+| -------------------------------------------------------------- | ------ |
+| `ppx` HTTP CLI                                                 | 已完成 |
+| CLI context：flag > env > saved config                         | 已完成 |
+| CLI commands：librarian / files / paper-note / context         | 已完成 |
+| `paper-plane-x-researcher` skill                               | 已完成 |
 | Skill 包含 Researcher 行为、工具说明、field paths、query rules | 已完成 |
 
 ## 当前优先级
@@ -125,3 +125,11 @@
 3. 修改 CLI 命令必须同步更新 README、quickstart、librarian docs。
 4. 修改数据库 schema 必须包含迁移和测试。
 5. 文档只描述当前真实实现；历史设计和废弃接口不要保留在主文档正文。
+
+## TODO
+
+- [x] 文件沙箱系统优化和 bug 修复
+- [x] export 支持导出沙箱文件
+- [x] 前端渲染问题, 左侧边栏在窄布局下优先级比新建 project 高的问题；
+- [ ] 前端渲染问题右侧边栏宽度问题
+- [ ] 后端流式传输卡死问题

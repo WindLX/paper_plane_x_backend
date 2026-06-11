@@ -121,3 +121,15 @@ def test_project_file_editing_guide_mentions_limits() -> None:
 
     assert ".md" in guide
     assert str(conversation_io.MAX_FILE_SIZE) in guide
+
+
+def test_project_file_tool_errors_preserve_error_payload(
+    project_sandbox: Path,
+) -> None:
+    assert conversation_io.read_project_file.function is not None
+    payload = conversation_io.read_project_file.function(
+        file_path="/missing.md",
+        project_id="proj-1",
+    )
+
+    assert payload == {"error": "File not found: /missing.md"}

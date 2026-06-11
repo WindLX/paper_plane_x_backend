@@ -23,6 +23,11 @@ from paper_plane_x_backend.services.conversation.repository import (
 )
 from paper_plane_x_backend.services.database import Database
 from paper_plane_x_backend.services.paper.repository import PaperRepository
+from paper_plane_x_backend.services.project.files import (
+    ProjectFileError,
+    ProjectFileManager,
+    get_project_file_manager,
+)
 from paper_plane_x_backend.services.project.repository import (
     ProjectRepository,
     ProjectRepositoryError,
@@ -48,10 +53,12 @@ class ProjectOrchestrator:
     def __init__(
         self,
         db: Database,
+        file_manager: ProjectFileManager | None = None,
     ) -> None:
         self.paper_repo = PaperRepository(db)
         self.project_repo = ProjectRepository(db)
         self.conversation_repo = ConversationRepository(db)
+        self.file_manager = file_manager or get_project_file_manager()
 
     def _ensure_project_exists(self, project_id: str) -> None:
         try:
@@ -76,7 +83,37 @@ class ProjectOrchestrator:
             updated_at=now,
             operation_logs=[],
         )
-        self.project_repo.create(project)
+        sandbox_created = False
+        try:
+            sandbox_root = self.file_manager.sandbox_root(project.project_id)
+            sandbox_created = not sandbox_root.exists()
+            self.file_manager.ensure_project_sandbox(project.project_id)
+            self.project_repo.create(project)
+        except ProjectFileError as exc:
+            if sandbox_created:
+                try:
+                    self.file_manager.delete_project_sandbox(project.project_id)
+                except ProjectFileError:
+                    logger.warning(
+                        "event=project.sandbox_cleanup_after_create_failed project_id=%s",
+                        project.project_id,
+                        exc_info=True,
+                    )
+            raise ProjectDomainError(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                exc.message,
+            ) from exc
+        except Exception:
+            if sandbox_created:
+                try:
+                    self.file_manager.delete_project_sandbox(project.project_id)
+                except ProjectFileError:
+                    logger.warning(
+                        "event=project.sandbox_cleanup_after_create_failed project_id=%s",
+                        project.project_id,
+                        exc_info=True,
+                    )
+            raise
         logger.info(
             "event=project.created project_id=%s name=%s",
             project.project_id,
@@ -193,6 +230,20 @@ class ProjectOrchestrator:
                     exc.message,
                 ) from exc
             raise
+        try:
+            self.file_manager.delete_project_sandbox(project_id)
+        except ProjectFileError as exc:
+            logger.error(
+                "event=project.sandbox_delete_failed project_id=%s code=%s message=%s",
+                project_id,
+                exc.code,
+                exc.message,
+                exc_info=True,
+            )
+            raise ProjectDomainError(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                exc.message,
+            ) from exc
         logger.info("event=project.deleted project_id=%s", project_id)
 
     def list_papers(
@@ -297,9 +348,28 @@ class ProjectOrchestrator:
         project_id: str,
         fields: Sequence[str],
         citations_mode: str,
+        include_sandbox_files: bool = False,
     ) -> tuple[str, str]:
         project = self.get_project(project_id)
         papers = self.list_all_papers(project_id=project_id)
+        try:
+            sandbox_files = (
+                self.file_manager.collect_sandbox_files(project_id)
+                if include_sandbox_files
+                else []
+            )
+        except ProjectFileError as exc:
+            logger.error(
+                "event=project.export_sandbox_collect_failed project_id=%s code=%s message=%s",
+                project_id,
+                exc.code,
+                exc.message,
+                exc_info=True,
+            )
+            raise ProjectDomainError(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                exc.message,
+            ) from exc
 
         selected_fields = list(dict.fromkeys(fields))
         export_items: list[dict[str, Any]] = []
@@ -353,10 +423,18 @@ class ProjectOrchestrator:
                 "export_options": {
                     "fields": selected_fields,
                     "citations_mode": citations_mode,
+                    "include_sandbox_files": include_sandbox_files,
                 },
                 "paper_count": len(export_items),
                 "papers": export_items,
                 "file_folders": file_entries,
+                "sandbox_files": {
+                    "included": include_sandbox_files,
+                    "file_count": len(sandbox_files),
+                    "archive_prefix": "project_files"
+                    if include_sandbox_files
+                    else None,
+                },
                 "exported_at": datetime.now(),
             }
         )
@@ -396,6 +474,11 @@ class ProjectOrchestrator:
                         continue
                     relative_path = file_path.relative_to(candidate_dir)
                     arcname = f"{base_name}/paper_files/{paper.paper_id}/{relative_path.as_posix()}"
+                    zf.write(file_path, arcname=arcname)
+
+            if include_sandbox_files:
+                for file_path, relative_path in sandbox_files:
+                    arcname = f"{base_name}/project_files/{relative_path}"
                     zf.write(file_path, arcname=arcname)
 
         logger.info(

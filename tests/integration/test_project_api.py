@@ -7,6 +7,7 @@ from datetime import datetime
 
 from fastapi.testclient import TestClient
 
+from paper_plane_x_backend.config import settings
 from paper_plane_x_backend.services import Database
 
 
@@ -39,6 +40,7 @@ class TestProjectAPI:
         assert data["name"] == "Test Project"
         assert data["description"] == "Test Description"
         assert "project_id" in data
+        assert (settings.data_dir / "projects" / data["project_id"]).is_dir()
 
     def test_create_project_without_description(self, client: TestClient) -> None:
         """测试创建项目（无描述）."""
@@ -154,6 +156,10 @@ class TestProjectAPI:
             json={"name": "Delete Test"},
         )
         project_id = create_response.json()["project_id"]
+        sandbox_dir = settings.data_dir / "projects" / project_id
+        nested_file = sandbox_dir / "notes" / "draft.md"
+        nested_file.parent.mkdir(parents=True, exist_ok=True)
+        nested_file.write_text("draft", encoding="utf-8")
 
         # 删除项目
         response = client.delete(f"/api/v1/projects/{project_id}")
@@ -164,6 +170,7 @@ class TestProjectAPI:
         # 确认已删除
         get_response = client.get(f"/api/v1/projects/{project_id}")
         assert get_response.status_code == 404
+        assert not sandbox_dir.exists()
 
     def test_delete_project_also_cleans_paper_links(
         self, client: TestClient, db: Database
@@ -599,6 +606,13 @@ class TestProjectAPI:
         assert payload["project"]["project_id"] == project_id
         assert payload["paper_count"] == 1
         assert payload["export_options"]["citations_mode"] == "strip"
+        assert payload["export_options"]["include_sandbox_files"] is False
+        assert payload["sandbox_files"] == {
+            "included": False,
+            "file_count": 0,
+            "archive_prefix": None,
+        }
+        assert not [name for name in names if "/project_files/" in name]
         exported_paper = payload["papers"][0]
         assert sorted(exported_paper.keys()) == sorted(
             [
@@ -671,3 +685,49 @@ class TestProjectAPI:
         payload = json.loads(zf.read(export_json_path[0]).decode("utf-8"))
         exported_paper = payload["papers"][0]
         assert "citations" in exported_paper["quick_scan"]
+
+    def test_export_project_bundle_includes_sandbox_files_when_requested(
+        self,
+        client: TestClient,
+    ) -> None:
+        create_resp = client.post(
+            "/api/v1/projects",
+            json={"name": "Export Sandbox Files"},
+        )
+        project_id = create_resp.json()["project_id"]
+
+        write_resp = client.put(
+            f"/api/v1/projects/{project_id}/files/content",
+            json={"file_path": "/notes/draft.md", "content": "# Draft\n"},
+        )
+        assert write_resp.status_code == 200
+
+        response = client.post(
+            f"/api/v1/projects/{project_id}/export",
+            json={
+                "fields": ["paper_id", "title"],
+                "citations_mode": "keep",
+                "include_sandbox_files": True,
+            },
+        )
+
+        assert response.status_code == 200
+        zf = zipfile.ZipFile(io.BytesIO(response.content))
+        names = zf.namelist()
+        export_json_path = [
+            name for name in names if name.endswith("/project_export.json")
+        ]
+        assert export_json_path
+        sandbox_file_paths = [
+            name for name in names if name.endswith("/project_files/notes/draft.md")
+        ]
+        assert sandbox_file_paths
+        assert zf.read(sandbox_file_paths[0]).decode("utf-8") == "# Draft\n"
+
+        payload = json.loads(zf.read(export_json_path[0]).decode("utf-8"))
+        assert payload["export_options"]["include_sandbox_files"] is True
+        assert payload["sandbox_files"] == {
+            "included": True,
+            "file_count": 1,
+            "archive_prefix": "project_files",
+        }

@@ -124,3 +124,7 @@ class ProjectExportRequest(BaseModel):
             "keep=保留 citations；strip=递归移除 citations"
         ),
     )
+    include_sandbox_files: bool = Field(
+        default=False,
+        description="是否将项目文件沙箱中的文件打包到 project_files/ 目录下",
+    )

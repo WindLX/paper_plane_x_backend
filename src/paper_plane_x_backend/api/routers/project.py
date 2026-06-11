@@ -331,6 +331,7 @@ async def export_project(
             project_id=project_id,
             fields=request.fields,
             citations_mode=request.citations_mode,
+            include_sandbox_files=request.include_sandbox_files,
         )
     except ProjectDomainError as exc:
         _raise_as_http(exc)

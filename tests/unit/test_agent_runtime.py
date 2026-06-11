@@ -992,8 +992,8 @@ class TestBaseAgentRunStream:
         monkeypatch.setattr(
             agent,
             "save_trace_snapshot",
-            lambda messages, llm_model=None, usage=None, tools=None: saved_usages.append(
-                usage
+            lambda messages, llm_model=None, usage=None, tools=None: (
+                saved_usages.append(usage)
             ),
         )
 

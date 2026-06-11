@@ -430,7 +430,9 @@ def create_message(
             else (
                 "user_input"
                 if request.role == "user"
-                else "tool_result" if request.role == "tool" else "assistant_final"
+                else "tool_result"
+                if request.role == "tool"
+                else "assistant_final"
             )
         ),
     )

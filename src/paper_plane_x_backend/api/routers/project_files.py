@@ -4,7 +4,7 @@
 """
 
 import logging
-from pathlib import Path
+from typing import NoReturn
 from urllib.parse import quote
 
 from fastapi import (
@@ -19,13 +19,11 @@ from fastapi import (
 )
 
 from paper_plane_x_backend.api.dependencies import DBDep
-from paper_plane_x_backend.config import settings
 from paper_plane_x_backend.schemas.api.project_files import (
     ProjectFileContentResponse,
     ProjectFileDeleteResponse,
     ProjectFileExportRequest,
     ProjectFileFindResponse,
-    ProjectFileItem,
     ProjectFileListResponse,
     ProjectFilePatchRequest,
     ProjectFilePatchResponse,
@@ -37,22 +35,12 @@ from paper_plane_x_backend.schemas.api.project_files import (
     ProjectFileWriteRequest,
     ProjectFileWriteResponse,
 )
-from paper_plane_x_backend.services.pandoc import (
-    ExportFormat,
-    convert_markdown,
-    get_content_type,
-    get_extension,
+from paper_plane_x_backend.services.project.files import (
+    MAX_FILE_SIZE,
+    ProjectFileError,
+    get_project_file_manager,
 )
 from paper_plane_x_backend.services.project.repository import ProjectRepository
-from paper_plane_x_backend.tools.conversation_io import (
-    MAX_FILE_SIZE,
-    find_in_project_file,
-    patch_project_file,
-    read_project_file_lines,
-    replace_project_file_lines,
-    replace_project_file_text,
-    resolve_sandbox_path,
-)
 
 router = APIRouter(prefix="/projects/{project_id}/files", tags=["project_files"])
 logger = logging.getLogger(__name__)
@@ -68,24 +56,27 @@ def _ensure_project_exists(db: DBDep, project_id: str) -> None:
         )
 
 
-def _resolve_dir_path(project_id: str, dir_path: str) -> Path:
-    """解析并验证目录路径."""
-    sandbox_root = settings.data_dir / "projects" / project_id
-    target = (sandbox_root / dir_path.lstrip("/")).resolve()
-    resolved_root = sandbox_root.resolve()
-    if not str(target).startswith(str(resolved_root)):
-        raise ValueError(f"Path escapes sandbox: {dir_path}")
-    return target
-
-
-def _raise_tool_error(payload: dict[str, object]) -> None:
-    error = payload.get("error")
-    if error is None:
-        return
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail={"code": "project_file_tool_error", "message": str(error)},
+def _raise_project_file_error(exc: ProjectFileError) -> NoReturn:
+    logger.warning(
+        "event=project_file.error code=%s status=%s message=%s",
+        exc.code,
+        exc.status_code,
+        exc.message,
     )
+    raise HTTPException(
+        status_code=exc.status_code,
+        detail={"code": exc.code, "message": exc.message},
+    )
+
+
+def _content_disposition(download_name: str) -> str:
+    """Build an RFC 5987-aware attachment disposition."""
+    try:
+        download_name.encode("latin-1")
+        return f'attachment; filename="{download_name}"'
+    except UnicodeEncodeError:
+        encoded_name = quote(download_name, safe="")
+        return f"attachment; filename*=UTF-8''{encoded_name}"
 
 
 @router.get(
@@ -98,47 +89,13 @@ def list_project_sandbox_files(
     project_id: str,
     dir_path: str = Query(default="/", description="相对目录路径，默认为 /"),
 ) -> ProjectFileListResponse:
-    """列出项目沙箱中的文件和目录.
-
-    Args:
-        project_id: 项目 ID
-        dir_path: 相对目录路径
-        db: 数据库实例
-
-    Returns:
-        ProjectFileListResponse: 文件/目录列表
-    """
+    """列出项目沙箱中的文件和目录."""
     _ensure_project_exists(db, project_id)
     try:
-        target = _resolve_dir_path(project_id, dir_path)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-
-    if not target.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Directory not found: {dir_path}",
-        )
-    if not target.is_dir():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Path is not a directory: {dir_path}",
-        )
-
-    items: list[ProjectFileItem] = []
-    for child in sorted(target.iterdir()):
-        try:
-            size = child.stat().st_size if child.is_file() else None
-        except OSError:
-            size = None
-        items.append(
-            ProjectFileItem(
-                name=child.name,
-                is_dir=child.is_dir(),
-                size=size,
-            )
-        )
-    return ProjectFileListResponse(items=items)
+        payload = get_project_file_manager().list_files(project_id, dir_path)
+    except ProjectFileError as exc:
+        _raise_project_file_error(exc)
+    return ProjectFileListResponse.model_validate(payload)
 
 
 @router.get(
@@ -151,40 +108,13 @@ def read_project_sandbox_file(
     project_id: str,
     file_path: str = Query(..., description="相对文件路径，如 /notes/idea.md"),
 ) -> ProjectFileContentResponse:
-    """读取项目沙箱中的文件内容.
-
-    Args:
-        project_id: 项目 ID
-        file_path: 相对文件路径
-        db: 数据库实例
-
-    Returns:
-        ProjectFileContentResponse: 文件内容
-    """
+    """读取项目沙箱中的文件内容."""
     _ensure_project_exists(db, project_id)
     try:
-        target = resolve_sandbox_path(project_id, file_path)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-
-    if not target.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File not found: {file_path}",
-        )
-    if target.is_dir():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Path is a directory: {file_path}",
-        )
-    if target.stat().st_size > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large (>{MAX_FILE_SIZE} bytes): {file_path}",
-        )
-
-    content = target.read_text(encoding="utf-8")
-    return ProjectFileContentResponse(file_path=file_path, content=content)
+        payload = get_project_file_manager().read_file(project_id, file_path)
+    except ProjectFileError as exc:
+        _raise_project_file_error(exc)
+    return ProjectFileContentResponse.model_validate(payload)
 
 
 @router.get(
@@ -200,14 +130,15 @@ def read_project_sandbox_file_lines(
     end_line: int | None = Query(default=None, ge=1, description="结束行号，含端点"),
 ) -> ProjectFileReadLinesResponse:
     _ensure_project_exists(db, project_id)
-    assert read_project_file_lines.function is not None
-    payload = read_project_file_lines.function(
-        file_path=file_path,
-        start_line=start_line,
-        end_line=end_line,
-        project_id=project_id,
-    )
-    _raise_tool_error(payload)
+    try:
+        payload = get_project_file_manager().read_file_lines(
+            project_id,
+            file_path,
+            start_line,
+            end_line,
+        )
+    except ProjectFileError as exc:
+        _raise_project_file_error(exc)
     return ProjectFileReadLinesResponse.model_validate(payload)
 
 
@@ -225,15 +156,16 @@ def find_project_sandbox_file_text(
     max_matches: int = Query(default=20, ge=1, le=200),
 ) -> ProjectFileFindResponse:
     _ensure_project_exists(db, project_id)
-    assert find_in_project_file.function is not None
-    payload = find_in_project_file.function(
-        file_path=file_path,
-        query=query,
-        case_sensitive=case_sensitive,
-        max_matches=max_matches,
-        project_id=project_id,
-    )
-    _raise_tool_error(payload)
+    try:
+        payload = get_project_file_manager().find_in_file(
+            project_id,
+            file_path,
+            query,
+            case_sensitive=case_sensitive,
+            max_matches=max_matches,
+        )
+    except ProjectFileError as exc:
+        _raise_project_file_error(exc)
     return ProjectFileFindResponse.model_validate(payload)
 
 
@@ -247,41 +179,19 @@ def write_project_sandbox_file(
     project_id: str,
     request: ProjectFileWriteRequest,
 ) -> ProjectFileWriteResponse:
-    """写入或覆盖项目沙箱中的文件或者创建目录.
-
-    Args:
-        project_id: 项目 ID
-        request: 写入请求
-        db: 数据库实例
-
-    Returns:
-        ProjectFileWriteResponse: 写入结果
-    """
+    """写入或覆盖项目沙箱中的文件或者创建目录."""
     _ensure_project_exists(db, project_id)
     is_dir = request.is_dir or False
     try:
-        target = resolve_sandbox_path(project_id, request.file_path, is_dir)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if is_dir:
-        target.mkdir(exist_ok=True)
-        bytes_written = 0
-    else:
-        bytes_written = target.write_text(request.content, encoding="utf-8")
-    logger.info(
-        "event=project_file.write project_id=%s file_path=%s bytes=%s is_dir=%s",
-        project_id,
-        request.file_path,
-        bytes_written,
-        is_dir,
-    )
-    return ProjectFileWriteResponse(
-        file_path=request.file_path,
-        bytes_written=bytes_written,
-        is_dir=is_dir,
-    )
+        payload = get_project_file_manager().write_file(
+            project_id,
+            request.file_path,
+            request.content,
+            is_dir=is_dir,
+        )
+    except ProjectFileError as exc:
+        _raise_project_file_error(exc)
+    return ProjectFileWriteResponse.model_validate(payload)
 
 
 @router.post(
@@ -301,25 +211,11 @@ async def upload_project_sandbox_file(
     单文件大小不能超过 MAX_FILE_SIZE。
     """
     _ensure_project_exists(db, project_id)
-    try:
-        target = resolve_sandbox_path(project_id, file_path)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    if target.exists() and target.is_dir():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Path is a directory: {file_path}",
-        )
-
     content = await file.read(MAX_FILE_SIZE + 1)
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large (>{MAX_FILE_SIZE} bytes): {file_path}",
-        )
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(content)
+    try:
+        payload = get_project_file_manager().write_bytes(project_id, file_path, content)
+    except ProjectFileError as exc:
+        _raise_project_file_error(exc)
     logger.info(
         "event=project_file.upload project_id=%s file_path=%s bytes=%s filename=%s",
         project_id,
@@ -327,11 +223,7 @@ async def upload_project_sandbox_file(
         len(content),
         file.filename,
     )
-    return ProjectFileWriteResponse(
-        file_path=file_path,
-        bytes_written=len(content),
-        is_dir=False,
-    )
+    return ProjectFileWriteResponse.model_validate(payload)
 
 
 @router.patch(
@@ -345,15 +237,16 @@ def replace_project_sandbox_file_lines(
     request: ProjectFileReplaceLinesRequest,
 ) -> ProjectFileReplaceLinesResponse:
     _ensure_project_exists(db, project_id)
-    assert replace_project_file_lines.function is not None
-    payload = replace_project_file_lines.function(
-        file_path=request.file_path,
-        start_line=request.start_line,
-        end_line=request.end_line,
-        new_text=request.new_text,
-        project_id=project_id,
-    )
-    _raise_tool_error(payload)
+    try:
+        payload = get_project_file_manager().replace_file_lines(
+            project_id,
+            request.file_path,
+            request.start_line,
+            request.end_line,
+            request.new_text,
+        )
+    except ProjectFileError as exc:
+        _raise_project_file_error(exc)
     return ProjectFileReplaceLinesResponse.model_validate(payload)
 
 
@@ -368,16 +261,17 @@ def replace_project_sandbox_file_text(
     request: ProjectFileReplaceTextRequest,
 ) -> ProjectFileReplaceTextResponse:
     _ensure_project_exists(db, project_id)
-    assert replace_project_file_text.function is not None
-    payload = replace_project_file_text.function(
-        file_path=request.file_path,
-        old_text=request.old_text,
-        new_text=request.new_text,
-        replace_all=request.replace_all,
-        expected_occurrences=request.expected_occurrences,
-        project_id=project_id,
-    )
-    _raise_tool_error(payload)
+    try:
+        payload = get_project_file_manager().replace_file_text(
+            project_id,
+            request.file_path,
+            request.old_text,
+            request.new_text,
+            replace_all=request.replace_all,
+            expected_occurrences=request.expected_occurrences,
+        )
+    except ProjectFileError as exc:
+        _raise_project_file_error(exc)
     return ProjectFileReplaceTextResponse.model_validate(payload)
 
 
@@ -392,16 +286,17 @@ def patch_project_sandbox_file(
     request: ProjectFilePatchRequest,
 ) -> ProjectFilePatchResponse:
     _ensure_project_exists(db, project_id)
-    assert patch_project_file.function is not None
-    payload = patch_project_file.function(
-        file_path=request.file_path,
-        action=request.action,
-        anchor_text=request.anchor_text,
-        content=request.content,
-        expected_occurrences=request.expected_occurrences,
-        project_id=project_id,
-    )
-    _raise_tool_error(payload)
+    try:
+        payload = get_project_file_manager().patch_file(
+            project_id,
+            request.file_path,
+            request.action,
+            request.anchor_text,
+            request.content,
+            expected_occurrences=request.expected_occurrences,
+        )
+    except ProjectFileError as exc:
+        _raise_project_file_error(exc)
     return ProjectFilePatchResponse.model_validate(payload)
 
 
@@ -415,39 +310,13 @@ def delete_project_sandbox_file(
     project_id: str,
     file_path: str = Query(..., description="相对文件路径"),
 ) -> ProjectFileDeleteResponse:
-    """删除项目沙箱中的文件或空目录.
-
-    Args:
-        project_id: 项目 ID
-        file_path: 相对文件路径
-        db: 数据库实例
-
-    Returns:
-        ProjectFileDeleteResponse: 删除结果
-    """
+    """删除项目沙箱中的文件或空目录."""
     _ensure_project_exists(db, project_id)
     try:
-        target = resolve_sandbox_path(project_id, file_path)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-
-    if not target.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File not found: {file_path}",
-        )
-
-    if target.is_dir():
-        target.rmdir()  # 只允许删除空目录
-    else:
-        target.unlink()
-
-    logger.info(
-        "event=project_file.delete project_id=%s file_path=%s",
-        project_id,
-        file_path,
-    )
-    return ProjectFileDeleteResponse(removed=file_path)
+        payload = get_project_file_manager().remove_path(project_id, file_path)
+    except ProjectFileError as exc:
+        _raise_project_file_error(exc)
+    return ProjectFileDeleteResponse.model_validate(payload)
 
 
 @router.post(
@@ -459,90 +328,26 @@ def export_project_sandbox_file(
     project_id: str,
     request: ProjectFileExportRequest,
 ) -> Response:
-    """将项目沙箱中的 markdown 文件导出为指定格式.
-
-    Args:
-        project_id: 项目 ID
-        request: 导出请求，包含文件路径和目标格式
-        db: 数据库实例
-
-    Returns:
-        Response: 导出后的文件内容（二进制流）
-    """
+    """将项目沙箱中的 markdown 文件导出为指定格式."""
     _ensure_project_exists(db, project_id)
-
-    # 验证格式
-    valid_formats: set[str] = {"markdown", "docx", "pdf", "html"}
-    fmt = request.format.lower()
-    if fmt not in valid_formats:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported format: {request.format}. Supported: {', '.join(valid_formats)}",
-        )
-
-    export_format: ExportFormat = fmt  # type: ignore[assignment]
-
     try:
-        target = resolve_sandbox_path(project_id, request.file_path)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-
-    if not target.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File not found: {request.file_path}",
+        result = get_project_file_manager().export_markdown_file(
+            project_id,
+            request.file_path,
+            request.format,
         )
-    if target.is_dir():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Path is a directory: {request.file_path}",
-        )
-    if target.stat().st_size > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large (>{MAX_FILE_SIZE} bytes): {request.file_path}",
-        )
-
-    content = target.read_text(encoding="utf-8")
-    file_name = target.stem
-
-    try:
-        output_bytes = convert_markdown(
-            content,
-            export_format,
-            title=file_name,
-        )
-    except RuntimeError as exc:
-        logger.exception("event=project_file.export_error")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
-
-    content_type = get_content_type(export_format)
-    extension = get_extension(export_format)
-    download_name = f"{file_name}.{extension}"
+    except ProjectFileError as exc:
+        _raise_project_file_error(exc)
 
     logger.info(
         "event=project_file.export project_id=%s file_path=%s format=%s bytes=%s",
         project_id,
         request.file_path,
-        export_format,
-        len(output_bytes),
+        request.format,
+        len(result.content),
     )
-
-    # RFC 5987 encoding for non-ASCII filenames in Content-Disposition
-    try:
-        download_name.encode("latin-1")
-        content_disposition = f'attachment; filename="{download_name}"'
-    except UnicodeEncodeError:
-        encoded_name = quote(download_name, safe="")
-        content_disposition = f"attachment; filename*=UTF-8''{encoded_name}"
-
     return Response(
-        content=output_bytes,
-        media_type=content_type,
-        headers={
-            "Content-Disposition": content_disposition,
-        },
+        content=result.content,
+        media_type=result.content_type,
+        headers={"Content-Disposition": _content_disposition(result.download_name)},
     )

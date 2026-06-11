@@ -445,7 +445,7 @@ class LLMClient:
 
         request_started_at = perf_counter()
         try:
-          response = await acompletion(**request)
+            response = await acompletion(**request)
         except Exception:
             logger.exception(
                 "event=llm.stream_request_failed model=%s provider=%s base_url=%s message_count=%s tool_count=%s elapsed_ms=%.1f",
@@ -602,7 +602,9 @@ class LLMClient:
                 request["model"],
                 request.get("custom_llm_provider"),
                 chunk_index,
-                None if first_chunk_elapsed_ms is None else round(first_chunk_elapsed_ms, 1),
+                None
+                if first_chunk_elapsed_ms is None
+                else round(first_chunk_elapsed_ms, 1),
                 (perf_counter() - request_started_at) * 1000,
             )
             raise
@@ -612,7 +614,9 @@ class LLMClient:
             last_model or request["model"],
             request.get("custom_llm_provider"),
             chunk_index,
-            None if first_chunk_elapsed_ms is None else round(first_chunk_elapsed_ms, 1),
+            None
+            if first_chunk_elapsed_ms is None
+            else round(first_chunk_elapsed_ms, 1),
             (perf_counter() - request_started_at) * 1000,
             len(content_buffer),
             len(reasoning_buffer),

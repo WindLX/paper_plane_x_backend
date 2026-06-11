@@ -5,15 +5,19 @@
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from paper_plane_x_backend.config import settings
 from paper_plane_x_backend.core.agent_runtime.tooling import tool
+from paper_plane_x_backend.services.project.files import (
+    ALLOWED_EXTENSIONS,
+    MAX_FILE_SIZE,
+    ProjectFileError,
+    get_project_file_manager,
+)
 
 logger = logging.getLogger(__name__)
 
-MAX_FILE_SIZE = 1024 * 1024 * 10  # 10MB
-_ALLOWED_EXTENSIONS = {".md", ".txt", ".json", ".csv", ".yaml", ".yml", ".toml"}
+_ALLOWED_EXTENSIONS = ALLOWED_EXTENSIONS
 
 
 def _build_project_file_shared_guides() -> dict[str, str]:
@@ -36,66 +40,27 @@ def _build_project_file_shared_guides() -> dict[str, str]:
     }
 
 
-def resolve_sandbox_path(project_id: str, file_path: str, is_dir: bool = False) -> Path:
-    """解析并验证文件路径，确保不逃逸沙箱.
-
-    Args:
-        project_id: 项目 ID
-        file_path: 相对路径（以 / 开头表示项目根目录）
-        is_dir: 是否为目录
-
-    Returns:
-        Path: 绝对路径
-
-    Raises:
-        ValueError: 路径非法或试图逃逸沙箱
-    """
-    if not project_id:
-        raise ValueError("project_id is required")
-
-    # 规范化路径，去除开头的 /
-    clean_path = file_path.lstrip("/")
-    if not clean_path:
-        raise ValueError("file_path cannot be empty")
-
-    # 检查路径遍历
-    if ".." in clean_path.split("/"):
-        raise ValueError(f"Path traversal not allowed: {file_path}")
-
-    sandbox_root = settings.data_dir / "projects" / project_id
-    target = (sandbox_root / clean_path).resolve()
-    resolved_root = sandbox_root.resolve()
-
-    if not str(target).startswith(str(resolved_root)):
-        raise ValueError(f"Path escapes sandbox: {file_path}")
-
-    # 检查是否为空目录
-    if target.exists() and target.is_dir():
-        return target
-
-    # 检查扩展名
-    if target.suffix.lower() not in _ALLOWED_EXTENSIONS and not is_dir:
-        raise ValueError(
-            f"File extension '{target.suffix}' not allowed. Allowed: {', '.join(_ALLOWED_EXTENSIONS)}"
-        )
-
-    return target
+def _tool_error(exc: ProjectFileError) -> dict[str, Any]:
+    return {"error": exc.message}
 
 
-def _read_project_text_file(project_id: str, file_path: str) -> tuple[Path, str]:
-    target = resolve_sandbox_path(project_id, file_path)
-    if not target.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
-    if target.is_dir():
-        raise IsADirectoryError(f"Path is a directory: {file_path}")
-    if target.stat().st_size > MAX_FILE_SIZE:
-        raise ValueError(f"File too large (>{MAX_FILE_SIZE} bytes): {file_path}")
-    return target, target.read_text(encoding="utf-8")
-
-
-def _write_project_text_file(target: Path, content: str) -> int:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    return target.write_text(content, encoding="utf-8")
+def _run_project_file_operation(
+    operation: Callable[[], dict[str, object]],
+    *,
+    event: str,
+    failure_prefix: str,
+    file_path: str | None = None,
+) -> dict[str, Any]:
+    try:
+        return dict(operation())
+    except ProjectFileError as exc:
+        return _tool_error(exc)
+    except Exception as exc:
+        if file_path is None:
+            logger.exception("event=%s.error", event)
+        else:
+            logger.exception("event=%s.error file_path=%s", event, file_path)
+        return {"error": f"{failure_prefix}: {exc}"}
 
 
 @tool(
@@ -114,14 +79,17 @@ def read_project_file(
     project_id: str | None = None,
 ) -> dict[str, Any]:
     """读取项目文件."""
-    try:
-        _, content = _read_project_text_file(project_id or "", file_path)
-        return {"content": content}
-    except (ValueError, FileNotFoundError, IsADirectoryError) as exc:
-        return {"error": str(exc)}
-    except Exception as exc:
-        logger.exception("event=read_project_file.error file_path=%s", file_path)
-        return {"error": f"Read failed: {exc}"}
+
+    def _operation() -> dict[str, object]:
+        payload = get_project_file_manager().read_file(project_id or "", file_path)
+        return {"content": payload["content"]}
+
+    return _run_project_file_operation(
+        _operation,
+        event="read_project_file",
+        failure_prefix="Read failed",
+        file_path=file_path,
+    )
 
 
 @tool(
@@ -142,21 +110,30 @@ def write_project_file(
     project_id: str | None = None,
 ) -> dict[str, Any]:
     """写入项目文件."""
-    try:
-        target = resolve_sandbox_path(project_id or "", file_path)
-        bytes_written = _write_project_text_file(target, content)
+
+    def _operation() -> dict[str, object]:
+        payload = get_project_file_manager().write_file(
+            project_id or "",
+            file_path,
+            content,
+        )
         logger.info(
             "event=write_project_file.ok project_id=%s file_path=%s bytes=%s",
             project_id,
             file_path,
-            bytes_written,
+            payload["bytes_written"],
         )
-        return {"file_path": file_path, "bytes_written": bytes_written}
-    except ValueError as exc:
-        return {"error": str(exc)}
-    except Exception as exc:
-        logger.exception("event=write_project_file.error file_path=%s", file_path)
-        return {"error": f"Write failed: {exc}"}
+        return {
+            "file_path": payload["file_path"],
+            "bytes_written": payload["bytes_written"],
+        }
+
+    return _run_project_file_operation(
+        _operation,
+        event="write_project_file",
+        failure_prefix="Write failed",
+        file_path=file_path,
+    )
 
 
 @tool(
@@ -176,36 +153,17 @@ def read_project_file_lines(
     end_line: int | None = None,
     project_id: str | None = None,
 ) -> dict[str, Any]:
-    try:
-        _, content = _read_project_text_file(project_id or "", file_path)
-        lines = content.splitlines()
-        total_lines = len(lines)
-        resolved_end_line = end_line if end_line is not None else start_line
-        if start_line < 1 or resolved_end_line < start_line:
-            return {"error": "Invalid line range"}
-        if start_line > total_lines:
-            return {"error": f"start_line out of range: {start_line} > {total_lines}"}
-
-        selected: list[dict[str, Any]] = []
-        for index in range(start_line, min(resolved_end_line, total_lines) + 1):
-            selected.append(
-                {
-                    "line_no": index,
-                    "text": lines[index - 1],
-                }
-            )
-        return {
-            "file_path": file_path,
-            "start_line": start_line,
-            "end_line": min(resolved_end_line, total_lines),
-            "total_lines": total_lines,
-            "lines": selected,
-        }
-    except (ValueError, FileNotFoundError, IsADirectoryError) as exc:
-        return {"error": str(exc)}
-    except Exception as exc:
-        logger.exception("event=read_project_file_lines.error file_path=%s", file_path)
-        return {"error": f"Read lines failed: {exc}"}
+    return _run_project_file_operation(
+        lambda: get_project_file_manager().read_file_lines(
+            project_id or "",
+            file_path,
+            start_line,
+            end_line,
+        ),
+        event="read_project_file_lines",
+        failure_prefix="Read lines failed",
+        file_path=file_path,
+    )
 
 
 @tool(
@@ -226,45 +184,18 @@ def find_in_project_file(
     max_matches: int = 20,
     project_id: str | None = None,
 ) -> dict[str, Any]:
-    try:
-        if not query:
-            return {"error": "query cannot be empty"}
-        _, content = _read_project_text_file(project_id or "", file_path)
-        haystack_lines = content.splitlines()
-        needle = query if case_sensitive else query.lower()
-        total_matches = 0
-        matches: list[dict[str, Any]] = []
-
-        for line_no, line in enumerate(haystack_lines, start=1):
-            search_line = line if case_sensitive else line.lower()
-            start = 0
-            while True:
-                index = search_line.find(needle, start)
-                if index < 0:
-                    break
-                total_matches += 1
-                if len(matches) < max_matches:
-                    matches.append(
-                        {
-                            "line_no": line_no,
-                            "start_col": index + 1,
-                            "end_col": index + len(query),
-                            "text": line,
-                        }
-                    )
-                start = index + max(1, len(needle))
-
-        return {
-            "file_path": file_path,
-            "query": query,
-            "total_matches": total_matches,
-            "matches": matches,
-        }
-    except (ValueError, FileNotFoundError, IsADirectoryError) as exc:
-        return {"error": str(exc)}
-    except Exception as exc:
-        logger.exception("event=find_in_project_file.error file_path=%s", file_path)
-        return {"error": f"Find failed: {exc}"}
+    return _run_project_file_operation(
+        lambda: get_project_file_manager().find_in_file(
+            project_id or "",
+            file_path,
+            query,
+            case_sensitive=case_sensitive,
+            max_matches=max_matches,
+        ),
+        event="find_in_project_file",
+        failure_prefix="Find failed",
+        file_path=file_path,
+    )
 
 
 @tool(
@@ -285,40 +216,18 @@ def replace_project_file_lines(
     new_text: str,
     project_id: str | None = None,
 ) -> dict[str, Any]:
-    try:
-        target, content = _read_project_text_file(project_id or "", file_path)
-        lines = content.splitlines()
-        total_lines = len(lines)
-        if start_line < 1 or end_line < start_line:
-            return {"error": "Invalid line range"}
-        if end_line > total_lines:
-            return {"error": f"end_line out of range: {end_line} > {total_lines}"}
-
-        replacement_lines = new_text.splitlines()
-        updated_lines = [
-            *lines[: start_line - 1],
-            *replacement_lines,
-            *lines[end_line:],
-        ]
-        updated_content = "\n".join(updated_lines)
-        if content.endswith("\n"):
-            updated_content += "\n"
-
-        bytes_written = _write_project_text_file(target, updated_content)
-        return {
-            "file_path": file_path,
-            "start_line": start_line,
-            "end_line": end_line,
-            "lines_replaced": end_line - start_line + 1,
-            "bytes_written": bytes_written,
-        }
-    except (ValueError, FileNotFoundError, IsADirectoryError) as exc:
-        return {"error": str(exc)}
-    except Exception as exc:
-        logger.exception(
-            "event=replace_project_file_lines.error file_path=%s", file_path
-        )
-        return {"error": f"Replace lines failed: {exc}"}
+    return _run_project_file_operation(
+        lambda: get_project_file_manager().replace_file_lines(
+            project_id or "",
+            file_path,
+            start_line,
+            end_line,
+            new_text,
+        ),
+        event="replace_project_file_lines",
+        failure_prefix="Replace lines failed",
+        file_path=file_path,
+    )
 
 
 @tool(
@@ -340,40 +249,19 @@ def replace_project_file_text(
     expected_occurrences: int = 1,
     project_id: str | None = None,
 ) -> dict[str, Any]:
-    try:
-        if not old_text:
-            return {"error": "old_text cannot be empty"}
-        target, content = _read_project_text_file(project_id or "", file_path)
-        occurrences = content.count(old_text)
-        if occurrences == 0:
-            return {"error": "old_text not found"}
-        if not replace_all and occurrences != expected_occurrences:
-            return {
-                "error": (
-                    f"Expected {expected_occurrences} occurrence(s), found {occurrences}. "
-                    "Set replace_all=true or adjust expected_occurrences."
-                )
-            }
-
-        replacements = occurrences if replace_all else expected_occurrences
-        updated_content = (
-            content.replace(old_text, new_text)
-            if replace_all
-            else content.replace(old_text, new_text, expected_occurrences)
-        )
-        bytes_written = _write_project_text_file(target, updated_content)
-        return {
-            "file_path": file_path,
-            "replacements": replacements,
-            "bytes_written": bytes_written,
-        }
-    except (ValueError, FileNotFoundError, IsADirectoryError) as exc:
-        return {"error": str(exc)}
-    except Exception as exc:
-        logger.exception(
-            "event=replace_project_file_text.error file_path=%s", file_path
-        )
-        return {"error": f"Replace text failed: {exc}"}
+    return _run_project_file_operation(
+        lambda: get_project_file_manager().replace_file_text(
+            project_id or "",
+            file_path,
+            old_text,
+            new_text,
+            replace_all=replace_all,
+            expected_occurrences=expected_occurrences,
+        ),
+        event="replace_project_file_text",
+        failure_prefix="Replace text failed",
+        file_path=file_path,
+    )
 
 
 @tool(
@@ -395,53 +283,19 @@ def patch_project_file(
     expected_occurrences: int = 1,
     project_id: str | None = None,
 ) -> dict[str, Any]:
-    try:
-        if not anchor_text:
-            return {"error": "anchor_text cannot be empty"}
-        if action not in {"replace", "insert_before", "insert_after", "delete"}:
-            return {
-                "error": "action must be one of: replace, insert_before, insert_after, delete"
-            }
-
-        target, original = _read_project_text_file(project_id or "", file_path)
-        occurrences = original.count(anchor_text)
-        if occurrences != expected_occurrences:
-            return {
-                "error": (
-                    f"Expected {expected_occurrences} occurrence(s) of anchor_text, "
-                    f"found {occurrences}"
-                )
-            }
-
-        if action == "replace":
-            updated = original.replace(anchor_text, content, expected_occurrences)
-        elif action == "insert_before":
-            updated = original.replace(
-                anchor_text,
-                f"{content}{anchor_text}",
-                expected_occurrences,
-            )
-        elif action == "insert_after":
-            updated = original.replace(
-                anchor_text,
-                f"{anchor_text}{content}",
-                expected_occurrences,
-            )
-        else:
-            updated = original.replace(anchor_text, "", expected_occurrences)
-
-        bytes_written = _write_project_text_file(target, updated)
-        return {
-            "file_path": file_path,
-            "action": action,
-            "occurrences": occurrences,
-            "bytes_written": bytes_written,
-        }
-    except (ValueError, FileNotFoundError, IsADirectoryError) as exc:
-        return {"error": str(exc)}
-    except Exception as exc:
-        logger.exception("event=patch_project_file.error file_path=%s", file_path)
-        return {"error": f"Patch failed: {exc}"}
+    return _run_project_file_operation(
+        lambda: get_project_file_manager().patch_file(
+            project_id or "",
+            file_path,
+            action,
+            anchor_text,
+            content,
+            expected_occurrences=expected_occurrences,
+        ),
+        event="patch_project_file",
+        failure_prefix="Patch failed",
+        file_path=file_path,
+    )
 
 
 @tool(
@@ -460,36 +314,12 @@ def list_project_files(
     project_id: str | None = None,
 ) -> dict[str, Any]:
     """列出项目文件."""
-    try:
-        sandbox_root = settings.data_dir / "projects" / (project_id or "")
-        target = (sandbox_root / dir_path.lstrip("/")).resolve()
-        resolved_root = sandbox_root.resolve()
-
-        if not str(target).startswith(str(resolved_root)):
-            return {"error": f"Path escapes sandbox: {dir_path}"}
-
-        if not target.exists():
-            return {"error": f"Directory not found: {dir_path}"}
-        if not target.is_dir():
-            return {"error": f"Path is not a directory: {dir_path}"}
-
-        items: list[dict[str, Any]] = []
-        for child in sorted(target.iterdir()):
-            try:
-                size = child.stat().st_size if child.is_file() else None
-            except OSError:
-                size = None
-            items.append(
-                {
-                    "name": child.name,
-                    "is_dir": child.is_dir(),
-                    "size": size,
-                }
-            )
-        return {"items": items}
-    except Exception as exc:
-        logger.exception("event=list_project_files.error dir_path=%s", dir_path)
-        return {"error": f"List failed: {exc}"}
+    return _run_project_file_operation(
+        lambda: get_project_file_manager().list_files(project_id or "", dir_path),
+        event="list_project_files",
+        failure_prefix="List failed",
+        file_path=dir_path,
+    )
 
 
 @tool(
@@ -508,22 +338,9 @@ def remove_project_file(
     project_id: str | None = None,
 ) -> dict[str, Any]:
     """删除项目文件."""
-    try:
-        target = resolve_sandbox_path(project_id or "", file_path)
-        if not target.exists():
-            return {"error": f"File not found: {file_path}"}
-        if target.is_dir():
-            target.rmdir()  # 只允许删除空目录
-        else:
-            target.unlink()
-        logger.info(
-            "event=remove_project_file.ok project_id=%s file_path=%s",
-            project_id,
-            file_path,
-        )
-        return {"removed": file_path}
-    except ValueError as exc:
-        return {"error": str(exc)}
-    except Exception as exc:
-        logger.exception("event=remove_project_file.error file_path=%s", file_path)
-        return {"error": f"Remove failed: {exc}"}
+    return _run_project_file_operation(
+        lambda: get_project_file_manager().remove_path(project_id or "", file_path),
+        event="remove_project_file",
+        failure_prefix="Remove failed",
+        file_path=file_path,
+    )
