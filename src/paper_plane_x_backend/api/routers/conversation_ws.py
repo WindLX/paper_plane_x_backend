@@ -227,7 +227,7 @@ async def conversation_websocket(
                         conversation_id,
                     )
                     convo_repo.touch(conversation_id)
-                    trace_target = turn_session.finalize(agent.trace_ids)
+                    trace_target = await turn_session.finalize(agent.trace_ids)
                     await turn_session.send_stream_complete(
                         trace_target=trace_target,
                         trace_ids=agent.trace_ids,
@@ -251,7 +251,7 @@ async def conversation_websocket(
                     continue
 
                 convo_repo.touch(conversation_id)
-                trace_target = turn_session.finalize(agent.trace_ids)
+                trace_target = await turn_session.finalize(agent.trace_ids)
                 await turn_session.send_stream_complete(
                     trace_target=trace_target,
                     trace_ids=agent.trace_ids,

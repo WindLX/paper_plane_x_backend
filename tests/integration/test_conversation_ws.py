@@ -1,11 +1,15 @@
 """Conversation WebSocket 集成测试."""
 
+import asyncio
 from collections.abc import AsyncGenerator
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from paper_plane_x_backend.services import Database
+from paper_plane_x_backend.services.conversation.repository import (
+    ConversationMessageRepository,
+)
 
 
 class MockChunk:
@@ -335,3 +339,139 @@ class TestConversationWebSocket:
         roles = [row["role"] for row in rows]
         assert "user" in roles
         assert "assistant" in roles
+
+    def test_websocket_long_stream_throttles_database_updates(
+        self, client: TestClient, db: Database
+    ) -> None:
+        """长流式输出不会对每个 chunk 都完整更新一次数据库."""
+
+        async def _mock_long_stream() -> AsyncGenerator:
+            for _ in range(1500):
+                yield MockChunk(delta="x", step=1)
+            yield MockChunk(is_complete=True, step=1)
+
+        project_resp = client.post(
+            "/api/v1/projects",
+            json={"name": "WS Long Stream Test"},
+        )
+        project_id = project_resp.json()["project_id"]
+
+        conv_resp = client.post(
+            "/api/v1/conversations",
+            json={"project_id": project_id, "title": "WS Long Stream"},
+        )
+        conversation_id = conv_resp.json()["conversation_id"]
+
+        original_update_content = ConversationMessageRepository.update_content
+        update_contents: list[str] = []
+
+        def counted_update_content(
+            repo: ConversationMessageRepository,
+            message_id: str,
+            content: str,
+        ) -> None:
+            update_contents.append(content)
+            original_update_content(repo, message_id, content)
+
+        with (
+            patch.object(
+                ConversationMessageRepository,
+                "update_content",
+                counted_update_content,
+            ),
+            patch(
+                "paper_plane_x_backend.agents.researcher.ResearcherAgent.run_stream",
+                return_value=_mock_long_stream(),
+            ),
+        ):
+            with client.websocket_connect(
+                f"/api/v1/ws/conversations/{conversation_id}"
+            ) as websocket:
+                websocket.send_json(
+                    {
+                        "type": "user_message",
+                        "content": "Generate a long answer",
+                    }
+                )
+
+                stream_chunks = 0
+                while True:
+                    msg = websocket.receive_json()
+                    if msg["type"] == "stream_chunk":
+                        stream_chunks += 1
+                    if msg["type"] == "stream_complete":
+                        break
+
+        rows = db.fetchall(
+            """
+            SELECT * FROM conversation_messages
+            WHERE conversation_id = ? AND message_kind = 'assistant_final'
+            """,
+            (conversation_id,),
+        )
+        assert stream_chunks == 1500
+        assert len(rows) == 1
+        assert rows[0]["content"] == "x" * 1500
+        assert update_contents[-1] == "x" * 1500
+        assert len(update_contents) < 50
+
+    def test_websocket_stop_flushes_partial_stream(
+        self, client: TestClient, db: Database
+    ) -> None:
+        """用户 stop 后已生成内容会被保存."""
+
+        async def _mock_stoppable_stream() -> AsyncGenerator:
+            yield MockChunk(delta="partial", step=1)
+            while True:
+                await asyncio.sleep(0.01)
+                yield MockChunk(delta=" more", step=1)
+
+        project_resp = client.post(
+            "/api/v1/projects",
+            json={"name": "WS Stop Flush Test"},
+        )
+        project_id = project_resp.json()["project_id"]
+
+        conv_resp = client.post(
+            "/api/v1/conversations",
+            json={"project_id": project_id, "title": "WS Stop Flush"},
+        )
+        conversation_id = conv_resp.json()["conversation_id"]
+
+        with patch(
+            "paper_plane_x_backend.agents.researcher.ResearcherAgent.run_stream",
+            return_value=_mock_stoppable_stream(),
+        ):
+            with client.websocket_connect(
+                f"/api/v1/ws/conversations/{conversation_id}"
+            ) as websocket:
+                websocket.send_json(
+                    {
+                        "type": "user_message",
+                        "content": "Start then stop",
+                    }
+                )
+
+                while True:
+                    msg = websocket.receive_json()
+                    if msg["type"] == "stream_chunk":
+                        assert msg["delta"].startswith("partial")
+                        websocket.send_json({"type": "stop"})
+                        break
+
+                while True:
+                    msg = websocket.receive_json()
+                    if msg["type"] == "stream_complete":
+                        assert msg["completion_status"] == "stopped"
+                        assert msg["stopped_by_user"] is True
+                        break
+
+        rows = db.fetchall(
+            """
+            SELECT * FROM conversation_messages
+            WHERE conversation_id = ? AND message_kind = 'assistant_final'
+            """,
+            (conversation_id,),
+        )
+        assert len(rows) == 1
+        assert rows[0]["content"].startswith("partial")

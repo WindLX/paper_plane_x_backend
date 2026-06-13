@@ -6,10 +6,12 @@
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
+from time import perf_counter
 from typing import Any, TypeAlias, cast
 
-from fastapi import WebSocket
+from fastapi import WebSocket, WebSocketDisconnect
 
 from paper_plane_x_backend.agents.researcher import ResearcherAgent
 from paper_plane_x_backend.core.agent_runtime.stream_types import AgentStreamChunk
@@ -24,6 +26,11 @@ from paper_plane_x_backend.services.conversation.repository import (
 from paper_plane_x_backend.utils.ids import generate_message_id
 
 AgentMessagePayload: TypeAlias = dict[str, Any]
+logger = logging.getLogger(__name__)
+
+_DB_FLUSH_INTERVAL_SECONDS = 0.5
+_DB_FLUSH_CHAR_THRESHOLD = 1024
+_SLOW_OPERATION_SECONDS = 1.0
 
 
 class UserStopRequested(Exception):
@@ -35,7 +42,8 @@ async def stream_agent_with_cancel(
     websocket: WebSocket,
 ) -> AsyncIterator[AgentStreamChunk]:
     """包装 agent.run_stream，使其支持通过 WebSocket stop 消息取消."""
-    chunk_queue: asyncio.Queue[AgentStreamChunk] = asyncio.Queue()
+    chunk_queue: asyncio.Queue[AgentStreamChunk | None] = asyncio.Queue()
+    control_queue: asyncio.Queue[str] = asyncio.Queue()
 
     async def producer() -> None:
         try:
@@ -44,22 +52,39 @@ async def stream_agent_with_cancel(
         except asyncio.CancelledError:
             agent.cancel()
             raise
+        finally:
+            await chunk_queue.put(None)
+
+    async def receiver() -> None:
+        try:
+            while True:
+                raw = await websocket.receive_text()
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if data.get("type") == "stop":
+                    await control_queue.put("stop")
+                    return
+        except WebSocketDisconnect:
+            await control_queue.put("disconnect")
 
     producer_task: asyncio.Task[None] = asyncio.create_task(producer())
+    receiver_task: asyncio.Task[None] = asyncio.create_task(receiver())
 
     try:
-        while not producer_task.done():
-            ws_future: asyncio.Task[str] = asyncio.create_task(websocket.receive_text())
-            chunk_future: asyncio.Task[AgentStreamChunk] = asyncio.create_task(
+        while True:
+            chunk_future: asyncio.Task[AgentStreamChunk | None] = asyncio.create_task(
                 chunk_queue.get()
             )
+            control_future: asyncio.Task[str] = asyncio.create_task(control_queue.get())
 
-            pending_tasks: tuple[asyncio.Task[object], ...] = (
-                cast(asyncio.Task[object], ws_future),
+            wait_tasks: tuple[asyncio.Task[object], ...] = (
                 cast(asyncio.Task[object], chunk_future),
+                cast(asyncio.Task[object], control_future),
             )
             done, pending = await asyncio.wait(
-                pending_tasks,
+                wait_tasks,
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
@@ -71,32 +96,36 @@ async def stream_agent_with_cancel(
                     pass
 
             if chunk_future in done:
-                yield chunk_future.result()
+                chunk = chunk_future.result()
+                if chunk is None:
+                    await producer_task
+                    break
+                yield chunk
                 continue
 
-            if ws_future in done:
-                raw = ws_future.result()
-                try:
-                    data = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
-                if data.get("type") == "stop":
+            if control_future in done:
+                control_message = control_future.result()
+                if control_message == "stop":
                     producer_task.cancel()
                     try:
                         await producer_task
                     except asyncio.CancelledError:
                         pass
                     raise UserStopRequested("User stopped")
-                continue
-
-        while not chunk_queue.empty():
-            yield chunk_queue.get_nowait()
+                if control_message == "disconnect":
+                    raise WebSocketDisconnect()
     finally:
         if not producer_task.done():
             producer_task.cancel()
             try:
                 await producer_task
             except asyncio.CancelledError:
+                pass
+        if not receiver_task.done():
+            receiver_task.cancel()
+            try:
+                await receiver_task
+            except (asyncio.CancelledError, WebSocketDisconnect):
                 pass
 
 
@@ -166,10 +195,20 @@ class ConversationTurnStreamSession:
         self.active_reasoning_msg: ConversationMessage | None = None
         self.active_final_msg: ConversationMessage | None = None
         self.streamed_message_ids: list[str] = []
+        self.flush_interval_seconds = _DB_FLUSH_INTERVAL_SECONDS
+        self.flush_char_threshold = _DB_FLUSH_CHAR_THRESHOLD
+        self.started_at = perf_counter()
+        self.last_flush_at = self.started_at
+        self.pending_reasoning_chars = 0
+        self.pending_final_chars = 0
+        self.chunk_count = 0
+        self.websocket_send_count = 0
+        self.db_flush_count = 0
+        self.streamed_chars = 0
 
     async def send_stream_start(self) -> None:
         """向客户端发送 turn 起始事件."""
-        await self.websocket.send_json(
+        await self._send_json(
             {
                 "type": "stream_start",
                 "turn_id": self.turn_id,
@@ -199,6 +238,7 @@ class ConversationTurnStreamSession:
 
     async def handle_chunk(self, chunk: AgentStreamChunk) -> None:
         """将单个 Agent chunk 映射为持久化事件与 WS 推送."""
+        self.chunk_count += 1
         should_stream_delta = not chunk.is_complete
 
         if chunk.reasoning_delta:
@@ -225,8 +265,9 @@ class ConversationTurnStreamSession:
                 step=chunk.step,
             )
 
-    def finalize(self, trace_ids: list[str]) -> ConversationMessage | None:
+    async def finalize(self, trace_ids: list[str]) -> ConversationMessage | None:
         """在 turn 结束时回填 trace_ids，并返回完成事件锚点."""
+        await self.flush_pending(force=True)
         trace_target = self.active_final_msg
         if trace_target is None and self.streamed_message_ids:
             trace_target = self.message_repo.get(self.streamed_message_ids[-1])
@@ -243,7 +284,7 @@ class ConversationTurnStreamSession:
         stopped_by_user: bool = False,
     ) -> None:
         """发送 turn 完成事件."""
-        await self.websocket.send_json(
+        await self._send_json(
             {
                 "type": "stream_complete",
                 "turn_id": self.turn_id,
@@ -257,6 +298,72 @@ class ConversationTurnStreamSession:
                 "stopped_by_user": stopped_by_user,
             }
         )
+        logger.info(
+            "event=conversation_stream.turn_completed conversation_id=%s turn_id=%s status=%s chunks=%s websocket_sends=%s db_flushes=%s streamed_chars=%s elapsed_ms=%.1f",
+            self.conversation_id,
+            self.turn_id,
+            completion_status,
+            self.chunk_count,
+            self.websocket_send_count,
+            self.db_flush_count,
+            self.streamed_chars,
+            (perf_counter() - self.started_at) * 1000,
+        )
+
+    async def flush_pending(self, *, force: bool = False) -> None:
+        """Flush accumulated stream content to storage on a bounded cadence."""
+        elapsed = perf_counter() - self.last_flush_at
+        pending_chars = self.pending_reasoning_chars + self.pending_final_chars
+        should_flush = (
+            force
+            or pending_chars >= self.flush_char_threshold
+            or elapsed >= self.flush_interval_seconds
+        )
+        if not should_flush or pending_chars <= 0:
+            return
+
+        started_at = perf_counter()
+        if self.active_reasoning_msg is not None and self.pending_reasoning_chars:
+            self.message_repo.update_fields(
+                self.active_reasoning_msg.message_id,
+                {
+                    "content": None,
+                    "reasoning_content": self.active_reasoning_msg.reasoning_content,
+                },
+            )
+            self.pending_reasoning_chars = 0
+
+        if self.active_final_msg is not None and self.pending_final_chars:
+            self.message_repo.update_content(
+                self.active_final_msg.message_id,
+                self.active_final_msg.content or "",
+            )
+            self.pending_final_chars = 0
+
+        self.last_flush_at = perf_counter()
+        self.db_flush_count += 1
+        flush_elapsed = self.last_flush_at - started_at
+        if flush_elapsed >= _SLOW_OPERATION_SECONDS:
+            logger.warning(
+                "event=conversation_stream.slow_db_flush conversation_id=%s turn_id=%s elapsed_ms=%.1f",
+                self.conversation_id,
+                self.turn_id,
+                flush_elapsed * 1000,
+            )
+
+    async def _send_json(self, payload: dict[str, Any]) -> None:
+        started_at = perf_counter()
+        await self.websocket.send_json(payload)
+        self.websocket_send_count += 1
+        elapsed = perf_counter() - started_at
+        if elapsed >= _SLOW_OPERATION_SECONDS:
+            logger.warning(
+                "event=conversation_stream.slow_websocket_send conversation_id=%s turn_id=%s message_type=%s elapsed_ms=%.1f",
+                self.conversation_id,
+                self.turn_id,
+                payload.get("type"),
+                elapsed * 1000,
+            )
 
     def _create_event_message(
         self,
@@ -311,15 +418,11 @@ class ConversationTurnStreamSession:
         ) + reasoning_delta
         self.active_reasoning_msg.reasoning_content = new_reasoning
         self.active_reasoning_msg.content = new_reasoning
-        self.message_repo.update_fields(
-            self.active_reasoning_msg.message_id,
-            {
-                "content": None,
-                "reasoning_content": new_reasoning,
-            },
-        )
+        self.pending_reasoning_chars += len(reasoning_delta)
+        self.streamed_chars += len(reasoning_delta)
+        await self.flush_pending()
         if should_stream_delta:
-            await self.websocket.send_json(
+            await self._send_json(
                 {
                     "type": "stream_chunk",
                     "turn_id": self.turn_id,
@@ -348,9 +451,11 @@ class ConversationTurnStreamSession:
             )
         new_content = (self.active_final_msg.content or "") + delta
         self.active_final_msg.content = new_content
-        self.message_repo.update_content(self.active_final_msg.message_id, new_content)
+        self.pending_final_chars += len(delta)
+        self.streamed_chars += len(delta)
+        await self.flush_pending()
         if should_stream_delta:
-            await self.websocket.send_json(
+            await self._send_json(
                 {
                     "type": "stream_chunk",
                     "turn_id": self.turn_id,
@@ -371,6 +476,7 @@ class ConversationTurnStreamSession:
         tool_result: dict[str, Any] | None,
         step: int,
     ) -> None:
+        await self.flush_pending(force=True)
         self.active_reasoning_msg = None
         self.active_final_msg = None
 
@@ -384,7 +490,7 @@ class ConversationTurnStreamSession:
             name=self.agent.runtime_name,
             tool_calls=tool_call_payload,
         )
-        await self.websocket.send_json(
+        await self._send_json(
             {
                 "type": "tool_call",
                 "turn_id": self.turn_id,
@@ -405,7 +511,7 @@ class ConversationTurnStreamSession:
                 name=tool_result.get("name"),
                 tool_call_id=tool_result.get("tool_call_id"),
             )
-            await self.websocket.send_json(
+            await self._send_json(
                 {
                     "type": "tool_result",
                     "turn_id": self.turn_id,

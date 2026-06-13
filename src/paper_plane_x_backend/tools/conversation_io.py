@@ -4,7 +4,6 @@
 """
 
 import logging
-from pathlib import Path
 from typing import Any, Callable
 
 from paper_plane_x_backend.core.agent_runtime.tooling import tool
