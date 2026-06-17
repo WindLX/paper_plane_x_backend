@@ -100,23 +100,15 @@
 - 为外部 agent 安装/复制 skill 的路径补充更明确说明。
 - 为 `ppx` 增加更友好的 `--help` 示例或 docs 生成。
 
-### P1: CLI 与 API 可用性
-
-- `ppx` 支持从文件读取长内容，例如 `--content-file`。
-- `ppx` 支持更稳定的大 JSON 输出裁剪或保存到文件。
-- 为 `ppx` 添加更多 smoke tests，覆盖 files patch / paper-note / matrix 错误路径。
-
-### P2: Researcher 工作流增强
+### P1: Researcher 工作流增强
 
 - 对长任务和离开页面后的 streaming 恢复做更强支持。
 - 优化消息编辑、分支、刷新后的状态一致性。
 - 改善 trace 与 conversation 的互相跳转体验。
 
-### P3: 部署与生态
+### P2: 部署与生态
 
 - Docker / compose 文档与生产配置样例加强。
-- 评估 MCP server，作为 `ppx` CLI 之外的第二种外部 agent 集成方式。
-- 对接更多聊天平台或任务调度入口。
 
 ## 维护原则
 
@@ -133,3 +125,4 @@
 - [x] 前端渲染问题, 左侧边栏在窄布局下优先级比新建 project 高的问题；
 - [x] 前端渲染问题右侧边栏宽度问题
 - [x] 后端流式传输卡死问题
+- [ ] MinerU API
