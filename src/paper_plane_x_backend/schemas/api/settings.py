@@ -6,14 +6,29 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class LLMProviderResponse(BaseModel):
-    """LLM Provider 响应."""
+    """LLM Provider 响应.
+
+    出于安全考虑，不返回 api_key：前端只能写入（覆盖后端字段），不能读取。
+    """
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
     name: str = Field(..., description="Provider 唯一标识名")
     model: str = Field(..., description="模型名称")
-    api_key: str | None = Field(default=None, description="API 密钥")
     base_url: str | None = Field(default=None, description="API 基础 URL")
+    has_api_key: bool = Field(
+        default=False, description="后端是否已配置 api_key（不返回明文）"
+    )
+
+    @classmethod
+    def from_provider(cls, provider: Any) -> "LLMProviderResponse":
+        """从 LLMProvider 构建响应，剔除 api_key 明文。"""
+        return cls(
+            name=provider.name,
+            model=provider.model,
+            base_url=provider.base_url,
+            has_api_key=bool(provider.api_key),
+        )
 
 
 class LLMProviderCreateRequest(BaseModel):

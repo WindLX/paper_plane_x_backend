@@ -70,10 +70,7 @@ def _raise_as_http(exc: AppSettingsRepositoryError) -> NoReturn:
 def list_providers() -> ProviderListResponse:
     logger.debug("event=settings.providers_list_request_received")
     repo = _repo()
-    items = [
-        LLMProviderResponse.model_validate(p.model_dump(mode="json"))
-        for p in repo.list_providers()
-    ]
+    items = [LLMProviderResponse.from_provider(p) for p in repo.list_providers()]
     return ProviderListResponse(items=items)
 
 
@@ -92,7 +89,7 @@ def get_provider(name: str) -> LLMProviderResponse:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Provider '{name}' not found",
         )
-    return LLMProviderResponse.model_validate(provider.model_dump(mode="json"))
+    return LLMProviderResponse.from_provider(provider)
 
 
 @router.post(
@@ -113,7 +110,7 @@ def create_provider(
         _repo().create_provider(provider)
     except AppSettingsRepositoryError as exc:
         _raise_as_http(exc)
-    return LLMProviderResponse.model_validate(provider.model_dump(mode="json"))
+    return LLMProviderResponse.from_provider(provider)
 
 
 @router.put(
@@ -133,7 +130,7 @@ def update_provider(
         )
     except AppSettingsRepositoryError as exc:
         _raise_as_http(exc)
-    return LLMProviderResponse.model_validate(updated.model_dump(mode="json"))
+    return LLMProviderResponse.from_provider(updated)
 
 
 @router.put(
@@ -158,7 +155,7 @@ def rename_provider(
         renamed = _repo().rename_provider(name, request.name)
     except AppSettingsRepositoryError as exc:
         _raise_as_http(exc)
-    return LLMProviderResponse.model_validate(renamed.model_dump(mode="json"))
+    return LLMProviderResponse.from_provider(renamed)
 
 
 @router.delete(
@@ -286,8 +283,7 @@ def get_app_settings() -> AppSettingsResponse:
             app_settings.librarian.model_dump(mode="json")
         ),
         providers=[
-            LLMProviderResponse.model_validate(p.model_dump(mode="json"))
-            for p in app_settings.providers
+            LLMProviderResponse.from_provider(p) for p in app_settings.providers
         ],
     )
 

@@ -35,10 +35,55 @@ class TestSettingsProviders:
         created = create_resp.json()
         assert created["name"] == "test-provider"
         assert created["model"] == "gpt-4o"
+        # api_key 永远不回传，只用布尔标识是否已配置
+        assert "api_key" not in created
+        assert created["has_api_key"] is True
 
         get_resp = client.get("/api/v1/settings/providers/test-provider")
         assert get_resp.status_code == 200
         assert get_resp.json()["name"] == "test-provider"
+
+    def test_api_key_never_returned(self, client: TestClient) -> None:
+        self._clear_providers()
+        client.post(
+            "/api/v1/settings/providers",
+            json={"name": "secret", "model": "gpt-4o", "api_key": "sk-secret"},
+        )
+
+        # 单个、列表、全量接口均不得包含 api_key 明文
+        single = client.get("/api/v1/settings/providers/secret").json()
+        assert "api_key" not in single
+        assert single["has_api_key"] is True
+
+        listed = client.get("/api/v1/settings/providers").json()["items"]
+        secret = next(p for p in listed if p["name"] == "secret")
+        assert "api_key" not in secret
+
+        full = client.get("/api/v1/settings").json()
+        full_secret = next(p for p in full["providers"] if p["name"] == "secret")
+        assert "api_key" not in full_secret
+
+    def test_update_without_api_key_preserves_existing(
+        self, client: TestClient
+    ) -> None:
+        self._clear_providers()
+        client.post(
+            "/api/v1/settings/providers",
+            json={"name": "keep-key", "model": "gpt-4o", "api_key": "sk-keep"},
+        )
+
+        # 不传 api_key 的更新不应清空已有 key
+        resp = client.put(
+            "/api/v1/settings/providers/keep-key",
+            json={"model": "gpt-4-turbo"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["has_api_key"] is True
+
+        repo = get_app_settings_repo()
+        provider = repo.get_provider("keep-key")
+        assert provider is not None
+        assert provider.api_key == "sk-keep"
 
     def test_create_provider_conflict(self, client: TestClient) -> None:
         self._clear_providers()

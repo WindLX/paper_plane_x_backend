@@ -126,3 +126,8 @@
 - [x] 前端渲染问题右侧边栏宽度问题
 - [x] 后端流式传输卡死问题
 - [ ] MinerU API
+- [ ] 前端强制占据浏览器问题
+- [x] 前端复制问题
+- [ ] 前端 api key 不显示而是覆盖
+- [x] 前端 chatview empty 页面 header 没有 sidebar 按钮的问题
+- [ ] 优化 skills
