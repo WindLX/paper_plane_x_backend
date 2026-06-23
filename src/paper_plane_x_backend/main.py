@@ -19,6 +19,7 @@ from paper_plane_x_backend.api.routers import (
     hitl_ws,
     librarian,
     paper,
+    pdf_parser,
     project,
     project_files,
 )
@@ -71,6 +72,7 @@ app.include_router(conversation_ws.router, prefix="/api/v1")
 app.include_router(data_process_ws.router, prefix="/api/v1")
 app.include_router(hitl_ws.router, prefix="/api/v1")
 app.include_router(project_files.router, prefix="/api/v1")
+app.include_router(pdf_parser.router, prefix="/api/v1")
 
 
 def _resolve_console_dist_dir() -> Path | None:

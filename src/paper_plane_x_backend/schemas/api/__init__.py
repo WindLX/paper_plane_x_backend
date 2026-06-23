@@ -50,6 +50,10 @@ from paper_plane_x_backend.schemas.api.paper import (
     PaperResponse,
     PaperStatusCountResponse,
 )
+from paper_plane_x_backend.schemas.api.pdf_parse import (
+    PdfParseImage,
+    PdfParseResponse,
+)
 from paper_plane_x_backend.schemas.api.project import (
     ProjectCreateRequest,
     ProjectExportRequest,
@@ -143,6 +147,8 @@ __all__ = [
     "PaperListResponse",
     "PaperResponse",
     "PaperStatusCountResponse",
+    "PdfParseImage",
+    "PdfParseResponse",
     "PdfParserConfigResponse",
     "PdfParserConfigUpdateRequest",
     "ProjectCreateRequest",
