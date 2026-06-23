@@ -4,6 +4,7 @@
 与 ServerConfig（启动只读）分离。
 """
 
+from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,6 +20,13 @@ AGENT_NAMES: tuple[str, ...] = (
     "global_finder",
     "researcher",
 )
+
+
+class PdfParserType(str, Enum):
+    """PDF 解析器类型."""
+
+    LOCAL_MINERU = "local_mineru"
+    CLOUD_MINERU = "cloud_mineru"
 
 
 class LLMConfig(BaseModel):
@@ -142,14 +150,50 @@ class LLMProvider(BaseModel):
     )
 
 
-class MinerUConfig(BaseModel):
-    """MinerU 配置."""
+class LocalPdfParserConfig(BaseModel):
+    """本地 MinerU 解析器配置."""
+
+    model_config = ConfigDict(extra="forbid")
 
     base_url: str = Field(
         default="http://localhost:7860", description="MinerU API 地址"
     )
     output_dir: Path = Field(
         default=Path("./data/papers"), description="MinerU 服务端输出目录参数"
+    )
+
+
+class CloudPdfParserConfig(BaseModel):
+    """MinerU 云端解析器配置."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    api_key: str | None = Field(default=None, description="MinerU 云端 API Token")
+    base_url: str = Field(
+        default="https://mineru.net", description="MinerU 云端 API 基础地址"
+    )
+    model_version: str = Field(
+        default="pipeline", description="模型版本: pipeline / vlm / MinerU-HTML"
+    )
+    enable_formula: bool = Field(default=True, description="是否开启公式识别")
+    enable_table: bool = Field(default=True, description="是否开启表格识别")
+    is_ocr: bool = Field(default=False, description="是否启用 OCR")
+    language: str = Field(default="ch", description="文档语言")
+
+
+class PdfParserConfig(BaseModel):
+    """PDF 解析器总配置."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: PdfParserType = Field(
+        default=PdfParserType.LOCAL_MINERU, description="PDF 解析器类型"
+    )
+    local: LocalPdfParserConfig = Field(
+        default_factory=LocalPdfParserConfig, description="本地 MinerU 配置"
+    )
+    cloud: CloudPdfParserConfig = Field(
+        default_factory=CloudPdfParserConfig, description="云端 MinerU 配置"
     )
 
 
@@ -196,8 +240,8 @@ class AppSettings(BaseModel):
     # 各 Agent 独立 LLM 配置（不再继承全局默认配置，每个 Agent 必须手动配置）
     agent_llm: AgentLLMConfigs = Field(default_factory=AgentLLMConfigs)
 
-    # MinerU 配置
-    mineru: MinerUConfig = Field(default_factory=MinerUConfig)
+    # PDF 解析器配置
+    pdf_parser: PdfParserConfig = Field(default_factory=PdfParserConfig)
 
     # Data Process 配置
     data_process: DataProcessConfig = Field(default_factory=DataProcessConfig)

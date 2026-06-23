@@ -5,12 +5,16 @@ from typing import Any, NoReturn, cast
 
 from fastapi import APIRouter, HTTPException, status
 
-from paper_plane_x_backend.models.app_settings import AGENT_NAMES, AgentLLMConfigEntry
+from paper_plane_x_backend.models.app_settings import (
+    AGENT_NAMES,
+    AgentLLMConfigEntry,
+)
 from paper_plane_x_backend.schemas.api import (
     AgentConfigListResponse,
     AgentLLMConfigResponse,
     AgentLLMConfigUpdateRequest,
     AppSettingsResponse,
+    CloudPdfParserConfigUpdateRequest,
     DataProcessConfigResponse,
     DataProcessConfigUpdateRequest,
     LibrarianConfigResponse,
@@ -19,8 +23,8 @@ from paper_plane_x_backend.schemas.api import (
     LLMProviderRenameRequest,
     LLMProviderResponse,
     LLMProviderUpdateRequest,
-    MinerUConfigResponse,
-    MinerUConfigUpdateRequest,
+    LocalPdfParserConfigUpdateRequest,
+    PdfParserConfigResponse,
     ProviderListResponse,
 )
 from paper_plane_x_backend.services.app_settings import (
@@ -273,9 +277,7 @@ def get_app_settings() -> AppSettingsResponse:
             AgentLLMConfigResponse.model_validate(build_agent_config_response(name))
             for name in AGENT_NAMES
         ],
-        mineru=MinerUConfigResponse.model_validate(
-            app_settings.mineru.model_dump(mode="json")
-        ),
+        pdf_parser=PdfParserConfigResponse.from_config(app_settings.pdf_parser),
         data_process=DataProcessConfigResponse.model_validate(
             app_settings.data_process.model_dump(mode="json")
         ),
@@ -288,30 +290,63 @@ def get_app_settings() -> AppSettingsResponse:
     )
 
 
+# ---- PDF Parser ----
+
+
 @router.get(
-    "/mineru",
-    response_model=MinerUConfigResponse,
-    summary="获取 MinerU 配置",
+    "/pdf-parser",
+    response_model=PdfParserConfigResponse,
+    summary="获取 PDF 解析器配置",
 )
-def get_mineru_config() -> MinerUConfigResponse:
-    logger.debug("event=settings.mineru_get_request_received")
+def get_pdf_parser_config() -> PdfParserConfigResponse:
+    logger.debug("event=settings.pdf_parser_get_request_received")
     app_settings = _repo().get()
-    return MinerUConfigResponse.model_validate(
-        app_settings.mineru.model_dump(mode="json")
-    )
+    return PdfParserConfigResponse.from_config(app_settings.pdf_parser)
 
 
 @router.put(
-    "/mineru",
-    response_model=MinerUConfigResponse,
-    summary="更新 MinerU 配置",
+    "/pdf-parser/local",
+    response_model=PdfParserConfigResponse,
+    summary="更新本地 PDF 解析器配置",
 )
-def update_mineru_config(
-    request: MinerUConfigUpdateRequest,
-) -> MinerUConfigResponse:
-    logger.info("event=settings.mineru_update_request_received")
-    updated = _repo().update_mineru(request.model_dump(mode="json", exclude_none=True))
-    return MinerUConfigResponse.model_validate(updated.mineru.model_dump(mode="json"))
+def update_local_pdf_parser_config(
+    request: LocalPdfParserConfigUpdateRequest,
+) -> PdfParserConfigResponse:
+    logger.info("event=settings.pdf_parser_local_update_request_received")
+    try:
+        updated = _repo().update_pdf_parser(
+            {
+                "type": "local_mineru",
+                "local": request.model_dump(mode="json", exclude_none=True),
+            }
+        )
+    except AppSettingsRepositoryError as exc:
+        _raise_as_http(exc)
+    return PdfParserConfigResponse.from_config(updated.pdf_parser)
+
+
+@router.put(
+    "/pdf-parser/cloud",
+    response_model=PdfParserConfigResponse,
+    summary="更新云端 PDF 解析器配置",
+)
+def update_cloud_pdf_parser_config(
+    request: CloudPdfParserConfigUpdateRequest,
+) -> PdfParserConfigResponse:
+    logger.info("event=settings.pdf_parser_cloud_update_request_received")
+    try:
+        updated = _repo().update_pdf_parser(
+            {
+                "type": "cloud_mineru",
+                "cloud": request.model_dump(mode="json", exclude_none=True),
+            }
+        )
+    except AppSettingsRepositoryError as exc:
+        _raise_as_http(exc)
+    return PdfParserConfigResponse.from_config(updated.pdf_parser)
+
+
+# ---- Data Process / Librarian ----
 
 
 @router.get(

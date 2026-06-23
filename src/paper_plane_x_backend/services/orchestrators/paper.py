@@ -30,6 +30,7 @@ from paper_plane_x_backend.services.paper.repository import (
     PaperRepository,
     PaperRepositoryError,
 )
+from paper_plane_x_backend.services.pdf_parser.factory import get_pdf_parser_save_dir
 
 logger = logging.getLogger(__name__)
 
@@ -253,7 +254,7 @@ class PaperOrchestrator:
         self.repo.delete(paper_id)
         logger.info("event=paper.deleted paper_id=%s", paper_id)
 
-        paper_dir = get_app_settings_repo().get().mineru.output_dir / paper_id
+        paper_dir = get_pdf_parser_save_dir(get_app_settings_repo().get(), paper_id)
         if paper_dir.exists():
             try:
                 shutil.rmtree(paper_dir)

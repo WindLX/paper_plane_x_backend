@@ -210,27 +210,42 @@ class TestSettingsAgentLLM:
 
 
 class TestSettingsSections:
-    """Settings section (mineru / data_process / librarian) API tests."""
+    """Settings section (pdf_parser / data_process / librarian) API tests."""
 
     def test_get_full_app_settings(self, client: TestClient) -> None:
         resp = client.get("/api/v1/settings")
         assert resp.status_code == 200
         data = resp.json()
-        assert "mineru" in data
+        assert "pdf_parser" in data
         assert "data_process" in data
         assert "librarian" in data
         assert "agent_llm" in data
         assert "providers" in data
+        assert "mineru" not in data
         assert "llm" not in data
 
-    def test_get_and_update_mineru(self, client: TestClient) -> None:
+    def test_get_and_update_pdf_parser_local(self, client: TestClient) -> None:
         resp = client.put(
-            "/api/v1/settings/mineru",
+            "/api/v1/settings/pdf-parser/local",
             json={"base_url": "http://mineru-test:7860"},
         )
         assert resp.status_code == 200
         updated = resp.json()
-        assert updated["base_url"] == "http://mineru-test:7860"
+        assert updated["type"] == "local_mineru"
+        assert updated["local"]["base_url"] == "http://mineru-test:7860"
+
+    def test_get_and_update_pdf_parser_cloud(self, client: TestClient) -> None:
+        resp = client.put(
+            "/api/v1/settings/pdf-parser/cloud",
+            json={"api_key": "sk-cloud", "model_version": "vlm"},
+        )
+        assert resp.status_code == 200
+        updated = resp.json()
+        assert updated["type"] == "cloud_mineru"
+        assert updated["cloud"]["has_api_key"] is True
+        assert updated["cloud"]["model_version"] == "vlm"
+        # api_key 不回传
+        assert "api_key" not in updated["cloud"]
 
     def test_get_and_update_data_process(self, client: TestClient) -> None:
         resp = client.put(
@@ -253,14 +268,17 @@ class TestSettingsSections:
 
     def test_persistence_across_requests(self, client: TestClient) -> None:
         client.put(
-            "/api/v1/settings/mineru",
+            "/api/v1/settings/pdf-parser/local",
             json={"base_url": "http://mineru-persist:7860"},
         )
 
-        resp = client.get("/api/v1/settings/mineru")
+        resp = client.get("/api/v1/settings/pdf-parser")
         assert resp.status_code == 200
-        assert resp.json()["base_url"] == "http://mineru-persist:7860"
+        assert resp.json()["local"]["base_url"] == "http://mineru-persist:7860"
 
         # 通过全量接口也可见
         full_resp = client.get("/api/v1/settings")
-        assert full_resp.json()["mineru"]["base_url"] == "http://mineru-persist:7860"
+        assert (
+            full_resp.json()["pdf_parser"]["local"]["base_url"]
+            == "http://mineru-persist:7860"
+        )

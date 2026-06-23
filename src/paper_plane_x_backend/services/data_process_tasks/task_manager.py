@@ -24,6 +24,7 @@ from paper_plane_x_backend.services.paper.processor import (
     PaperProcessResult,
 )
 from paper_plane_x_backend.services.paper.repository import PaperRepository
+from paper_plane_x_backend.services.pdf_parser.factory import build_default_pdf_parser
 
 logger = logging.getLogger(__name__)
 
@@ -439,10 +440,11 @@ class DataProcessTaskManager:
             paper_id,
             pdf_path,
         )
+
         repo = PaperRepository(get_db())
         processor = PaperProcessor(
             repo=repo,
-            parser=PaperParser(),
+            parser=PaperParser(pdf_parser=build_default_pdf_parser()),
             caller_id=task.task_id,
         )
         return await processor.process(

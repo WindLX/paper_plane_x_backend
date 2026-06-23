@@ -27,9 +27,14 @@ def test_get_returns_full_settings(repo: AppSettingsRepository) -> None:
     assert isinstance(settings, AppSettings)
 
 
-def test_update_mineru(repo: AppSettingsRepository) -> None:
-    updated = repo.update_mineru({"base_url": "http://mineru:9000"})
-    assert updated.mineru.base_url == "http://mineru:9000"
+def test_update_pdf_parser(repo: AppSettingsRepository) -> None:
+    updated = repo.update_pdf_parser(
+        {
+            "type": "local_mineru",
+            "local": {"base_url": "http://mineru:9000"},
+        }
+    )
+    assert updated.pdf_parser.local.base_url == "http://mineru:9000"
 
 
 def test_update_data_process(repo: AppSettingsRepository) -> None:
@@ -154,11 +159,16 @@ def test_ensure_default_provider_skips_when_exists(
 
 
 def test_changes_are_persisted_to_disk(repo: AppSettingsRepository) -> None:
-    repo.update_mineru({"base_url": "http://persisted"})
+    repo.update_pdf_parser(
+        {
+            "type": "local_mineru",
+            "local": {"base_url": "http://persisted"},
+        }
+    )
 
     # 重新加载同一路径的仓库
     repo2 = AppSettingsRepository(repo.path)
-    assert repo2.get().mineru.base_url == "http://persisted"
+    assert repo2.get().pdf_parser.local.base_url == "http://persisted"
 
 
 def test_agent_llm_persisted(repo: AppSettingsRepository) -> None:

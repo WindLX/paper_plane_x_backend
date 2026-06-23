@@ -37,7 +37,9 @@ server_config.log.file_path = _TEST_RUNTIME_DIR / "logs" / "backend.log"
 server_config.api.console_dist_dir = _TEST_RUNTIME_DIR / "console"
 
 _app_settings_repo = init_app_settings_repo(_TEST_RUNTIME_DIR / "app_settings.toml")
-_app_settings_repo.update_mineru({"output_dir": str(_TEST_RUNTIME_DIR / "papers")})
+_app_settings_repo.update_pdf_parser(
+    {"local": {"output_dir": str(_TEST_RUNTIME_DIR / "papers")}}
+)
 
 # 配置测试用的 LLM provider 和 agent_llm
 _app_settings_repo.ensure_default_provider(

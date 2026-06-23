@@ -1,6 +1,6 @@
 """Paper 解析服务.
 
-封装 MinerU 调用与文件 I/O，将 PDF 转换为后续处理所需的输入。
+封装 PDF 解析器调用与文件 I/O，将 PDF 转换为后续处理所需的输入。
 """
 
 import base64
@@ -10,7 +10,11 @@ from typing import Callable
 
 from paper_plane_x_backend.models import Paper
 from paper_plane_x_backend.services.app_settings import get_app_settings_repo
-from paper_plane_x_backend.services.mineru import MinerUClient
+from paper_plane_x_backend.services.pdf_parser.base import PdfParser
+from paper_plane_x_backend.services.pdf_parser.factory import (
+    build_default_pdf_parser,
+    get_pdf_parser_save_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,18 +30,15 @@ class PaperParserError(Exception):
 class PaperParser:
     """论文内容解析器."""
 
-    def __init__(self, mineru_client: MinerUClient | None = None) -> None:
-        app_settings = get_app_settings_repo().get()
-        self.mineru = mineru_client or MinerUClient(
-            base_url=app_settings.mineru.base_url,
-            output_dir=app_settings.mineru.output_dir,
-        )
+    def __init__(self, pdf_parser: PdfParser | None = None) -> None:
+        self.pdf_parser = pdf_parser or build_default_pdf_parser()
 
     async def parse(self, pdf_path: Path, paper_id: str) -> tuple[str, list[Path]]:
-        """使用 MinerU 解析 PDF，返回 markdown 内容和图片路径列表."""
-        output_dir = get_app_settings_repo().get().mineru.output_dir / paper_id
+        """使用配置的 PDF 解析器解析 PDF，返回 markdown 内容和图片路径列表."""
+        app_settings = get_app_settings_repo().get()
+        output_dir = get_pdf_parser_save_dir(app_settings, paper_id)
         output_dir.mkdir(parents=True, exist_ok=True)
-        result = await self.mineru.parse_pdf(
+        result = await self.pdf_parser.parse_pdf(
             file_path=pdf_path,
             output_md_name=f"{paper_id}.md",
             save_dir=output_dir,

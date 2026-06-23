@@ -8,20 +8,15 @@ import pytest
 from paper_plane_x_backend.models import Project
 from paper_plane_x_backend.services.paper.parser import PaperParser, PaperParserError
 from paper_plane_x_backend.services.paper.repository import PaperRepository
+from paper_plane_x_backend.services.pdf_parser.base import PdfParseResult
 
 
-class _FakeMinerUOutput:
-    def __init__(self, md_content: str, image_paths: list[Path]) -> None:
-        self.md_content = md_content
-        self.image_paths = image_paths
-
-
-class _FakeMinerUClient:
+class _FakePdfParser:
     async def parse_pdf(  # type: ignore[no-untyped-def]
         self, file_path: Path, output_md_name: str, save_dir: Path
-    ) -> _FakeMinerUOutput:
+    ) -> PdfParseResult:
         _ = file_path, output_md_name, save_dir
-        return _FakeMinerUOutput("# parsed", [Path("/tmp/a.png")])
+        return PdfParseResult(md_content="# parsed", image_paths=[Path("/tmp/a.png")])
 
 
 @pytest.mark.asyncio
@@ -41,7 +36,7 @@ async def test_prepare_inputs_uses_existing_markdown(db) -> None:
     paper = repo.create(md_content="# existing", images_paths=["/tmp/old.png"])
     repo.link_to_project(paper.paper_id, project.project_id)
 
-    parser = PaperParser(mineru_client=_FakeMinerUClient())  # type: ignore
+    parser = PaperParser(pdf_parser=_FakePdfParser())  # type: ignore[arg-type]
     md_content, image_paths = await parser.prepare_inputs(
         paper_id=paper.paper_id,
         paper=paper,
@@ -56,7 +51,7 @@ async def test_prepare_inputs_uses_existing_markdown(db) -> None:
 async def test_prepare_inputs_requires_pdf_when_no_markdown(db) -> None:
     repo = PaperRepository(db)
     paper = repo.create(md_content="", images_paths=[])
-    parser = PaperParser(mineru_client=_FakeMinerUClient())  # type: ignore
+    parser = PaperParser(pdf_parser=_FakePdfParser())  # type: ignore[arg-type]
 
     with pytest.raises(PaperParserError):
         await parser.prepare_inputs(

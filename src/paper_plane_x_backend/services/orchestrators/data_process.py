@@ -36,6 +36,7 @@ from paper_plane_x_backend.services.paper.repository import (
     PaperRepository,
     PaperRepositoryError,
 )
+from paper_plane_x_backend.services.pdf_parser.factory import get_pdf_parser_save_dir
 from paper_plane_x_backend.utils.ids import generate_task_id
 
 logger = logging.getLogger(__name__)
@@ -136,7 +137,8 @@ class DataProcessOrchestrator:
             )
 
     async def _save_upload_file(self, upload_file: UploadFile, paper_id: str) -> Path:
-        upload_dir = get_app_settings_repo().get().mineru.output_dir / paper_id
+        app_settings = get_app_settings_repo().get()
+        upload_dir = get_pdf_parser_save_dir(app_settings, paper_id)
         upload_dir.mkdir(parents=True, exist_ok=True)
 
         suffix = Path(upload_file.filename or "original.pdf").suffix or ".pdf"

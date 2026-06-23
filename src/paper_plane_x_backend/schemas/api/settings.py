@@ -4,6 +4,12 @@ from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from paper_plane_x_backend.models.app_settings import (
+    CloudPdfParserConfig,
+    PdfParserConfig,
+    PdfParserType,
+)
+
 
 class LLMProviderResponse(BaseModel):
     """LLM Provider 响应.
@@ -131,8 +137,11 @@ class AgentConfigListResponse(BaseModel):
     )
 
 
-class MinerUConfigResponse(BaseModel):
-    """MinerU 配置响应."""
+# ---- PDF Parser settings ----
+
+
+class LocalPdfParserConfigResponse(BaseModel):
+    """本地 MinerU 解析器配置响应."""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
@@ -140,8 +149,8 @@ class MinerUConfigResponse(BaseModel):
     output_dir: str = Field(..., description="MinerU 服务端输出目录参数")
 
 
-class MinerUConfigUpdateRequest(BaseModel):
-    """更新 MinerU 配置请求."""
+class LocalPdfParserConfigUpdateRequest(BaseModel):
+    """本地 MinerU 解析器配置更新请求."""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
@@ -150,6 +159,90 @@ class MinerUConfigUpdateRequest(BaseModel):
     )
     output_dir: str | None = Field(
         default=None, min_length=1, description="MinerU 服务端输出目录参数"
+    )
+
+
+class CloudPdfParserConfigResponse(BaseModel):
+    """云端 MinerU 解析器配置响应（不返回 api_key 明文）."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    base_url: str = Field(default="https://mineru.net", description="云端 API 基础地址")
+    has_api_key: bool = Field(
+        default=False, description="后端是否已配置 api_key（不返回明文）"
+    )
+    model_version: str = Field(
+        default="pipeline", description="模型版本: pipeline / vlm / MinerU-HTML"
+    )
+    enable_formula: bool = Field(default=True, description="是否开启公式识别")
+    enable_table: bool = Field(default=True, description="是否开启表格识别")
+    is_ocr: bool = Field(default=False, description="是否启用 OCR")
+    language: str = Field(default="ch", description="文档语言")
+
+    @classmethod
+    def from_config(cls, config: CloudPdfParserConfig) -> "CloudPdfParserConfigResponse":
+        return cls(
+            base_url=config.base_url,
+            has_api_key=bool(config.api_key),
+            model_version=config.model_version,
+            enable_formula=config.enable_formula,
+            enable_table=config.enable_table,
+            is_ocr=config.is_ocr,
+            language=config.language,
+        )
+
+
+class CloudPdfParserConfigUpdateRequest(BaseModel):
+    """云端 MinerU 解析器配置更新请求."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    api_key: str | None = Field(default=None, description="MinerU 云端 API Token")
+    base_url: str | None = Field(
+        default=None, min_length=1, description="MinerU 云端 API 基础地址"
+    )
+    model_version: str | None = Field(
+        default=None, min_length=1, description="模型版本: pipeline / vlm / MinerU-HTML"
+    )
+    enable_formula: bool | None = Field(default=None, description="是否开启公式识别")
+    enable_table: bool | None = Field(default=None, description="是否开启表格识别")
+    is_ocr: bool | None = Field(default=None, description="是否启用 OCR")
+    language: str | None = Field(default=None, min_length=1, description="文档语言")
+
+
+class PdfParserConfigResponse(BaseModel):
+    """PDF 解析器总配置响应."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    type: PdfParserType = Field(..., description="PDF 解析器类型")
+    local: LocalPdfParserConfigResponse = Field(..., description="本地 MinerU 配置")
+    cloud: CloudPdfParserConfigResponse = Field(..., description="云端 MinerU 配置")
+
+    @classmethod
+    def from_config(cls, config: PdfParserConfig) -> "PdfParserConfigResponse":
+        return cls(
+            type=config.type,
+            local=LocalPdfParserConfigResponse.model_validate(
+                config.local.model_dump(mode="json") if config.local else {}
+            ),
+            cloud=CloudPdfParserConfigResponse.from_config(
+                config.cloud or CloudPdfParserConfig()
+            ),
+        )
+
+
+class PdfParserConfigUpdateRequest(BaseModel):
+    """PDF 解析器总配置更新请求."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    type: PdfParserType | None = Field(default=None, description="PDF 解析器类型")
+    local: LocalPdfParserConfigUpdateRequest | None = Field(
+        default=None, description="本地 MinerU 配置"
+    )
+    cloud: CloudPdfParserConfigUpdateRequest | None = Field(
+        default=None, description="云端 MinerU 配置"
     )
 
 
@@ -216,7 +309,7 @@ class AppSettingsResponse(BaseModel):
         default_factory=lambda: cast(list[AgentLLMConfigResponse], []),
         description="各 Agent LLM 配置",
     )
-    mineru: MinerUConfigResponse = Field(..., description="MinerU 配置")
+    pdf_parser: PdfParserConfigResponse = Field(..., description="PDF 解析器配置")
     data_process: DataProcessConfigResponse = Field(
         ..., description="Data Process 配置"
     )

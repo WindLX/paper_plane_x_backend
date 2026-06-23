@@ -16,6 +16,7 @@ from paper_plane_x_backend.models.app_settings import (
     AgentLLMConfigEntry,
     AppSettings,
     LLMProvider,
+    PdfParserConfig,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ class AppSettingsRepository:
     """应用动态配置仓库.
 
     使用 TOML 文件持久化 AppSettings：
-    {llm = {...}, agent_llm = {...}, mineru = {...}, data_process = {...}, librarian = {...}}
+    {llm = {...}, agent_llm = {...}, pdf_parser = {...}, data_process = {...}, librarian = {...}}
     """
 
     _settings_path: Path
@@ -118,8 +119,6 @@ class AppSettingsRepository:
             self._settings_path,
         )
 
-    # ---- Internal ----
-
     def _update_section(self, section: str, values: dict[str, Any]) -> AppSettings:
         """更新指定 object-type section."""
         current = self._settings.model_dump(mode="json", exclude_none=True)
@@ -136,13 +135,29 @@ class AppSettingsRepository:
         """获取当前 AppSettings."""
         return self._settings
 
-    # ---- Object-type sections (llm / mineru / data_process / librarian) ----
+    # ---- Object-type sections (data_process / librarian / pdf_parser) ----
 
-    def get_mineru(self) -> AppSettings:
+    def get_pdf_parser(self) -> PdfParserConfig:
+        return self._settings.pdf_parser
+
+    def update_pdf_parser(self, values: dict[str, Any]) -> AppSettings:
+        """更新 pdf_parser section."""
+        current = self._settings.model_dump(mode="json", exclude_none=True)
+        section_data = current.get("pdf_parser", {})
+
+        # 合并本地和云端子配置（而非整体替换）
+        for key in ("local", "cloud"):
+            if key in values and isinstance(values[key], dict):
+                section_data[key] = {**section_data.get(key, {}), **values[key]}
+                del values[key]
+
+        section_data.update(values)
+        current["pdf_parser"] = section_data
+
+        self._settings = AppSettings.model_validate(current)
+        self._save()
+        logger.info("event=app_settings.updated section=pdf_parser")
         return self._settings
-
-    def update_mineru(self, values: dict[str, Any]) -> AppSettings:
-        return self._update_section("mineru", values)
 
     def get_data_process(self) -> AppSettings:
         return self._settings
