@@ -16,7 +16,6 @@
 - Project file sandbox：list/read/write/delete/export/find/lines/replace/patch。
 - ResearcherAgent 项目级 WebSocket 对话。
 - HITL WebSocket 与 `ask_human`。
-- SubAgent 委派。
 - Agent trace 查询与列表。
 - Settings API。
 - 兄弟包 `paper_plane_x_cli` 中的 `ppx` HTTP CLI。
@@ -73,14 +72,13 @@
 
 ### Phase 5: Researcher Workflow
 
-| 能力                              | 状态   |
-| --------------------------------- | ------ |
-| Conversation REST                 | 已完成 |
-| Conversation WebSocket streaming  | 已完成 |
-| ResearcherAgent tools             | 已完成 |
-| HITL WebSocket                    | 已完成 |
-| `ask_human`                       | 已完成 |
-| `delegate_to_subagent` / SubAgent | 已完成 |
+| 能力                             | 状态   |
+| -------------------------------- | ------ |
+| Conversation REST                | 已完成 |
+| Conversation WebSocket streaming | 已完成 |
+| ResearcherAgent tools            | 已完成 |
+| HITL WebSocket                   | 已完成 |
+| `ask_human`                      | 已完成 |
 
 ### Phase 6: External Agent Integration
 
@@ -128,6 +126,11 @@
 - [ ] MinerU API
 - [ ] 前端强制占据浏览器问题
 - [x] 前端复制问题
-- [ ] 前端 api key 不显示而是覆盖
+- [x] 前端 api key 不显示而是覆盖
 - [x] 前端 chatview empty 页面 header 没有 sidebar 按钮的问题
-- [ ] 优化 skills
+- [x] 优化 skills
+- [x] 删除 subagent
+- [ ] 优化 docker 部署
+- [ ] 优化文档
+- [ ] 优化 agents 文档
+- [ ] 优化 CI/CD

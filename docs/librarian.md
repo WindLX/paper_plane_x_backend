@@ -285,7 +285,7 @@ Skill 包含：
 - Project file / paper note / librarian 工具说明。
 - `ppx` CLI 映射。
 
-Skill 不暴露内置 ResearcherAgent 的 `ask_human` 和 `delegate_to_subagent`。外部 agent 需要用户决策时直接问当前用户；复杂任务拆分由宿主 agent 自己处理。
+Skill 不暴露内置 ResearcherAgent 的 `ask_human`。外部 agent 需要用户决策时直接问当前用户；复杂任务拆分由宿主 agent 自己处理。
 
 ## 9. 推荐研究流程
 

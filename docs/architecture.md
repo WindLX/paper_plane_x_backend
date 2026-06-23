@@ -166,10 +166,7 @@ ResearcherAgent 是项目级对话 agent。它的运行上下文包含：
 - 项目文件沙箱：`read_project_file`、`read_project_file_lines`、`find_in_project_file`、`write_project_file`、`replace_project_file_lines`、`replace_project_file_text`、`patch_project_file`、`list_project_files`、`remove_project_file`
 - Librarian：`global_finder`、`search_paper`、`matrix_compare`、`deep_dive`
 - Paper note：`get_paper_agent_note`、`write_paper_agent_note`、`update_paper_agent_note`、`delete_paper_agent_note`
-- 内部协作能力：`delegate_to_subagent`
 - 人机交互：`ask_human`
-
-`SubAgent` 拥有接近 ResearcherAgent 的工具集，但不允许继续调用 `delegate_to_subagent`，避免递归委派。
 
 ## 5. HITL
 
@@ -245,7 +242,7 @@ ppx files list --dir /
 用途：
 
 - 让外部 agent 获得接近内置 ResearcherAgent 的工作原则、工具语义、field_paths、query rules 和 CLI 调用方式。
-- 不暴露内部 `ask_human` 和 `delegate_to_subagent` 工具。
+- 不暴露内部 `ask_human` 工具。
 - 外部 agent 需要确认时直接问当前用户；复杂任务拆分由宿主 agent 自己处理。
 
 ## 8. 数据模型与存储

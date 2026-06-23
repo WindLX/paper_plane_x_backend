@@ -1,15 +1,17 @@
 services:
   backend:
     build:
-      context: ..
-      dockerfile: paper_plane_x_backend/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     container_name: paper-plane-x-backend
     env_file:
-      - .env.docker
+      - .env.docker.example
+    environment:
+      - PPX_API__HOST=0.0.0.0
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/paper_plane_x_backend/data
+      - ./data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]

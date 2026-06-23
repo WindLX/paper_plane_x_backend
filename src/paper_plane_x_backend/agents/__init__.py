@@ -6,12 +6,10 @@ from paper_plane_x_backend.agents.data_processor import (
     FactCheckAgent,
 )
 from paper_plane_x_backend.agents.deep_diver import DeepDiverAgent
-from paper_plane_x_backend.agents.subagent import SubAgent
 
 __all__ = [
     "DataProcessorAgentGroup",
     "ExtractionAgent",
     "FactCheckAgent",
     "DeepDiverAgent",
-    "SubAgent",
 ]

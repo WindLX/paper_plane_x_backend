@@ -17,9 +17,9 @@
 - `core/agent_runtime/`
   - BaseAgent、LLMClient、tooling、memory、stream types、输出校验。
 - `agents/`
-  - ResearcherAgent、SubAgent、DataProcessorAgentGroup、QueryBuilder、GlobalFinder、DeepDiver。
+  - ResearcherAgent、DataProcessorAgentGroup、QueryBuilder、GlobalFinder、DeepDiver。
 - `tools/`
-  - Agent 可调用工具：conversation_io、librarian、paper、hitl、subagent。
+  - Agent 可调用工具：conversation_io、librarian、paper、hitl。
 - `schemas/`
   - API schemas 与 Agent I/O schemas。
 - `models/`

@@ -147,7 +147,6 @@ class TestSettingsAgentLLM:
             "query_builder",
             "global_finder",
             "researcher",
-            "subagent",
         ):
             repo.update_agent_llm(name, {"provider_name": "default"})
 
@@ -155,7 +154,7 @@ class TestSettingsAgentLLM:
         resp = client.get("/api/v1/settings/agent_llm")
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data["items"]) == 8
+        assert len(data["items"]) == 7
         names = {item["agent_name"] for item in data["items"]}
         assert "extraction" in names
         assert "analysis" in names

@@ -37,7 +37,6 @@ from paper_plane_x_backend.tools.paper import (
     update_paper_agent_note,
     write_paper_agent_note,
 )
-from paper_plane_x_backend.tools.subagent import delegate_to_subagent
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +58,6 @@ _RESEARCHER_TOOLS = [
     write_paper_agent_note,
     update_paper_agent_note,
     delete_paper_agent_note,
-    delegate_to_subagent,
     ask_human,
 ]
 

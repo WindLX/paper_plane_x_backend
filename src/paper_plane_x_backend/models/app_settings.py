@@ -18,7 +18,6 @@ AGENT_NAMES: tuple[str, ...] = (
     "query_builder",
     "global_finder",
     "researcher",
-    "subagent",
 )
 
 
@@ -122,9 +121,6 @@ class AgentLLMConfigs(BaseModel):
     # Conversation Agents
     researcher: AgentLLMConfigEntry | None = Field(
         default=None, description="ResearcherAgent 配置"
-    )
-    subagent: AgentLLMConfigEntry | None = Field(
-        default=None, description="SubAgent 配置"
     )
 
 

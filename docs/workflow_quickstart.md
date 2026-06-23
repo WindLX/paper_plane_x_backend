@@ -65,7 +65,7 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/settings/providers \
 然后把每个 Agent 绑定到这个 Provider：
 
 ```bash
-for agent in extraction analysis fact_check deep_diver query_builder global_finder researcher subagent; do
+for agent in extraction analysis fact_check deep_diver query_builder global_finder researcher; do
   curl -s -X PUT "http://127.0.0.1:8000/api/v1/settings/agent-llm/${agent}" \
     -H "Content-Type: application/json" \
     -d '{"provider_name": "default"}'

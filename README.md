@@ -23,7 +23,9 @@ uv run debug
 
 ## 首次配置
 
-LLM Provider 和 Agent LLM 绑定不在 `.env` 里。通过 Settings API 配。
+LLM Provider 和 Agent LLM 绑定不在 `.env` 里。可以在前端 Settings 页面操作。
+
+也通过 Settings API 配置：
 
 ```bash
 # 创建 Provider
@@ -32,14 +34,13 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/settings/providers \
   -d '{"name":"default","model":"deepseek-chat","api_key":"sk-xxx","base_url":"https://api.deepseek.com/v1"}'
 
 # 绑定所有 Agent 到此 Provider
-for agent in extraction analysis fact_check deep_diver query_builder global_finder researcher subagent; do
+for agent in extraction analysis fact_check deep_diver query_builder global_finder researcher; do
   curl -s -X PUT "http://127.0.0.1:8000/api/v1/settings/agent-llm/${agent}" \
     -H "Content-Type: application/json" \
     -d '{"provider_name":"default"}'
 done
 ```
 
-也可以在前端 Settings 页面操作。
 
 ## 配置分层
 
