@@ -181,6 +181,54 @@ class TestBaseAgentExtended:
         assert agent.trace_ids == saved_trace_ids
 
     @pytest.mark.asyncio
+    async def test_api_mode_retries_empty_thinking_response_without_thinking(
+        self,
+    ) -> None:
+        config = LLMConfig(
+            model="deepseek-v4-flash",
+            api_key="test-key",
+            thinking_enabled=True,
+            reasoning_effort="max",
+        )
+        agent = BaseAgent(
+            llm_config=config,
+            output_schema=ApiOutput,
+            mode="api",
+            save_trace=False,
+            max_steps=2,
+        )
+        calls: list[tuple[list[dict[str, Any]], dict[str, Any]]] = []
+
+        async def mock_generate_structured(messages, output_schema, **kwargs):
+            calls.append(([dict(message) for message in messages], dict(kwargs)))
+            if len(calls) == 1:
+                return LLMResponse(
+                    content="",
+                    reasoning_content="reasoning consumed the response",
+                    model="deepseek-v4-flash",
+                    usage={},
+                )
+            return LLMResponse(
+                content='{"value": "ok"}',
+                model="deepseek-v4-flash",
+                usage={},
+            )
+
+        agent.llm.generate_structured = mock_generate_structured
+
+        result = await self._run_with_input(agent, {"q": "x"})
+
+        assert isinstance(result, ApiOutput)
+        assert result.value == "ok"
+        assert calls[0][1] == {}
+        assert calls[1][1] == {
+            "extra_body": {"thinking": {"type": "disabled"}},
+            "reasoning_effort": None,
+        }
+        assert all(message["role"] != "assistant" for message in calls[1][0])
+        assert "Output validation failed" in calls[1][0][-1]["content"]
+
+    @pytest.mark.asyncio
     async def test_tool_argument_json_error_bubbles_to_execution_error(self) -> None:
         @tool()
         def noop() -> str:

@@ -278,6 +278,7 @@ class BaseAgent:
         output_schema = self._get_output_schema()
         last_validation_error: AgentValidationError | None = None
         validated_output = None
+        retry_without_thinking = False
 
         for step in range(self.max_steps):
             content = ""
@@ -289,27 +290,39 @@ class BaseAgent:
                     step + 1,
                     self.max_steps,
                 )
+                generation_kwargs: dict[str, Any] = {}
+                if retry_without_thinking:
+                    generation_kwargs = {
+                        "extra_body": {"thinking": {"type": "disabled"}},
+                        "reasoning_effort": None,
+                    }
+                request_messages = self.build_messages_with_tool_guide()
                 response = await self.llm.generate_structured(
-                    messages=self.build_messages_with_tool_guide(),
+                    messages=request_messages,
                     output_schema=output_schema,
+                    **generation_kwargs,
                 )
                 content = response.content or ""
                 reasoning_content = response.reasoning_content
-                self.memory.append_assistant_message(
-                    content=content,
-                    name=self.agent_name,
-                    reasoning_content=reasoning_content,
-                )
 
                 if self.save_trace:
                     self._save_trace(
-                        messages=self.build_messages_with_tool_guide(),
+                        messages=self._build_partial_trace_messages(
+                            request_messages,
+                            assistant_content=content or None,
+                            assistant_reasoning_content=reasoning_content,
+                        ),
                         llm_model=response.model,
                         usage=response.usage,
                         tools=self.tool_registry.to_openai_format(),
                     )
 
                 validated_output = self._validate_output(content)
+                self.memory.append_assistant_message(
+                    content=content,
+                    name=self.agent_name,
+                    reasoning_content=reasoning_content,
+                )
 
                 logger.info(
                     "event=agent.run_completed agent=%s mode=api step=%s",
@@ -326,6 +339,17 @@ class BaseAgent:
                     self.max_steps,
                     e.message,
                 )
+                if (
+                    not content.strip()
+                    and reasoning_content
+                    and self.llm.thinking_enabled
+                ):
+                    retry_without_thinking = True
+                    logger.warning(
+                        "event=agent.validation_retry_without_thinking agent=%s step=%s",
+                        self.agent_name,
+                        step + 1,
+                    )
 
                 error_detail = e.validation_errors if e.validation_errors else e.message
                 self.memory.append_validation_feedback(error_detail)
