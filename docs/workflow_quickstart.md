@@ -245,7 +245,7 @@ ppx librarian deep-dive \
 
 ## 10. 项目文件和论文笔记
 
-### 9.1 Project files
+### 10.1 Project files
 
 ```bash
 ppx files list --dir /
@@ -267,7 +267,24 @@ ppx files patch \
   --content "\n\nValidated with Paper Plane X.\n"
 ```
 
-### 9.2 Paper note
+### 10.2 Paper Markdown
+
+下载 paper 已解析的完整 Markdown：
+
+```bash
+ppx paper markdown \
+  --paper-id "$PAPER_ID" \
+  --save-dir /tmp/paper-plane-x-markdown
+```
+
+也可以直接调用 API：
+
+```bash
+curl -fOJ \
+  "http://127.0.0.1:8000/api/v1/papers/${PAPER_ID}/markdown"
+```
+
+### 10.3 Paper note
 
 ```bash
 ppx paper-note get --paper-id "$PAPER_ID"

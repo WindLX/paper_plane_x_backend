@@ -2,8 +2,10 @@
 
 import logging
 from typing import NoReturn
+from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 
 from paper_plane_x_backend.api.dependencies import DBDep, TaskManagerDep
 from paper_plane_x_backend.models import (
@@ -212,6 +214,32 @@ async def get_paper(
     except PaperDomainError as exc:
         _raise_as_http(exc)
     return _to_paper_detail_response(orchestrator, paper)
+
+
+@router.get(
+    "/{paper_id}/markdown",
+    response_class=Response,
+    summary="下载论文解析后的 Markdown",
+)
+async def download_paper_markdown(
+    paper_id: str,
+    db: DBDep,
+    task_manager: TaskManagerDep,
+) -> Response:
+    orchestrator = _build_orchestrator(db, task_manager)
+    try:
+        markdown = orchestrator.get_markdown(paper_id=paper_id)
+    except PaperDomainError as exc:
+        _raise_as_http(exc)
+
+    download_name = quote(f"{paper_id}.md", safe="")
+    return Response(
+        content=markdown,
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{download_name}"
+        },
+    )
 
 
 @router.get(

@@ -62,6 +62,7 @@ done
 **Paper**
 - `POST /papers` — 上传 PDF
 - `GET /papers/{id}`, `PATCH /papers/{id}`, `DELETE /papers/{id}`
+- `GET /papers/{id}/markdown` — 下载解析后的完整 Markdown
 - `POST /papers/{id}/reprocess`
 
 **Librarian**
@@ -100,6 +101,7 @@ uv tool install ../paper_plane_x_cli
 ppx context set --base-url http://127.0.0.1:8000/api/v1 --project-id prj_x
 ppx project global-finder
 ppx librarian search --query-expr "(meta.title CONTAINS transformer)"
+ppx paper markdown --paper-id pap_x --save-dir ./paper-markdown
 ppx files list --dir /
 ppx files upload --source ./notes.md --path /notes/notes.md
 ```

@@ -22,7 +22,7 @@ async def deep_dive(
     caller_id: str | None = None,
 ) -> dict[str, Any]:
     logger.info(
-        f"event=deep_dive_start, paper_id={paper_id}, question_len={len(question)}, caller={caller}, caller_id={caller_id}"
+        f"event=librarian.deep_dive.start, paper_id={paper_id}, question_len={len(question)}, caller={caller}, caller_id={caller_id}"
     )
     paper = repo.get(paper_id=paper_id)
     if not paper:
@@ -48,7 +48,7 @@ async def deep_dive(
     result = await agent.run()
     trace_id = agent.trace_ids[-1] if agent.trace_ids else None
     logger.info(
-        f"event=deep_dive_completed, paper_id={paper_id}, trace_id={trace_id}, caller={caller}, caller_id={caller_id}"
+        f"event=librarian.deep_dive.completed, paper_id={paper_id}, trace_id={trace_id}, caller={caller}, caller_id={caller_id}"
     )
     return {
         "result": result.model_dump(),

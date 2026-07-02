@@ -79,6 +79,20 @@ class PaperOrchestrator:
         logger.info("event=paper.fetched paper_id=%s", paper_id)
         return paper
 
+    def get_markdown(self, *, paper_id: str) -> str:
+        paper = self.get_paper(paper_id=paper_id)
+        if not paper.md_content:
+            raise PaperDomainError(
+                status.HTTP_409_CONFLICT,
+                f"Paper {paper_id} has no parsed markdown content",
+            )
+        logger.info(
+            "event=paper.markdown_fetched paper_id=%s chars=%s",
+            paper_id,
+            len(paper.md_content),
+        )
+        return paper.md_content
+
     def batch_get_papers(
         self,
         *,

@@ -27,7 +27,11 @@ def orchestrator(db):
     return PaperOrchestrator(db=db, task_manager=manager)
 
 
-def _insert_paper(db, paper_id: str = "pap-test-1") -> Paper:
+def _insert_paper(
+    db,
+    paper_id: str = "pap-test-1",
+    md_content: str = "",
+) -> Paper:
     now = datetime.now()
     paper = Paper(
         paper_id=paper_id,
@@ -39,6 +43,7 @@ def _insert_paper(db, paper_id: str = "pap-test-1") -> Paper:
         custom_meta=None,
         raw_pdf_path=None,
         raw_pdf_sha256=None,
+        md_content=md_content,
         images_paths=[],
         extraction_status=ExtractionStatus.COMPLETED,
         extraction_fact_check_status=FactCheckStatus.PENDING,
@@ -79,6 +84,26 @@ class TestPaperOrchestrator:
         with pytest.raises(PaperDomainError) as exc_info:
             orchestrator.get_paper(paper_id="no")
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_get_markdown(self, orchestrator, db):
+        _insert_paper(db, "pap-test-1", md_content="# Full paper\n\n正文")
+
+        markdown = orchestrator.get_markdown(paper_id="pap-test-1")
+
+        assert markdown == "# Full paper\n\n正文"
+
+    def test_get_markdown_not_found(self, orchestrator):
+        with pytest.raises(PaperDomainError) as exc_info:
+            orchestrator.get_markdown(paper_id="no")
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_get_markdown_conflicts_when_content_is_empty(self, orchestrator, db):
+        _insert_paper(db, "pap-test-1", md_content="")
+
+        with pytest.raises(PaperDomainError) as exc_info:
+            orchestrator.get_markdown(paper_id="pap-test-1")
+
+        assert exc_info.value.status_code == status.HTTP_409_CONFLICT
 
     def test_batch_get_papers(self, orchestrator, db):
         _insert_paper(db, "pap-test-1")
