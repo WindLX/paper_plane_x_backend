@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,8 @@ from paper_plane_x_backend.services.paper.repository import (
     PaperRepositoryError,
 )
 
+logger = logging.getLogger(__name__)
+
 
 async def deep_dive(
     *,
@@ -18,6 +21,9 @@ async def deep_dive(
     caller: str | None = None,
     caller_id: str | None = None,
 ) -> dict[str, Any]:
+    logger.info(
+        f"event=deep_dive_start, paper_id={paper_id}, question_len={len(question)}, caller={caller}, caller_id={caller_id}"
+    )
     paper = repo.get(paper_id=paper_id)
     if not paper:
         raise PaperRepositoryError(f"Paper with id {paper_id} not found")
@@ -41,6 +47,9 @@ async def deep_dive(
     )
     result = await agent.run()
     trace_id = agent.trace_ids[-1] if agent.trace_ids else None
+    logger.info(
+        f"event=deep_dive_completed, paper_id={paper_id}, trace_id={trace_id}, caller={caller}, caller_id={caller_id}"
+    )
     return {
         "result": result.model_dump(),
         "trace_id": trace_id,
