@@ -7,19 +7,19 @@
 - `main.py`
   - FastAPI app 入口，注册 routers，管理 lifespan。
 - `api/routers/`
-  - HTTP / WebSocket 路由：project、paper、project_files、librarian、data_process、conversation、hitl_ws、agent_traces、settings。
+  - HTTP / WebSocket 路由：project、paper、project_files、librarian、data_process、data_process_ws、agent_traces、settings、pdf_parser。
 - `api/dependencies.py`
   - FastAPI 依赖注入，主要提供数据库和 task manager。
 - `services/orchestrators/`
   - 业务编排入口：project、paper、data_process、librarian。
 - `services/`
-  - 数据库、repository、任务管理、PDF 解析、Librarian 服务、Conversation、HITL、settings。
+  - 数据库、repository、任务管理、PDF 解析、Librarian 服务、project files、settings。
 - `core/agent_runtime/`
   - BaseAgent、LLMClient、tooling、memory、stream types、输出校验。
 - `agents/`
-  - ResearcherAgent、DataProcessorAgentGroup、QueryBuilder、GlobalFinder、DeepDiver。
+  - DataProcessorAgentGroup、QueryBuilder、GlobalFinder、DeepDiver。
 - `tools/`
-  - Agent 可调用工具：conversation_io、librarian、paper、hitl。
+  - Agent 可调用工具：project file I/O、librarian、paper。
 - `schemas/`
   - API schemas 与 Agent I/O schemas。
 - `models/`
@@ -49,22 +49,19 @@
 - `services/paper/processor.py`
 - `services/paper/repository.py`
 
-### Researcher Conversation
+### Project Files
 
-1. REST 创建 conversation。
-2. WebSocket `/api/v1/ws/conversations/{conversation_id}` 接收用户消息。
-3. `ResearcherAgent` 恢复 conversation memory。
-4. `BaseAgent` 执行 LLM/tool-call 循环。
-5. 流式返回文本、reasoning、tool_call、complete 事件。
-6. 消息和 trace ids 持久化。
+1. Project 创建时初始化独立文件沙箱。
+2. `project_files` API 提供 list/read/write/upload/replace/patch/delete/export。
+3. 外部 `ppx` CLI 和 agent skill 通过 HTTP API 读写项目笔记、草稿和中间产物。
+4. 旧 conversation 表在数据库初始化时备份后迁移删除。
 
 关键文件：
 
-- `api/routers/conversation.py`
-- `api/routers/conversation_ws.py`
-- `services/conversation/`
-- `agents/researcher.py`
-- `core/agent_runtime/normal_mode.py`
+- `api/routers/project_files.py`
+- `services/project/files.py`
+- `tools/conversation_io.py`
+- `services/database.py`
 
 ### Librarian
 
@@ -93,8 +90,9 @@
 
 Skill 目录：
 
-- `../paper_plane_x_cli/skills/paper-plane-x-researcher/SKILL.md`
-- `../paper_plane_x_cli/skills/paper-plane-x-researcher/references/tool-guide.md`
+- `../paper_plane_x_cli/skills/ppx-researcher/SKILL.md`
+- `../paper_plane_x_cli/skills/ppx-researcher/references/tool-guide.md`
+- `../paper_plane_x_cli/skills/ppx-pdf-to-markdown/SKILL.md`
 
 ## 代码约定
 

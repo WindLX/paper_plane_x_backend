@@ -12,16 +12,6 @@ from paper_plane_x_backend.schemas.api.agent_trace import (
     AgentTraceStats,
 )
 from paper_plane_x_backend.schemas.api.common import ErrorResponse, MessageResponse
-from paper_plane_x_backend.schemas.api.conversation import (
-    ConversationCreateRequest,
-    ConversationForkRequest,
-    ConversationListResponse,
-    ConversationMessageCreateRequest,
-    ConversationMessageResponse,
-    ConversationMessageUpdateRequest,
-    ConversationResponse,
-    ConversationUpdateRequest,
-)
 from paper_plane_x_backend.schemas.api.data_process import (
     DataProcessManualUpdateRequest,
     DataProcessRequest,
@@ -172,12 +162,4 @@ __all__ = [
     "ProjectResponse",
     "ProjectUpdateRequest",
     "ProviderListResponse",
-    "ConversationCreateRequest",
-    "ConversationForkRequest",
-    "ConversationListResponse",
-    "ConversationMessageCreateRequest",
-    "ConversationMessageResponse",
-    "ConversationMessageUpdateRequest",
-    "ConversationResponse",
-    "ConversationUpdateRequest",
 ]

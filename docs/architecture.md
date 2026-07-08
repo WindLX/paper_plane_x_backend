@@ -1,18 +1,20 @@
 # Backend Architecture
 
-这份文档描述 **当前实现** 的后端结构。它面向要维护 API、Agent、工具、CLI、测试和部署的开发者。
+这份文档描述当前后端实现，面向维护 API、Agent、工具、CLI、测试和部署的开发者。
 
 ## 1. 系统目标
 
-Paper Plane X Backend 的目标是为科研项目提供一条稳定的文献工作流：
+Paper Plane X Backend 为科研项目提供稳定的文献工作流：
 
 1. 上传 PDF。
 2. 解析 PDF 为 Markdown / 图片。
 3. 运行结构化提取、理论分析与事实核查。
 4. 将结果持久化到 SQLite。
 5. 支持项目级文献检索、矩阵对比和单篇 deep dive。
-6. 支持 ResearcherAgent 项目对话、项目文件沙箱和论文笔记。
-7. 通过 `ppx` CLI 与 Researcher skill 把工具能力暴露给外部 agent。
+6. 支持项目文件沙箱和论文级 paper note。
+7. 通过 `ppx` CLI 与外部 `ppx-researcher` skill 把后端能力暴露给外部 Agent。
+
+内置 Conversation、Conversation WebSocket、ResearcherAgent 和 HITL 已移除。旧库启动时会先备份数据库，再删除旧 conversation 表。
 
 ## 2. 分层结构
 
@@ -25,7 +27,7 @@ Paper Plane X Backend 的目标是为科研项目提供一条稳定的文献工�
 职责：
 
 - 创建 FastAPI app。
-- 注册 HTTP routers 与 WebSocket routers。
+- 注册 HTTP routers 与 Data Process WebSocket router。
 - 配置 CORS。
 - 托管已构建的 console 静态资源。
 - 在 lifespan 中初始化目录、数据库、app settings、worker pool。
@@ -47,19 +49,17 @@ Paper Plane X Backend 的目标是为科研项目提供一条稳定的文献工�
 
 当前路由分组：
 
-| Router            | Prefix                                       | 说明                                                          |
-| ----------------- | -------------------------------------------- | ------------------------------------------------------------- |
-| `paper`           | `/api/v1/papers`                             | 论文上传、详情、更新、删除、重处理、agent note                |
-| `project`         | `/api/v1/projects`                           | 项目 CRUD、agent summary、导出、论文关联、项目搜索            |
-| `project_files`   | `/api/v1/projects/{project_id}/files`        | 项目文件沙箱 list/read/write/find/patch/export                |
-| `librarian`       | `/api/v1/librarian`                          | search、matrix、deep-dive、global-finder、query-builder       |
-| `data_process`    | `/api/v1/data-process`                       | 任务列表、详情、取消、重试、删除                              |
-| `data_process_ws` | `/api/v1/ws/data-process`                    | Data Process 任务实时事件                                     |
-| `conversation`    | `/api/v1/conversations`                      | 会话与消息 CRUD、fork、turn 删除                              |
-| `conversation_ws` | `/api/v1/ws/conversations/{conversation_id}` | ResearcherAgent 流式对话                                      |
-| `hitl_ws`         | `/api/v1/ws/hitl`                            | Human-in-the-loop 问题广播与回答                              |
-| `agent_traces`    | `/api/v1/agent-traces`                       | trace 查询、列表、删除                                        |
-| `settings`        | `/api/v1/settings`                           | LLM provider、Agent LLM、MinerU、Data Process、Librarian 配置 |
+| Router            | Prefix                                | 说明                                                              |
+| ----------------- | ------------------------------------- | ----------------------------------------------------------------- |
+| `paper`           | `/api/v1/papers`                      | 论文上传、详情、更新、删除、重处理、agent note                    |
+| `project`         | `/api/v1/projects`                    | 项目 CRUD、agent summary、导出、论文关联、项目搜索                |
+| `project_files`   | `/api/v1/projects/{project_id}/files` | 项目文件沙箱 list/read/write/find/patch/export                    |
+| `librarian`       | `/api/v1/librarian`                   | search、matrix、deep-dive、global-finder、query-builder           |
+| `data_process`    | `/api/v1/data-process`                | 任务列表、详情、取消、重试、删除                                  |
+| `data_process_ws` | `/api/v1/ws/data-process`             | Data Process 任务实时事件                                         |
+| `agent_traces`    | `/api/v1/agent-traces`                | trace 查询、列表、删除                                            |
+| `settings`        | `/api/v1/settings`                    | LLM provider、Agent LLM、PDF Parser、Data Process、Librarian 配置 |
+| `pdf_parser`      | `/api/v1/pdf-parser`                  | 单文件 PDF 解析为 Markdown                                        |
 
 ### 2.3 Orchestrator 层
 
@@ -87,16 +87,18 @@ Paper Plane X Backend 的目标是为科研项目提供一条稳定的文献工�
 - `src/paper_plane_x_backend/services/database.py`
 - `src/paper_plane_x_backend/services/paper/`
 - `src/paper_plane_x_backend/services/project/`
-- `src/paper_plane_x_backend/services/conversation/`
 - `src/paper_plane_x_backend/services/data_process_tasks/`
 - `src/paper_plane_x_backend/services/librarian/`
+- `src/paper_plane_x_backend/services/app_settings/`
+- `src/paper_plane_x_backend/services/pdf_parser/`
 
 职责：
 
 - SQLite 初始化与轻量迁移。
-- Paper / Project / Conversation / Trace 数据访问。
+- Paper / Project / Trace 数据访问。
 - Data Process 任务持久化与 worker 生命周期。
 - Librarian 字段读取、搜索和矩阵组装。
+- PDF Parser 本地/云端配置与解析适配。
 
 ### 2.5 Agent Runtime 层
 
@@ -115,7 +117,14 @@ Paper Plane X Backend 的目标是为科研项目提供一条稳定的文献工�
 - Structured output 校验。
 - Agent trace 落库。
 
-`Tool.execute` 的隐藏上下文参数使用 `runtime_context` 注入，例如 `project_id`、`conversation_id`、caller 信息。不要使用旧的 `context=` 形态。
+`Tool.execute` 的隐藏上下文参数使用 `runtime_context` 注入，例如 `project_id`、caller 信息。不要使用旧的 `context=` 形态。
+
+当前后端 Agent：
+
+- `DataProcessorAgentGroup`
+- `QueryBuilderAgent`
+- `GlobalFinderAgent`
+- `DeepDiverAgent`
 
 ## 3. Data Process 主链路
 
@@ -147,44 +156,7 @@ Paper Plane X Backend 的目标是为科研项目提供一条稳定的文献工�
 - `extraction_fact_check_status` 为 `PASSED` 或 `HUMAN_PASSED`
 - `analysis_fact_check_status` 为 `PASSED` 或 `HUMAN_PASSED`
 
-## 4. ResearcherAgent
-
-入口：
-
-- Conversation WebSocket：`/api/v1/ws/conversations/{conversation_id}`
-- Conversation REST：`/api/v1/conversations/*`
-
-ResearcherAgent 是项目级对话 agent。它的运行上下文包含：
-
-- `project_id`
-- `conversation_id`
-- 当前 conversation memory
-- Tool runtime context
-
-内置工具：
-
-- 项目文件沙箱：`read_project_file`、`read_project_file_lines`、`find_in_project_file`、`write_project_file`、`replace_project_file_lines`、`replace_project_file_text`、`patch_project_file`、`list_project_files`、`remove_project_file`
-- Librarian：`global_finder`、`search_paper`、`matrix_compare`、`deep_dive`
-- Paper note：`get_paper_agent_note`、`write_paper_agent_note`、`update_paper_agent_note`、`delete_paper_agent_note`
-- 人机交互：`ask_human`
-
-## 5. HITL
-
-入口：
-
-- WebSocket：`/api/v1/ws/hitl`
-- Tool：`ask_human`
-
-流程：
-
-1. ResearcherAgent 调用 `ask_human`。
-2. `HITLManager` 注册 pending question。
-3. 所有 HITL WebSocket 客户端收到 `hitl_question`。
-4. 用户提交 `answer`。
-5. `ask_human` 返回答案给 Agent。
-6. 默认 10 分钟超时保护。
-
-## 6. Librarian
+## 4. Librarian
 
 入口：
 
@@ -192,6 +164,7 @@ ResearcherAgent 是项目级对话 agent。它的运行上下文包含：
 - `POST /api/v1/librarian/matrix`
 - `POST /api/v1/librarian/deep-dive`
 - `POST /api/v1/librarian/global-finder`
+- `POST /api/v1/librarian/global-finder/agent-summary`
 - `POST /api/v1/librarian/query-builder`
 - `POST /api/v1/projects/{project_id}/search`
 
@@ -205,23 +178,16 @@ ResearcherAgent 是项目级对话 agent。它的运行上下文包含：
 
 Librarian 使用 DSL 查询和 field_paths 做精确提取。详见 [librarian.md](./librarian.md)。
 
-## 7. `ppx` CLI 与 Researcher Skill
+## 5. `ppx` CLI 与外部 Skill
 
-### `ppx` CLI
-
-入口：
-
-- `../../paper_plane_x_cli/src/paper_plane_x_cli/cli.py`
-- console script：`ppx = "paper_plane_x_cli.cli:main"`
-- 本地安装：`uv tool install ../paper_plane_x_cli`（从 backend 目录执行）
-- 一次性运行：`uvx --from ../paper_plane_x_cli ppx --help`（从 backend 目录执行）
+`ppx` CLI 位于兄弟包 `../../paper_plane_x_cli`。
 
 特点：
 
 - 只通过 HTTP 调 FastAPI。
-- 不 import tools，不读写 DB。
+- 不 import backend tools，不读写 DB。
 - 输出 JSON，方便 Codex / Claude Code / shell 脚本解析。
-- context 优先级：命令参数 > 环境变量 > `~/.config/paper-plane-x/context.json` > 默认 base URL。
+- context 优先级：命令参数 > 环境变量 > 本地 context > 全局 context > 默认 base URL。
 
 常用：
 
@@ -232,20 +198,15 @@ ppx librarian search --query-expr "(meta.title CONTAINS transformer)"
 ppx files list --dir /
 ```
 
-### Researcher Skill
+外部 Agent skill：
 
-目录：
+- `../../paper_plane_x_cli/skills/ppx-researcher/SKILL.md`
+- `../../paper_plane_x_cli/skills/ppx-researcher/references/tool-guide.md`
+- `../../paper_plane_x_cli/skills/ppx-pdf-to-markdown/SKILL.md`
 
-- `../../paper_plane_x_cli/skills/paper-plane-x-researcher/SKILL.md`
-- `../../paper_plane_x_cli/skills/paper-plane-x-researcher/references/tool-guide.md`
+这些 skill 使用 HTTP CLI 调用后端能力。
 
-用途：
-
-- 让外部 agent 获得接近内置 ResearcherAgent 的工作原则、工具语义、field_paths、query rules 和 CLI 调用方式。
-- 不暴露内部 `ask_human` 工具。
-- 外部 agent 需要确认时直接问当前用户；复杂任务拆分由宿主 agent 自己处理。
-
-## 8. 数据模型与存储
+## 6. 数据模型与存储
 
 主存储：SQLite。
 
@@ -256,9 +217,14 @@ ppx files list --dir /
 - `paper_projects`
 - `data_process_tasks`
 - `agent_traces`
+- `papers_fts`
+
+旧表：
+
 - `conversations`
 - `conversation_messages`
-- `papers_fts`
+
+如果旧数据库存在这些表，`init_tables()` 会先调用数据库备份逻辑，再删除旧 conversation 表。
 
 `papers` 表保存：
 
@@ -274,14 +240,16 @@ ppx files list --dir /
 
 结构化结果采用 JSON blob，是因为字段仍在演化，且 SQLite `json_extract` / FTS5 已能支撑当前搜索和矩阵读取。
 
-## 9. 配置与运行时文件
+## 7. 配置与运行时文件
 
 后端有两套配置，不要混用：
 
 **ServerConfig（启动只读）**
 
 由 `pydantic-settings` 管理，决定服务怎么启动：监听地址、端口、日志路径、数据目录、CORS 等。
+
 来源优先级（高到低）：
+
 1. 初始化参数
 2. 系统环境变量（`PPX_*`）
 3. `.env` 文件
@@ -291,9 +259,10 @@ ppx files list --dir /
 
 **AppSettings（运行时动态）**
 
-决定 Agent 调谁、用什么模型、MinerU 在哪。
+决定 Agent 调谁、用什么模型、PDF Parser 在哪。
 通过 Settings API 或 `data/app_settings.toml` 读写，服务启动后随时可改。
-包含：LLM Provider 列表、Agent LLM 绑定、MinerU 地址、Data Process 参数、Librarian 参数。
+
+包含：LLM Provider 列表、Agent LLM 绑定、PDF Parser、Data Process 参数、Librarian 参数。
 
 首次启动后必须先配 Provider 和 Agent LLM，否则所有需要 LLM 的操作都会失败。
 
@@ -301,7 +270,8 @@ ppx files list --dir /
 
 - `data/app.db`
 - `data/papers/`
-- `data/projects/`
+- `data/project_files/`
+- `data/backups/`
 - `data/logs/`
 - `data/console/`
 
@@ -310,12 +280,12 @@ ppx files list --dir /
 1. `settings.api.console_dist_dir`
 2. `../paper_plane_x_frontend/dist`
 
-## 10. 开发维护原则
+## 8. 开发维护原则
 
 - API 层保持薄：校验、依赖注入、HTTP 映射。
 - 业务组合放 orchestrator。
 - 数据访问放 repository。
-- Agent 工具说明要同步到 Researcher prompt 和 external skill。
+- Agent 工具说明要同步到外部 skill。
 - 新 API 必须补 integration test。
 - 修改 tool context 语义时必须跑 agent runtime tests。
 - 文档里不保留已经删除的路由或旧设计草稿。

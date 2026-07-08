@@ -25,7 +25,6 @@
 - `Database` schema 初始化与迁移
 - `PaperRepository`
 - `ProjectRepository`
-- `ConversationRepository`
 - `PaperProcessor`
 - `PaperParser`
 - `Settings` 配置合并
@@ -40,8 +39,6 @@
 - Project files API
 - Data Process task API
 - Librarian API
-- Conversation API + WebSocket
-- HITL WebSocket
 - Agent traces API
 - Settings API
 
@@ -102,9 +99,8 @@ uv run pyright
 
 同时更新：
 
-- `prompts/researcher/System.md`
-- `../paper_plane_x_cli/skills/paper-plane-x-researcher/SKILL.md`
-- `../paper_plane_x_cli/skills/paper-plane-x-researcher/references/tool-guide.md`
+- `../paper_plane_x_cli/skills/ppx-researcher/SKILL.md`
+- `../paper_plane_x_cli/skills/ppx-researcher/references/tool-guide.md`
 - `docs/librarian.md`
 
 ### 新 `ppx` CLI 命令
@@ -121,7 +117,7 @@ uv run pyright
 - `README.md`
 - `docs/workflow_quickstart.md`
 - `docs/librarian.md`
-- `../paper_plane_x_cli/skills/paper-plane-x-researcher/references/tool-guide.md`
+- `../paper_plane_x_cli/skills/ppx-researcher/references/tool-guide.md`
 
 ## 5. 测试环境约定
 

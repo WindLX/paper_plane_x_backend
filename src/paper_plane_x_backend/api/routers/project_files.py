@@ -1,6 +1,6 @@
 """Project sandbox file 路由.
 
-前端对 ResearcherAgent 可控的项目沙箱目录下 agent 产生的文件进行增删查改。
+前端对项目沙箱目录下 agent 或外部 CLI 产生的文件进行增删查改。
 """
 
 import logging

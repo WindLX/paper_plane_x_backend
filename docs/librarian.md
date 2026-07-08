@@ -17,7 +17,7 @@ Researcher 还配套两类项目资产工具：
 - Project files：项目沙箱里的 Markdown / text / JSON / CSV / YAML 文件。
 - Paper notes：单篇论文的长期 AI 笔记 `agent_note`。
 
-外部 agent 使用这些能力时，推荐走 `ppx` CLI 或 `../paper_plane_x_cli/skills/paper-plane-x-researcher`。
+外部 agent 使用这些能力时，推荐走 `ppx` CLI 或 `../paper_plane_x_cli/skills/ppx-researcher`。
 
 ## 2. API
 
@@ -125,7 +125,7 @@ analysis_report.prerequisites[0].concept_name
 analysis_report.derivation_steps[0].detail_explanation.text
 ```
 
-完整 field path guide 已内置在 [Researcher Skill](../../paper_plane_x_cli/skills/paper-plane-x-researcher/SKILL.md)。
+完整 field path guide 已内置在 [Researcher Skill](../../paper_plane_x_cli/skills/ppx-researcher/SKILL.md)。
 
 ## 5. API 示例
 
@@ -255,7 +255,7 @@ ppx paper-note delete --paper-id pap-a
 
 ## 7. Project File Editing Guide
 
-项目文件工具和 ResearcherAgent 的编辑原则一致：
+项目文件工具和外部 `ppx-researcher` skill 的编辑原则一致：
 
 - 优先选择最小修改范围。
 - 开始编辑前，先 list，再 read / lines。
@@ -273,8 +273,8 @@ ppx paper-note delete --paper-id pap-a
 
 外部 agent 使用：
 
-- [Researcher Skill](../../paper_plane_x_cli/skills/paper-plane-x-researcher/SKILL.md)
-- [Tool Guide](../../paper_plane_x_cli/skills/paper-plane-x-researcher/references/tool-guide.md)
+- [Researcher Skill](../../paper_plane_x_cli/skills/ppx-researcher/SKILL.md)
+- [Tool Guide](../../paper_plane_x_cli/skills/ppx-researcher/references/tool-guide.md)
 
 Skill 包含：
 
@@ -285,7 +285,7 @@ Skill 包含：
 - Project file / paper note / librarian 工具说明。
 - `ppx` CLI 映射。
 
-Skill 不暴露内置 ResearcherAgent 的 `ask_human`。外部 agent 需要用户决策时直接问当前用户；复杂任务拆分由宿主 agent 自己处理。
+外部 agent 需要用户决策时直接问当前用户；复杂任务拆分由宿主 agent 自己处理。
 
 ## 9. 推荐研究流程
 

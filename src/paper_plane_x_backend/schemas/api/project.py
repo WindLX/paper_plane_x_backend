@@ -43,7 +43,6 @@ class ProjectResponse(BaseModel):
         default_factory=lambda: cast(list[dict[str, Any]], []),
         description="项目操作日志",
     )
-    conversation_count: int = Field(default=0, description="项目下的会话数量")
 
 
 class ProjectListResponse(BaseModel):

@@ -41,7 +41,6 @@ def _mock_app_settings():
         analysis=AgentLLMConfigEntry(
             provider_name="analysis-provider",
         ),
-        researcher=None,
     )
     return mock
 
@@ -137,7 +136,7 @@ def test_resolve_agent_llm_config_raises_when_agent_not_configured(
     )
 
     with pytest.raises(RuntimeError, match="has no LLM configuration"):
-        resolve_agent_llm_config("researcher")
+        resolve_agent_llm_config("fact_check")
 
 
 def test_server_config_supports_static_keys() -> None:

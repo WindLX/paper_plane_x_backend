@@ -1,6 +1,6 @@
-"""Conversation I/O 工具集合.
+"""Project file I/O 工具集合.
 
-提供项目文件沙箱的读写能力，供 ResearcherAgent 管理笔记和草稿。
+提供项目文件沙箱的读写能力，供 agent 和外部 CLI 工作流管理笔记和草稿。
 """
 
 import logging

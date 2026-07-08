@@ -1,3 +1,17 @@
+FROM node:24-slim AS console-builder
+
+WORKDIR /repo
+
+RUN corepack enable && corepack prepare pnpm@10 --activate
+
+COPY paper_plane_x_frontend/package.json paper_plane_x_frontend/pnpm-lock.yaml ./paper_plane_x_frontend/
+RUN pnpm --dir paper_plane_x_frontend install --frozen-lockfile
+
+COPY VERSION ./VERSION
+COPY paper_plane_x_frontend ./paper_plane_x_frontend
+RUN pnpm --dir paper_plane_x_frontend build
+
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -17,15 +31,17 @@ RUN apt-get update \
 ENV PATH="/root/.local/bin:${PATH}"
 
 # Copy dependency manifests first for layer caching
-COPY pyproject.toml uv.lock ./
+COPY paper_plane_x_backend/pyproject.toml paper_plane_x_backend/uv.lock paper_plane_x_backend/README.md ./
 
 # Install production dependencies using the locked uv.lock
 RUN uv sync --frozen --no-dev
 
 # Copy application code
-COPY src/paper_plane_x_backend ./src/paper_plane_x_backend
-COPY prompts ./prompts
-COPY config ./config
+COPY VERSION ./VERSION
+COPY paper_plane_x_backend/src/paper_plane_x_backend ./src/paper_plane_x_backend
+COPY paper_plane_x_backend/prompts ./prompts
+COPY paper_plane_x_backend/config ./config
+COPY --from=console-builder /repo/paper_plane_x_frontend/dist ./data/console
 
 WORKDIR /app
 

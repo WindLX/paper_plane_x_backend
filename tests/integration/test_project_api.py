@@ -215,58 +215,6 @@ class TestProjectAPI:
         )
         assert after is not None and after["count"] == 0
 
-    def test_delete_project_also_cleans_conversations(
-        self, client: TestClient, db: Database
-    ) -> None:
-        """删除 project 时会级联删除 conversations 和 conversation_messages."""
-        create_response = client.post(
-            "/api/v1/projects",
-            json={"name": "Delete With Conversations"},
-        )
-        project_id = create_response.json()["project_id"]
-
-        # 创建对话
-        conv_resp = client.post(
-            "/api/v1/conversations",
-            json={"project_id": project_id, "title": "Test Chat"},
-        )
-        conversation_id = conv_resp.json()["conversation_id"]
-
-        # 创建消息
-        msg_resp = client.post(
-            f"/api/v1/conversations/{conversation_id}/messages",
-            json={"role": "user", "content": "Hello"},
-        )
-        assert msg_resp.status_code == 201
-
-        # 删除项目前确认数据存在
-        conv_before = db.fetchone(
-            "SELECT COUNT(*) AS count FROM conversations WHERE project_id = ?",
-            (project_id,),
-        )
-        msg_before = db.fetchone(
-            "SELECT COUNT(*) AS count FROM conversation_messages WHERE conversation_id = ?",
-            (conversation_id,),
-        )
-        assert conv_before is not None and conv_before["count"] == 1
-        assert msg_before is not None and msg_before["count"] == 1
-
-        # 删除项目
-        response = client.delete(f"/api/v1/projects/{project_id}")
-        assert response.status_code == 200
-
-        # 确认级联删除生效
-        conv_after = db.fetchone(
-            "SELECT COUNT(*) AS count FROM conversations WHERE project_id = ?",
-            (project_id,),
-        )
-        msg_after = db.fetchone(
-            "SELECT COUNT(*) AS count FROM conversation_messages WHERE conversation_id = ?",
-            (conversation_id,),
-        )
-        assert conv_after is not None and conv_after["count"] == 0
-        assert msg_after is not None and msg_after["count"] == 0
-
     def test_delete_project_not_found(self, client: TestClient) -> None:
         """测试删除不存在的项目."""
         response = client.delete("/api/v1/projects/non-existent-id")

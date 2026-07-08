@@ -2,21 +2,23 @@
 
 这份文档用于快速验证 Paper Plane X Backend 是否能工作。目标是让用户和开发者能复制命令完成一条最小闭环：
 
-1. 启动服务
-2. 创建项目
-3. 上传并处理论文
-4. 关联项目
-5. 查询结果
-6. 用 Librarian / `ppx` 做项目级研究操作
-7. 可选验证 Conversation 和 HITL
+1. 启动服务。
+2. 创建项目。
+3. 上传并处理论文。
+4. 关联项目。
+5. 查询处理结果。
+6. 用 Librarian / `ppx` 做项目级研究操作。
+7. 验证项目文件和 paper note。
+
+内置 Conversation、ResearcherAgent 对话和 HITL 已移除；外部研究工作流请使用 `ppx` CLI 与 `ppx-researcher` skill。
 
 ## 1. 前置条件
 
 - Python 3.12+
-- `uv`
+- [uv](https://docs.astral.sh/uv/)
 - 本地 SQLite 可用
-- 如需完整处理 PDF：MinerU 可用，且后端已配置 LLM Provider（见第 3 步）
-- 可选：`jq`、`websocat`
+- 如需完整处理 PDF：MinerU 或云端 PDF Parser 可用，且后端已配置 LLM Provider
+- 可选：`jq`
 
 ## 2. 启动服务
 
@@ -45,9 +47,17 @@ OpenAPI 文档：
 http://127.0.0.1:8000/docs
 ```
 
+如果要让后端托管 Web 控制台，先从仓库根目录构建 console：
+
+```bash
+just build-console
+cd paper_plane_x_backend
+uv run app
+```
+
 ## 3. 首次配置 LLM Provider
 
-上传和处理论文需要 LLM。Provider 不在 `.env` 中配置，而是通过 Settings API 管理。
+上传和处理论文需要 LLM。Provider 不在 `.env` 中配置，而是通过 Settings API 或前端 Settings 页面管理。
 
 创建第一个 Provider（以 deepseek 为例）：
 
@@ -65,14 +75,18 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/settings/providers \
 然后把每个 Agent 绑定到这个 Provider：
 
 ```bash
-for agent in extraction analysis fact_check deep_diver query_builder global_finder researcher; do
-  curl -s -X PUT "http://127.0.0.1:8000/api/v1/settings/agent-llm/${agent}" \
+for agent in extraction analysis fact_check deep_diver query_builder global_finder; do
+  curl -s -X PUT "http://127.0.0.1:8000/api/v1/settings/agent_llm/${agent}" \
     -H "Content-Type: application/json" \
     -d '{"provider_name": "default"}'
 done
 ```
 
-也可以用控制台 UI（`http://127.0.0.1:8000`）在 Settings 页面图形化配置。
+也可以用控制台 UI 在 Settings 页面图形化配置：
+
+```text
+http://127.0.0.1:8000
+```
 
 ## 4. 创建项目
 
@@ -164,7 +178,7 @@ curl -s "http://127.0.0.1:8000/api/v1/papers/${PAPER_ID}"
 
 ## 8. Librarian API 快速验证
 
-### 7.1 项目级总览
+### 8.1 项目级总览
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/global-finder \
@@ -172,7 +186,7 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/global-finder \
   -d "{\"project_id\":\"${PROJECT_ID}\"}"
 ```
 
-### 7.2 搜索项目论文
+### 8.2 搜索项目论文
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/search \
@@ -185,7 +199,7 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/search \
   }"
 ```
 
-### 7.3 矩阵读取结构化字段
+### 8.3 矩阵读取结构化字段
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/matrix \
@@ -200,7 +214,7 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/matrix \
   }"
 ```
 
-### 7.4 单篇论文 deep dive
+### 8.4 单篇论文 deep dive
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/deep-dive \
@@ -213,12 +227,23 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/librarian/deep-dive \
 
 ## 9. `ppx` CLI 快速验证
 
-`ppx` 是外部 agent 和脚本的推荐入口。它调用 HTTP API，并输出 JSON。
+`ppx` 是外部 Agent 和脚本的推荐入口。它调用 HTTP API，并输出 JSON。
+
+本地源码安装：
 
 ```bash
-uvx --from ../paper_plane_x_cli ppx --help
 uv tool install ../paper_plane_x_cli
+```
 
+或发布后从 PyPI 安装：
+
+```bash
+uv tool install paper-plane-x-cli
+```
+
+配置上下文：
+
+```bash
 ppx context set \
   --base-url http://127.0.0.1:8000/api/v1 \
   --project-id "$PROJECT_ID"
@@ -249,21 +274,20 @@ ppx librarian deep-dive \
 
 ```bash
 ppx files list --dir /
-ppx files write --path /notes/quickstart.md --content "# Quickstart Notes"
 printf "# Local Notes\n" > /tmp/ppx-local-notes.md
 ppx files upload --source /tmp/ppx-local-notes.md --path /notes/local-notes.md
-ppx files read --path /notes/quickstart.md
-ppx files find --path /notes/quickstart.md --query Quickstart
-ppx files lines --path /notes/quickstart.md --start-line 1 --end-line 5
+ppx files read --path /notes/local-notes.md
+ppx files find --path /notes/local-notes.md --query Local
+ppx files lines --path /notes/local-notes.md --start-line 1 --end-line 5
 ```
 
 小范围编辑：
 
 ```bash
 ppx files patch \
-  --path /notes/quickstart.md \
+  --path /notes/local-notes.md \
   --action insert_after \
-  --anchor-text "# Quickstart Notes" \
+  --anchor-text "# Local Notes" \
   --content "\n\nValidated with Paper Plane X.\n"
 ```
 
@@ -292,92 +316,7 @@ ppx paper-note write --paper-id "$PAPER_ID" --content "初步结论：..."
 ppx paper-note delete --paper-id "$PAPER_ID"
 ```
 
-## 11. Conversation 流式对话
-
-创建对话：
-
-```bash
-curl -s -X POST http://127.0.0.1:8000/api/v1/conversations \
-  -H "Content-Type: application/json" \
-  -d "{\"project_id\":\"${PROJECT_ID}\",\"title\":\"Quickstart Chat\"}"
-```
-
-保存：
-
-```bash
-export CONV_ID="replace-with-conversation-id"
-```
-
-连接 WebSocket：
-
-```bash
-websocat "ws://127.0.0.1:8000/api/v1/ws/conversations/${CONV_ID}"
-```
-
-发送：
-
-```json
-{"type":"user_message","content":"请帮我搜索项目中关于强化学习的论文"}
-```
-
-期望收到：
-
-```json
-{"type":"stream_start","message_id":"msg-xxx"}
-{"type":"stream_chunk","delta":"...","reasoning_delta":"...","step":1}
-{"type":"tool_call","name":"search_paper","step":1}
-{"type":"stream_complete","message_id":"msg-xxx","trace_ids":["trc-xxx"]}
-```
-
-查看历史：
-
-```bash
-curl -s "http://127.0.0.1:8000/api/v1/conversations/${CONV_ID}/messages"
-```
-
-## 11. HITL 人机交互
-
-连接 HITL WebSocket：
-
-```bash
-websocat "ws://127.0.0.1:8000/api/v1/ws/hitl"
-```
-
-当 ResearcherAgent 调用 `ask_human`，HITL WebSocket 会收到：
-
-```json
-{
-  "type": "hitl_question",
-  "question_id": "hit-xxx",
-  "project_id": "prj-xxx",
-  "conversation_id": "cnv-xxx",
-  "questions": [
-    {
-      "text": "您希望关注哪个研究方向？",
-      "options": [
-        {"id": "opt-1", "text": "方法论创新"},
-        {"id": "opt-2", "text": "实验设计"}
-      ],
-      "allow_multiple": false,
-      "custom_answer_label": "其他（请自定义回答）"
-    }
-  ]
-}
-```
-
-提交回答：
-
-```json
-{
-  "type": "answer",
-  "question_id": "hit-xxx",
-  "answers": [
-    {"question_index": 0, "selected_option_ids": ["opt-1"], "custom_text": ""}
-  ]
-}
-```
-
-## 12. 成功验收标准
+## 11. 成功验收标准
 
 如果下面这些成立，说明后端主链路可用：
 
@@ -389,15 +328,14 @@ websocat "ws://127.0.0.1:8000/api/v1/ws/hitl"
 6. 可以把论文关联到项目。
 7. `librarian/search` 或 `ppx librarian search` 返回项目内论文。
 8. `ppx files list --dir /` 可以访问项目文件沙箱。
-9. Conversation WebSocket 可以流式返回。
 
-## 13. 常见问题
+## 12. 常见问题
 
 ### 上传成功但任务最后失败
 
 优先检查：
 
-- MinerU 是否可访问。
+- MinerU / PDF Parser 是否可访问。
 - LLM provider 和 Agent LLM 绑定是否配置。
 - 后端日志是否有 `event=data_process.*` 或 `event=agent.*` 错误。
 

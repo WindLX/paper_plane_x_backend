@@ -25,7 +25,7 @@ class CloudMinerUParser:
     流程：
       1. 通过 ``POST /api/v4/file-urls/batch`` 申请文件上传 URL。
       2. 使用返回的预签名 URL PUT 上传 PDF 文件。
-      3. 轮询 ``GET /api/v4/extract/task/{task_id}`` 等待任务完成。
+      3. 轮询 ``GET /api/v4/extract-results/batch/{batch_id}`` 等待任务完成。
       4. 下载结果 zip 包并解压，返回 markdown 与图片路径。
     """
 
@@ -74,17 +74,17 @@ class CloudMinerUParser:
             raise PdfParserError(f"File not found: {file_path}")
 
         save_dir.mkdir(parents=True, exist_ok=True)
-        task_id, upload_url = await self._request_upload_url(file_path.name)
+        batch_id, upload_url = await self._request_upload_url(file_path.name)
         await self._upload_file(file_path, upload_url)
-        result = await self._poll_task(task_id)
+        result = await self._poll_batch(batch_id)
 
         zip_url = result.get("full_zip_url")
         if not zip_url:
             raise PdfParserError(
-                f"Cloud MinerU task {task_id} finished without full_zip_url"
+                f"Cloud MinerU batch {batch_id} finished without full_zip_url"
             )
 
-        zip_path = save_dir / f"{task_id}.zip"
+        zip_path = save_dir / f"{batch_id}.zip"
         await self._download_zip(zip_url, zip_path)
         md_content, image_paths = await self._extract_artifacts(
             zip_path, save_dir, output_md_name
@@ -119,12 +119,12 @@ class CloudMinerUParser:
 
         self._raise_for_status(response)
         data = cast(dict[str, Any], response.json()).get("data", {})
-        task_id = data.get("batch_id")
+        batch_id = data.get("batch_id")
         file_urls = data.get("file_urls")
-        if not task_id or not file_urls or not isinstance(file_urls, list):
+        if not batch_id or not file_urls or not isinstance(file_urls, list):
             raise PdfParserError("Invalid upload URL response: missing batch_id or urls")
         first_url = cast(list[Any], file_urls)[0]
-        return str(task_id), str(first_url)
+        return str(batch_id), str(first_url)
 
     async def _upload_file(self, file_path: Path, upload_url: str) -> None:
         file_bytes = await asyncio.to_thread(file_path.read_bytes)
@@ -143,8 +143,8 @@ class CloudMinerUParser:
             )
         logger.info("event=cloud_mineru.upload_file_done file=%s", file_path)
 
-    async def _poll_task(self, task_id: str) -> dict[str, Any]:
-        url = f"{self.base_url}/api/v4/extract/task/{task_id}"
+    async def _poll_batch(self, batch_id: str) -> dict[str, Any]:
+        url = f"{self.base_url}/api/v4/extract-results/batch/{batch_id}"
         start = asyncio.get_event_loop().time()
 
         while True:
@@ -153,20 +153,27 @@ class CloudMinerUParser:
             self._raise_for_status(response)
 
             data = cast(dict[str, Any], response.json())
-            task_data = cast(dict[str, Any], data.get("data", {}))
+            response_data = cast(dict[str, Any], data.get("data", {}))
+            results = response_data.get("extract_result")
+            if not isinstance(results, list) or not results:
+                raise PdfParserError(
+                    f"Invalid MinerU batch result response for batch {batch_id}: "
+                    "missing extract_result"
+                )
+            task_data = cast(dict[str, Any], results[0])
             state = task_data.get("state")
 
             if state == "done":
                 logger.info(
-                    "event=cloud_mineru.task_done task_id=%s", task_id
+                    "event=cloud_mineru.task_done batch_id=%s", batch_id
                 )
                 return task_data
 
             if state == "failed":
                 err_msg = task_data.get("err_msg", "unknown error")
                 logger.error(
-                    "event=cloud_mineru.task_failed task_id=%s err_msg=%s",
-                    task_id,
+                    "event=cloud_mineru.task_failed batch_id=%s err_msg=%s",
+                    batch_id,
                     err_msg,
                 )
                 raise PdfParserError(f"MinerU cloud task failed: {err_msg}")
@@ -174,14 +181,14 @@ class CloudMinerUParser:
             elapsed = asyncio.get_event_loop().time() - start
             if elapsed > self.poll_timeout:
                 raise PdfParserError(
-                    f"MinerU cloud task {task_id} polling timeout "
+                    f"MinerU cloud batch {batch_id} polling timeout "
                     f"after {self.poll_timeout}s"
                 )
 
             progress = task_data.get("extract_progress", {})
             logger.info(
-                "event=cloud_mineru.task_polling task_id=%s state=%s progress=%s",
-                task_id,
+                "event=cloud_mineru.task_polling batch_id=%s state=%s progress=%s",
+                batch_id,
                 state,
                 progress,
             )

@@ -18,9 +18,6 @@ from paper_plane_x_backend.models import (
     ProjectSortKey,
     SortOrder,
 )
-from paper_plane_x_backend.services.conversation.repository import (
-    ConversationRepository,
-)
 from paper_plane_x_backend.services.database import Database
 from paper_plane_x_backend.services.paper.repository import PaperRepository
 from paper_plane_x_backend.services.project.files import (
@@ -57,7 +54,6 @@ class ProjectOrchestrator:
     ) -> None:
         self.paper_repo = PaperRepository(db)
         self.project_repo = ProjectRepository(db)
-        self.conversation_repo = ConversationRepository(db)
         self.file_manager = file_manager or get_project_file_manager()
 
     def _ensure_project_exists(self, project_id: str) -> None:
@@ -128,13 +124,10 @@ class ProjectOrchestrator:
         limit: int,
         sort_order: SortOrder,
         sort_by: ProjectSortKey,
-    ) -> tuple[list[Project], int, dict[str, int]]:
+    ) -> tuple[list[Project], int]:
         total = self.project_repo.count_all()
         items = self.project_repo.list_all(
             offset=offset, limit=limit, sort_by=sort_by, sort_order=sort_order
-        )
-        conversation_counts = self._build_conversation_counts(
-            [p.project_id for p in items]
         )
         logger.info(
             "event=project.listed offset=%s limit=%s returned=%s total=%s",
@@ -143,23 +136,7 @@ class ProjectOrchestrator:
             len(items),
             total,
         )
-        return items, total, conversation_counts
-
-    def _build_conversation_counts(self, project_ids: list[str]) -> dict[str, int]:
-        """批量获取项目的会话数量."""
-        if not project_ids:
-            return {}
-        placeholders = ",".join(["?"] * len(project_ids))
-        rows = self.conversation_repo.db.fetchall(
-            f"""
-            SELECT project_id, COUNT(*) as count
-            FROM conversations
-            WHERE project_id IN ({placeholders})
-            GROUP BY project_id
-            """,
-            tuple(project_ids),
-        )
-        return {row["project_id"]: int(row["count"]) for row in rows}
+        return items, total
 
     def get_project(self, project_id: str) -> Project:
         project = self.project_repo.get(project_id)

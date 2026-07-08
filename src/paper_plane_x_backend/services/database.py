@@ -133,40 +133,6 @@ CREATE TRIGGER IF NOT EXISTS papers_au AFTER UPDATE ON papers BEGIN
     VALUES (NEW.paper_id, NEW.title, NEW.md_content, NEW.quick_scan, NEW.synthesis_data, NEW.analysis_report);
 END;
 
-CREATE TABLE IF NOT EXISTS conversations (
-    conversation_id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
-    title TEXT NOT NULL DEFAULT 'New Conversation',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    forked_from_conversation_id TEXT,
-    forked_at_message_id TEXT,
-    FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS conversation_messages (
-    message_id TEXT PRIMARY KEY,
-    conversation_id TEXT NOT NULL,
-    role TEXT NOT NULL,
-    content TEXT,
-    name TEXT,
-    tool_calls TEXT,
-    tool_call_id TEXT,
-    sequence_no INTEGER NOT NULL DEFAULT 0,
-    turn_id TEXT,
-    parent_message_id TEXT,
-    message_kind TEXT NOT NULL DEFAULT 'assistant_final',
-    trace_ids TEXT,
-    reasoning_content TEXT,
-    tools TEXT,
-    images TEXT,
-    paper_ids TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_conversation_messages_conversation_id
-    ON conversation_messages(conversation_id);
 """
 
 
@@ -196,9 +162,12 @@ class Database:
     def init_tables(self) -> None:
         with self.get_connection() as conn:
             conn.executescript(CREATE_TABLES_SQL)
-            if self._needs_schema_migration(conn):
+            has_legacy_conversation_tables = self._has_legacy_conversation_tables(conn)
+            if self._needs_schema_migration(conn) or has_legacy_conversation_tables:
                 self._backup_database_before_migration(conn)
             self._ensure_schema_migrations(conn)
+            if has_legacy_conversation_tables:
+                self._drop_legacy_conversation_tables(conn)
             self._ensure_papers_fts_healthy(conn)
             conn.commit()
         logger.info("event=database.tables_initialized")
@@ -227,23 +196,7 @@ class Database:
                 "analysis_fact_check_trace_ids",
             ]
         )
-        conversation_message_columns_ready = all(
-            self._has_column(conn, "conversation_messages", column)
-            for column in [
-                "tools",
-                "sequence_no",
-                "turn_id",
-                "parent_message_id",
-                "message_kind",
-                "images",
-                "paper_ids",
-            ]
-        )
-        return (
-            not agent_trace_columns_ready
-            or not task_trace_columns_ready
-            or not conversation_message_columns_ready
-        )
+        return not agent_trace_columns_ready or not task_trace_columns_ready
 
     def _backup_database_before_migration(self, conn: sqlite3.Connection) -> None:
         backup_dir = self.db_path.parent / "backups"
@@ -255,6 +208,21 @@ class Database:
             conn.backup(backup_conn)
 
         logger.info("event=database.backup_created path=%s", backup_path)
+
+    def _has_legacy_conversation_tables(self, conn: sqlite3.Connection) -> bool:
+        return self._table_exists(conn, "conversation_messages") or self._table_exists(
+            conn,
+            "conversations",
+        )
+
+    def _drop_legacy_conversation_tables(self, conn: sqlite3.Connection) -> None:
+        conn.execute("DROP INDEX IF EXISTS idx_conversation_messages_conversation_id")
+        conn.execute(
+            "DROP INDEX IF EXISTS idx_conversation_messages_conversation_sequence"
+        )
+        conn.execute("DROP TABLE IF EXISTS conversation_messages")
+        conn.execute("DROP TABLE IF EXISTS conversations")
+        logger.info("event=database.legacy_conversation_tables_dropped")
 
     @staticmethod
     def _configure_connection_pragmas(conn: sqlite3.Connection) -> None:
@@ -365,103 +333,15 @@ class Database:
         self._ensure_column(conn, "projects", "agent_summary", "TEXT")
         self._ensure_column(conn, "papers", "agent_note", "TEXT")
         self._ensure_column(conn, "agent_traces", "tools", "TEXT")
-        self._ensure_column(conn, "conversation_messages", "tools", "TEXT")
-        self._ensure_column(
-            conn,
-            "conversation_messages",
-            "sequence_no",
-            "INTEGER NOT NULL DEFAULT 0",
-        )
-        self._ensure_column(conn, "conversation_messages", "turn_id", "TEXT")
-        self._ensure_column(
-            conn,
-            "conversation_messages",
-            "parent_message_id",
-            "TEXT",
-        )
-        self._ensure_column(
-            conn,
-            "conversation_messages",
-            "message_kind",
-            "TEXT NOT NULL DEFAULT 'assistant_final'",
-        )
-        self._ensure_column(conn, "conversation_messages", "images", "TEXT")
-        self._ensure_column(conn, "conversation_messages", "paper_ids", "TEXT")
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_conversation_messages_conversation_sequence "
-            "ON conversation_messages(conversation_id, sequence_no)"
-        )
-        self._migrate_conversation_messages_topology(conn)
         self._ensure_papers_fts_objects(conn)
 
-    def _migrate_conversation_messages_topology(self, conn: sqlite3.Connection) -> None:
-        rows = conn.execute("""
-            SELECT rowid, * FROM conversation_messages
-            ORDER BY conversation_id ASC, created_at ASC, rowid ASC
-            """).fetchall()
-        if not rows:
-            return
-
-        sequence_by_conversation: dict[str, int] = {}
-        previous_by_conversation: dict[str, str | None] = {}
-        turn_by_conversation: dict[str, str | None] = {}
-
-        for row in rows:
-            conversation_id = row["conversation_id"]
-            sequence_by_conversation.setdefault(conversation_id, 0)
-            sequence_by_conversation[conversation_id] += 1
-            sequence_no = sequence_by_conversation[conversation_id]
-
-            role = row["role"]
-            tool_calls = row["tool_calls"]
-            reasoning_content = row["reasoning_content"]
-            current_turn = turn_by_conversation.get(conversation_id)
-
-            if role == "user":
-                message_kind = "user_input"
-                current_turn = (
-                    current_turn or row["turn_id"] or f"legacy-turn-{row['message_id']}"
-                )
-                turn_by_conversation[conversation_id] = current_turn
-            elif role == "tool":
-                message_kind = "tool_result"
-                current_turn = (
-                    current_turn or row["turn_id"] or f"legacy-turn-{row['message_id']}"
-                )
-            elif reasoning_content:
-                message_kind = "assistant_reasoning"
-            elif tool_calls:
-                message_kind = "assistant_tool_call"
-            elif role == "system":
-                message_kind = "system"
-            else:
-                message_kind = "assistant_final"
-
-            if role != "system" and current_turn is None:
-                current_turn = row["turn_id"] or f"legacy-turn-{row['message_id']}"
-                turn_by_conversation[conversation_id] = current_turn
-
-            parent_message_id = previous_by_conversation.get(conversation_id)
-
-            conn.execute(
-                """
-                UPDATE conversation_messages
-                SET sequence_no = ?,
-                    turn_id = COALESCE(turn_id, ?),
-                    parent_message_id = COALESCE(parent_message_id, ?),
-                    message_kind = COALESCE(NULLIF(message_kind, ''), ?)
-                WHERE rowid = ?
-                """,
-                (
-                    sequence_no,
-                    current_turn,
-                    parent_message_id,
-                    message_kind,
-                    row["rowid"],
-                ),
-            )
-
-            previous_by_conversation[conversation_id] = row["message_id"]
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+        return row is not None
 
     @staticmethod
     def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:

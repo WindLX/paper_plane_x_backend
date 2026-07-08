@@ -172,10 +172,10 @@ def test_changes_are_persisted_to_disk(repo: AppSettingsRepository) -> None:
 
 
 def test_agent_llm_persisted(repo: AppSettingsRepository) -> None:
-    repo.update_agent_llm("researcher", {"provider_name": "p", "temperature": 0.3})
+    repo.update_agent_llm("global_finder", {"provider_name": "p", "temperature": 0.3})
 
     repo2 = AppSettingsRepository(repo.path)
-    entry = repo2.get_agent_llm("researcher")
+    entry = repo2.get_agent_llm("global_finder")
     assert entry is not None
     assert entry.provider_name == "p"
     assert entry.temperature == 0.3

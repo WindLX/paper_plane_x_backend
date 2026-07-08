@@ -1,9 +1,6 @@
 services:
   backend:
-    image: ghcr.io/${GHCR_OWNER:-windlx}/paper-plane-x-backend:latest
-    build:
-      context: ..
-      dockerfile: paper_plane_x_backend/Dockerfile
+    image: ghcr.io/${GHCR_OWNER:-windlx}/paper-plane-x-backend:${PPX_VERSION:-latest}
     container_name: paper-plane-x-backend
     env_file:
       - .env.docker.example

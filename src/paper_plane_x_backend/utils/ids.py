@@ -28,23 +28,3 @@ def generate_task_id() -> str:
 def generate_trace_id() -> str:
     """生成 Agent Trace ID，前缀 trc-."""
     return _generate_id("trc")
-
-
-def generate_conversation_id() -> str:
-    """生成 Conversation ID，前缀 cnv-."""
-    return _generate_id("cnv")
-
-
-def generate_message_id() -> str:
-    """生成 Message ID，前缀 msg-."""
-    return _generate_id("msg")
-
-
-def generate_turn_id() -> str:
-    """生成 Conversation Turn ID，前缀 trn-."""
-    return _generate_id("trn")
-
-
-def generate_hitl_question_id() -> str:
-    """生成 HITL Question ID，前缀 hit-."""
-    return _generate_id("hit")

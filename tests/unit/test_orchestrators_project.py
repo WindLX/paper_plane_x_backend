@@ -83,7 +83,7 @@ class TestProjectOrchestrator:
     def test_list_projects(self, orchestrator, db):
         _insert_project(db, "prj-test-1")
         _insert_project(db, "prj-test-2")
-        items, total, conversation_counts = orchestrator.list_projects(
+        items, total = orchestrator.list_projects(
             offset=0,
             limit=10,
             sort_order=SortOrder.DESC,
@@ -91,7 +91,6 @@ class TestProjectOrchestrator:
         )
         assert total == 2
         assert len(items) == 2
-        assert isinstance(conversation_counts, dict)
 
     def test_get_project(self, orchestrator, db):
         _insert_project(db, "prj-test-1")
