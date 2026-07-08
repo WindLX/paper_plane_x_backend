@@ -260,7 +260,27 @@ class Database:
     def _drop_papers_fts_objects(self, conn: sqlite3.Connection) -> None:
         for trigger_name in ["papers_ai", "papers_ad", "papers_au"]:
             conn.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
-        conn.execute("DROP TABLE IF EXISTS papers_fts")
+        try:
+            conn.execute("DROP TABLE IF EXISTS papers_fts")
+        except sqlite3.DatabaseError as exc:
+            logger.warning(
+                "event=database.fts_drop_failed_using_writable_schema error=%s",
+                exc,
+            )
+            self._delete_papers_fts_schema_entries(conn)
+
+    def _delete_papers_fts_schema_entries(self, conn: sqlite3.Connection) -> None:
+        """Remove FTS schema rows when SQLite cannot construct the broken vtable."""
+        schema_version = int(conn.execute("PRAGMA schema_version").fetchone()[0])
+        conn.execute("PRAGMA writable_schema = ON")
+        try:
+            conn.execute(
+                "DELETE FROM sqlite_schema "
+                "WHERE name = 'papers_fts' OR name LIKE 'papers_fts_%'"
+            )
+            conn.execute(f"PRAGMA schema_version = {schema_version + 1}")
+        finally:
+            conn.execute("PRAGMA writable_schema = OFF")
 
     def _ensure_papers_fts_objects(self, conn: sqlite3.Connection) -> None:
         conn.executescript("""
