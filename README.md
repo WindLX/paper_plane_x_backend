@@ -295,3 +295,7 @@ uv build
 - [Librarian](docs/librarian.md)
 - [Logging](docs/logging_conventions.md)
 - [Roadmap](docs/roadmap.md)
+
+## License
+
+Paper Plane X Backend 使用 [GNU Affero General Public License v3.0 or later](LICENSE)。

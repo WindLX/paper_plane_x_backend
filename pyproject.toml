@@ -3,6 +3,7 @@ name = "paper-plane-x-backend"
 version = "0.1.0"
 description = "AI Agent-powered research survey workflow system"
 readme = "README.md"
+license = "AGPL-3.0-or-later"
 authors = [{ name = "windlx", email = "1418043337@qq.com" }]
 requires-python = ">=3.12"
 dependencies = [
