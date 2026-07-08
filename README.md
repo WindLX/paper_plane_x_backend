@@ -22,6 +22,12 @@ Paper Plane X Backend 是整个系统的核心服务。它提供 FastAPI HTTP AP
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
+### 拉取源码
+
+```bash
+git clone --recursives https://github.com/WindLX/paper_plane_x.git 
+```
+
 ### 本地运行
 
 日常开发可以直接使用 `uv run app`：
