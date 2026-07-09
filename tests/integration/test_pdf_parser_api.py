@@ -17,7 +17,9 @@ from paper_plane_x_backend.services.pdf_parser.factory import build_default_pdf_
 class _FakePdfParser:
     """返回固定结果的假解析器."""
 
-    def __init__(self, md_content: str = "# parsed", image_paths: list[Path] | None = None):
+    def __init__(
+        self, md_content: str = "# parsed", image_paths: list[Path] | None = None
+    ):
         self.md_content = md_content
         self.image_paths = image_paths or []
 
@@ -43,7 +45,9 @@ def fake_parser() -> PdfParser:
     return _FakePdfParser()  # type: ignore[return-value]
 
 
-def _upload_pdf(client: TestClient, pdf_bytes: bytes, output_md_name: str | None = None):
+def _upload_pdf(
+    client: TestClient, pdf_bytes: bytes, output_md_name: str | None = None
+):
     files = {"pdf_file": ("test.pdf", pdf_bytes, "application/pdf")}
     data: dict[str, str] = {}
     if output_md_name:

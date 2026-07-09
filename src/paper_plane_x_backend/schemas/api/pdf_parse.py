@@ -22,4 +22,6 @@ class PdfParseResponse(BaseModel):
     images: list[PdfParseImage] = Field(
         default_factory=list[PdfParseImage], description="解析产物中引用到的图片"
     )
-    parser_type: str = Field(..., description="实际使用的解析器类型，如 local_mineru / cloud_mineru")
+    parser_type: str = Field(
+        ..., description="实际使用的解析器类型，如 local_mineru / cloud_mineru"
+    )

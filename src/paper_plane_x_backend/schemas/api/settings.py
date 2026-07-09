@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from paper_plane_x_backend.models.app_settings import (
     CloudPdfParserConfig,
+    PandocConfig,
     PdfParserConfig,
     PdfParserType,
 )
@@ -180,7 +181,9 @@ class CloudPdfParserConfigResponse(BaseModel):
     language: str = Field(default="ch", description="文档语言")
 
     @classmethod
-    def from_config(cls, config: CloudPdfParserConfig) -> "CloudPdfParserConfigResponse":
+    def from_config(
+        cls, config: CloudPdfParserConfig
+    ) -> "CloudPdfParserConfigResponse":
         return cls(
             base_url=config.base_url,
             has_api_key=bool(config.api_key),
@@ -300,6 +303,46 @@ class LibrarianConfigUpdateRequest(BaseModel):
     )
 
 
+class PandocConfigResponse(BaseModel):
+    """Pandoc 配置响应。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    pandoc_path: str | None = Field(
+        default=None, description="Pandoc 可执行文件路径；为空时使用系统 PATH"
+    )
+    html_template: str | None = Field(
+        default=None, description="Pandoc HTML 模板路径/名称；为空时使用内置默认模板"
+    )
+    pdf_engine: str | None = Field(
+        default=None, description="Pandoc PDF engine；为空时自动选择可用引擎"
+    )
+
+    @classmethod
+    def from_config(cls, config: PandocConfig) -> "PandocConfigResponse":
+        return cls(
+            pandoc_path=config.pandoc_path,
+            html_template=config.html_template,
+            pdf_engine=config.pdf_engine,
+        )
+
+
+class PandocConfigUpdateRequest(BaseModel):
+    """更新 Pandoc 配置请求。"""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    pandoc_path: str | None = Field(
+        default=None, description="Pandoc 可执行文件路径；传 null 清除自定义路径"
+    )
+    html_template: str | None = Field(
+        default=None, description="Pandoc HTML 模板路径/名称；传 null 使用默认模板"
+    )
+    pdf_engine: str | None = Field(
+        default=None, description="Pandoc PDF engine；传 null 自动选择可用引擎"
+    )
+
+
 class AppSettingsResponse(BaseModel):
     """完整应用动态配置响应."""
 
@@ -314,6 +357,7 @@ class AppSettingsResponse(BaseModel):
         ..., description="Data Process 配置"
     )
     librarian: LibrarianConfigResponse = Field(..., description="Librarian 配置")
+    pandoc: PandocConfigResponse = Field(..., description="Pandoc 配置")
     providers: list[LLMProviderResponse] = Field(
         default_factory=lambda: cast(list[LLMProviderResponse], []),
         description="LLM Provider 列表",

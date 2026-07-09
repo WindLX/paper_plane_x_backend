@@ -217,6 +217,25 @@ class LibrarianConfig(BaseModel):
     )
 
 
+class PandocConfig(BaseModel):
+    """Pandoc 转换服务配置。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pandoc_path: str | None = Field(
+        default=None,
+        description="Pandoc 可执行文件路径；为空时使用系统 PATH 中的 pandoc",
+    )
+    html_template: str | None = Field(
+        default=None,
+        description="Pandoc HTML 模板路径/名称；为空时使用 Pandoc 内置默认模板",
+    )
+    pdf_engine: str | None = Field(
+        default=None,
+        description="Pandoc PDF engine；为空时自动选择可用引擎",
+    )
+
+
 class AppSettings(BaseModel):
     """应用动态配置.
 
@@ -242,3 +261,6 @@ class AppSettings(BaseModel):
 
     # Librarian 配置
     librarian: LibrarianConfig = Field(default_factory=LibrarianConfig)
+
+    # Pandoc 转换服务配置
+    pandoc: PandocConfig = Field(default_factory=PandocConfig)

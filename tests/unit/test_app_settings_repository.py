@@ -47,6 +47,19 @@ def test_update_librarian(repo: AppSettingsRepository) -> None:
     assert updated.librarian.top_tags_limit == 20
 
 
+def test_update_pandoc(repo: AppSettingsRepository) -> None:
+    updated = repo.update_pandoc(
+        {
+            "pandoc_path": "/opt/pandoc/bin/pandoc",
+            "html_template": "/templates/article.html",
+            "pdf_engine": "typst",
+        }
+    )
+    assert updated.pandoc.pandoc_path == "/opt/pandoc/bin/pandoc"
+    assert updated.pandoc.html_template == "/templates/article.html"
+    assert updated.pandoc.pdf_engine == "typst"
+
+
 def test_get_agent_llm_returns_none_when_not_set(
     repo: AppSettingsRepository,
 ) -> None:
@@ -187,3 +200,18 @@ def test_provider_persisted(repo: AppSettingsRepository) -> None:
 
     repo2 = AppSettingsRepository(repo.path)
     assert repo2.get_provider("disk") is not None
+
+
+def test_pandoc_persisted(repo: AppSettingsRepository) -> None:
+    repo.update_pandoc(
+        {
+            "pandoc_path": "/persisted/pandoc",
+            "html_template": "/persisted/template.html",
+            "pdf_engine": "weasyprint",
+        }
+    )
+
+    repo2 = AppSettingsRepository(repo.path)
+    assert repo2.get().pandoc.pandoc_path == "/persisted/pandoc"
+    assert repo2.get().pandoc.html_template == "/persisted/template.html"
+    assert repo2.get().pandoc.pdf_engine == "weasyprint"

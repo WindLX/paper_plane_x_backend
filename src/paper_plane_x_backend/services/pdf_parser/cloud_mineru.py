@@ -122,7 +122,9 @@ class CloudMinerUParser:
         batch_id = data.get("batch_id")
         file_urls = data.get("file_urls")
         if not batch_id or not file_urls or not isinstance(file_urls, list):
-            raise PdfParserError("Invalid upload URL response: missing batch_id or urls")
+            raise PdfParserError(
+                "Invalid upload URL response: missing batch_id or urls"
+            )
         first_url = cast(list[Any], file_urls)[0]
         return str(batch_id), str(first_url)
 
@@ -164,9 +166,7 @@ class CloudMinerUParser:
             state = task_data.get("state")
 
             if state == "done":
-                logger.info(
-                    "event=cloud_mineru.task_done batch_id=%s", batch_id
-                )
+                logger.info("event=cloud_mineru.task_done batch_id=%s", batch_id)
                 return task_data
 
             if state == "failed":
@@ -237,7 +237,9 @@ class CloudMinerUParser:
         image_paths = self._collect_referenced_images(md_content, image_dir)
         return md_content, image_paths
 
-    def _collect_referenced_images(self, md_content: str, image_dir: Path) -> list[Path]:
+    def _collect_referenced_images(
+        self, md_content: str, image_dir: Path
+    ) -> list[Path]:
         if not image_dir.exists():
             return []
 

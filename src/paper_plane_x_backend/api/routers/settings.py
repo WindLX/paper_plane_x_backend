@@ -24,6 +24,8 @@ from paper_plane_x_backend.schemas.api import (
     LLMProviderResponse,
     LLMProviderUpdateRequest,
     LocalPdfParserConfigUpdateRequest,
+    PandocConfigResponse,
+    PandocConfigUpdateRequest,
     PdfParserConfigResponse,
     ProviderListResponse,
 )
@@ -284,6 +286,7 @@ def get_app_settings() -> AppSettingsResponse:
         librarian=LibrarianConfigResponse.model_validate(
             app_settings.librarian.model_dump(mode="json")
         ),
+        pandoc=PandocConfigResponse.from_config(app_settings.pandoc),
         providers=[
             LLMProviderResponse.from_provider(p) for p in app_settings.providers
         ],
@@ -407,3 +410,36 @@ def update_librarian_config(
     return LibrarianConfigResponse.model_validate(
         updated.librarian.model_dump(mode="json")
     )
+
+
+# ---- Pandoc ----
+
+
+@router.get(
+    "/pandoc",
+    response_model=PandocConfigResponse,
+    summary="获取 Pandoc 配置",
+)
+def get_pandoc_config() -> PandocConfigResponse:
+    logger.debug("event=settings.pandoc_get_request_received")
+    app_settings = _repo().get()
+    return PandocConfigResponse.from_config(app_settings.pandoc)
+
+
+@router.put(
+    "/pandoc",
+    response_model=PandocConfigResponse,
+    summary="更新 Pandoc 配置",
+)
+def update_pandoc_config(
+    request: PandocConfigUpdateRequest,
+) -> PandocConfigResponse:
+    logger.info("event=settings.pandoc_update_request_received")
+    values: dict[str, str | None] = {}
+    for field in ("pandoc_path", "html_template", "pdf_engine"):
+        if field not in request.model_fields_set:
+            continue
+        raw = getattr(request, field)
+        values[field] = raw.strip() if raw else None
+    updated = _repo().update_pandoc(values)
+    return PandocConfigResponse.from_config(updated.pandoc)

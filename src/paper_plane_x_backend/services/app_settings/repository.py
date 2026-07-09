@@ -35,7 +35,7 @@ class AppSettingsRepository:
     """应用动态配置仓库.
 
     使用 TOML 文件持久化 AppSettings：
-    {llm = {...}, agent_llm = {...}, pdf_parser = {...}, data_process = {...}, librarian = {...}}
+    {providers = [...], agent_llm = {...}, pdf_parser = {...}, data_process = {...}, librarian = {...}, pandoc = {...}}
     """
 
     _settings_path: Path
@@ -170,6 +170,12 @@ class AppSettingsRepository:
 
     def update_librarian(self, values: dict[str, Any]) -> AppSettings:
         return self._update_section("librarian", values)
+
+    def get_pandoc(self) -> AppSettings:
+        return self._settings
+
+    def update_pandoc(self, values: dict[str, Any]) -> AppSettings:
+        return self._update_section("pandoc", values)
 
     # ---- Agent LLM (nested section) ----
 

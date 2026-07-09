@@ -135,7 +135,9 @@
 - [x] 优化用户向 README
 - [x] 优化 CI/CD
 - [x] Fetch paper context
-- [ ] 修复 Deep Diver API 的问题
-- [ ] 修复 Pandoc 多格式导出问题
+- [x] 修复 Deep Diver API 的问题
+- [x] 修复 Pandoc 多格式导出问题
 - [ ] 修复前端锁定浏览器的 bug
-- [ ] 修复前端 json 无法复制的问题
+- [x] 修复前端 json 无法复制的问题
+- [x] Agent 备注可编辑
+- [ ] External Editor

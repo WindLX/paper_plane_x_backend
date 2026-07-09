@@ -146,7 +146,9 @@ def test_migration_backs_up_and_drops_legacy_conversation_tables(
     assert not _table_exists(db, "conversations")
     assert not _table_exists(db, "conversation_messages")
 
-    backups = sorted((tmp_path / "backups").glob("legacy_conversation_pre_migration_*.db"))
+    backups = sorted(
+        (tmp_path / "backups").glob("legacy_conversation_pre_migration_*.db")
+    )
     assert backups
 
     backup_db = Database(backups[-1])

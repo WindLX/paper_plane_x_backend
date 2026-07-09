@@ -4,6 +4,7 @@
 """
 
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -36,8 +37,31 @@ _EXTENSION_MAP: dict[ExportFormat, str] = {
 }
 
 
+def _resolve_command(command: str, label: str) -> str:
+    """解析命令名或可执行文件路径."""
+    command = command.strip()
+    configured = Path(command).expanduser()
+    if command == configured.name:
+        resolved = shutil.which(command)
+        if resolved:
+            return resolved
+        raise RuntimeError(f"configured {label} command not found: {command}")
+
+    if not configured.is_file():
+        raise RuntimeError(f"configured {label} path does not exist: {configured}")
+    if not os.access(configured, os.X_OK):
+        raise RuntimeError(f"configured {label} path is not executable: {configured}")
+    return str(configured)
+
+
 def _ensure_pandoc() -> str:
     """检查 pandoc 是否可用并返回路径."""
+    from paper_plane_x_backend.services.app_settings import get_app_settings_repo
+
+    configured_path = get_app_settings_repo().get().pandoc.pandoc_path
+    if configured_path:
+        return _resolve_command(configured_path, "pandoc")
+
     pandoc_path = shutil.which("pandoc")
     if not pandoc_path:
         raise RuntimeError("pandoc not found on system")
@@ -46,7 +70,23 @@ def _ensure_pandoc() -> str:
 
 def _ensure_pdf_engine() -> str | None:
     """检查可用的 PDF 引擎."""
-    for engine in ("xelatex", "pdflatex", "lualatex", "wkhtmltopdf", "weasyprint"):
+    from paper_plane_x_backend.services.app_settings import get_app_settings_repo
+
+    configured_engine = get_app_settings_repo().get().pandoc.pdf_engine
+    if configured_engine:
+        return _resolve_command(configured_engine, "PDF engine")
+
+    for engine in (
+        "typst",
+        "weasyprint",
+        "wkhtmltopdf",
+        "pagedjs-cli",
+        "prince",
+        "xelatex",
+        "pdflatex",
+        "lualatex",
+        "tectonic",
+    ):
         path = shutil.which(engine)
         if path:
             return engine
@@ -73,6 +113,9 @@ def convert_markdown(
     """
     pandoc_path = _ensure_pandoc()
     target_format = _PANDOC_FORMAT_MAP[output_format]
+    from paper_plane_x_backend.services.app_settings import get_app_settings_repo
+
+    pandoc_config = get_app_settings_repo().get().pandoc
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
@@ -96,24 +139,16 @@ def convert_markdown(
             pdf_engine = _ensure_pdf_engine()
             if not pdf_engine:
                 raise RuntimeError(
-                    "No PDF engine available. Please install xelatex, pdflatex, "
-                    "lualatex, wkhtmltopdf, or weasyprint."
+                    "No PDF engine available. Please install typst, weasyprint, "
+                    "wkhtmltopdf, xelatex, pdflatex, lualatex, or configure "
+                    "pandoc.pdf_engine in settings."
                 )
             cmd.extend(["--pdf-engine", pdf_engine])
             if title:
                 cmd.extend(["--metadata", f"title={title}"])
 
-        if output_format == "html":
-            cmd.extend(
-                [
-                    "--css",
-                    "",
-                    "--template",
-                    "default",
-                    "--variable",
-                    "document-css=true",
-                ]
-            )
+        if output_format == "html" and pandoc_config.html_template:
+            cmd.extend(["--template", pandoc_config.html_template])
 
         if title and output_format in ("docx", "html"):
             cmd.extend(["--metadata", f"title={title}"])

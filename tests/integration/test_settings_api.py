@@ -219,6 +219,7 @@ class TestSettingsSections:
         assert "pdf_parser" in data
         assert "data_process" in data
         assert "librarian" in data
+        assert "pandoc" in data
         assert "agent_llm" in data
         assert "providers" in data
         assert "mineru" not in data
@@ -265,6 +266,36 @@ class TestSettingsSections:
         assert resp.status_code == 200
         updated = resp.json()
         assert updated["top_tags_limit"] == 15
+
+    def test_get_and_update_pandoc(self, client: TestClient) -> None:
+        resp = client.put(
+            "/api/v1/settings/pandoc",
+            json={
+                "pandoc_path": "/usr/local/bin/pandoc",
+                "html_template": "/templates/article.html",
+                "pdf_engine": "typst",
+            },
+        )
+        assert resp.status_code == 200
+        updated = resp.json()
+        assert updated["pandoc_path"] == "/usr/local/bin/pandoc"
+        assert updated["html_template"] == "/templates/article.html"
+        assert updated["pdf_engine"] == "typst"
+
+        full_resp = client.get("/api/v1/settings")
+        assert full_resp.status_code == 200
+        assert full_resp.json()["pandoc"]["pandoc_path"] == "/usr/local/bin/pandoc"
+        assert full_resp.json()["pandoc"]["html_template"] == "/templates/article.html"
+        assert full_resp.json()["pandoc"]["pdf_engine"] == "typst"
+
+        clear_resp = client.put(
+            "/api/v1/settings/pandoc",
+            json={"pandoc_path": None, "html_template": None, "pdf_engine": None},
+        )
+        assert clear_resp.status_code == 200
+        assert clear_resp.json()["pandoc_path"] is None
+        assert clear_resp.json()["html_template"] is None
+        assert clear_resp.json()["pdf_engine"] is None
 
     def test_persistence_across_requests(self, client: TestClient) -> None:
         client.put(
