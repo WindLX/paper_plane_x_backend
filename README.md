@@ -1,65 +1,64 @@
 # Paper Plane X Backend
 
-Paper Plane X Backend 是整个系统的核心服务。它提供 FastAPI HTTP API，用于管理项目、上传和处理论文、解析 PDF、运行结构化抽取与事实核查、查询文献、读写项目文件，以及保存运行时设置。
+[![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB.svg)](pyproject.toml)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.136%2B-009688.svg)](https://fastapi.tiangolo.com/)
+[![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 
-前端控制台、`ppx` CLI、Zotero 插件和外部 Agent skills 都通过这个后端工作。
+Paper Plane X Backend 是 Paper Plane X 的核心服务。它提供 FastAPI HTTP/WebSocket API，负责项目与论文管理、PDF 解析、结构化抽取、事实核查、文献检索、项目文件、运行时设置和 Agent 调用追踪。
 
-## 能力概览
+Web 控制台、`ppx` CLI、Zotero 插件和外部 Agent Skills 都通过该服务访问数据，不应直接读写数据库。
 
-- Project：创建研究项目，关联论文，导出项目数据和项目文件。
-- Paper：上传 PDF、保存 Markdown、查看结构化处理结果、维护 paper note。
-- Data Process：管理 PDF 解析、Extraction、Analysis、Fact Check 后台任务。
-- Librarian：项目总览、DSL 检索、字段矩阵、自然语言 query builder、单篇 deep dive。
-- Project files：项目沙箱文件的 list/read/write/upload/patch/export。
-- Settings：运行时维护 LLM Provider、Agent LLM、PDF Parser、Data Process 和 Librarian 设置。
-- Agent traces：查看 LLM 调用、工具调用和 token 使用记录。
+## 主要能力
 
-## 启动
+- **Paper pipeline**：上传 PDF，保存解析后的 Markdown，运行 Extraction、Analysis 和 Fact Check。
+- **Project workspace**：维护项目元数据、关联论文、项目文件和项目导出。
+- **Librarian**：全局发现、DSL 搜索、字段矩阵、query builder 和单篇 deep dive。
+- **Background tasks**：管理并通过 WebSocket 推送数据处理任务状态。
+- **Runtime Settings**：配置 LLM Provider、Agent LLM、PDF Parser、Pandoc、worker 和 Librarian。
+- **Agent traces**：记录 LLM 请求、工具调用、token 使用和运行错误。
+- **Console hosting**：可直接托管构建后的 Vue Web 控制台。
+- **Local persistence**：默认使用 SQLite 与本地数据目录，无需外部数据库。
 
-本地运行依赖 [uv](https://docs.astral.sh/uv/) 管理 Python 环境和命令：
+## 运行要求
+
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/)
+- 一个可访问的 PDF Parser：本地 MinerU 或 MinerU Cloud
+- 至少一个与 OpenAI API 兼容的 LLM Provider（使用 Agent 能力时必需）
+- 可选：[Pandoc](https://pandoc.org/) 与 PDF engine，用于项目文件导出
+- 可选：Docker / Docker Compose
+
+## 安装与运行
+
+### 方式一：Backend + Web Console（推荐）
+
+普通用户只需克隆 backend，并使用 monorepo Release 中已经构建好的 Web Console：
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-### 拉取源码
-
-```bash
-git clone --recursives https://github.com/WindLX/paper_plane_x.git 
-```
-
-### 本地运行
-
-日常开发可以直接使用 `uv run app`：
-
-```bash
+git clone https://github.com/WindLX/paper_plane_x_backend.git
+cd paper_plane_x_backend
 uv sync
 cp .env.example .env
+mkdir -p data/console
+```
+
+从 [Paper Plane X 最新 Release](https://github.com/WindLX/paper_plane_x/releases/latest) 下载 `paper-plane-x-console-vX.Y.Z.tar.gz`，解压后启动服务：
+
+```bash
+tar -xzf paper-plane-x-console-vX.Y.Z.tar.gz -C data/console
 uv run app
 ```
 
-默认服务地址：
+这种方式不需要 Node.js。backend 会在同一个 `8000` 端口提供 API 和 Web Console。
 
-```text
-http://127.0.0.1:8000
-```
+默认地址：
 
-健康检查：
+- 服务：`http://127.0.0.1:8000`
+- 健康检查：`http://127.0.0.1:8000/health`
+- OpenAPI：`http://127.0.0.1:8000/docs`
 
 ```bash
-curl -s http://127.0.0.1:8000/health
-```
-
-期望返回：
-
-```json
-{"status":"ok","app_name":"Paper Plane X"}
-```
-
-OpenAPI 文档：
-
-```text
-http://127.0.0.1:8000/docs
+curl -fsS http://127.0.0.1:8000/health
 ```
 
 调试模式：
@@ -68,66 +67,110 @@ http://127.0.0.1:8000/docs
 uv run debug
 ```
 
-### Web 控制台
+### 方式二：Docker Compose
 
-后端会尝试托管已构建的前端 console：
+发布镜像已经内置对应版本的 Web Console。只克隆 backend 仓库即可使用随仓库提供的 Compose 配置：
 
-1. `settings.api.console_dist_dir`，默认是 `./data/console`
-2. monorepo 中的 `../paper_plane_x_frontend/dist`
+```bash
+git clone https://github.com/WindLX/paper_plane_x_backend.git
+cd paper_plane_x_backend
+GHCR_OWNER=windlx PPX_VERSION=latest \
+  docker compose -f docker-compose.release.yml up -d
+```
 
-本地运行时，如果希望打开 `http://127.0.0.1:8000` 就看到 Web 控制台，先从仓库根目录运行：
+也可以参照顶层 [Paper Plane X README](https://github.com/WindLX/paper_plane_x#面向用户安装与运行) 创建独立的 Compose 配置。
+
+### 方式三：从 monorepo 源码运行
+
+该方式适合同时修改 backend 和 frontend 的开发者：
+
+```bash
+git clone --recursive https://github.com/WindLX/paper_plane_x.git
+cd paper_plane_x
+just setup
+cp paper_plane_x_backend/.env.example paper_plane_x_backend/.env
+just build-console
+just backend dev
+```
+
+如需从源码构建 Docker 镜像，Dockerfile 的 build context 必须是 monorepo 根目录：
+
+```bash
+docker compose -f paper_plane_x_backend/docker-compose.yml up --build -d
+```
+
+## Web 控制台
+
+后端按以下顺序查找前端构建产物：
+
+1. `api.console_dist_dir`，默认 `./data/console`；
+2. monorepo 中的 `../paper_plane_x_frontend/dist`。
+
+从 monorepo 根目录构建 backend-hosted console：
+
+```bash
+just build-console
+just backend dev
+```
+
+或在 backend 目录中执行：
 
 ```bash
 just build-console
 ```
 
-或在 backend 目录运行：
+## 配置模型
 
-```bash
-just build-console
+Paper Plane X 将启动配置与运行时设置分开管理。
+
+### ServerConfig：启动时配置
+
+优先级从高到低：
+
+1. 代码初始化参数；
+2. `PPX_*` 环境变量；
+3. `.env`；
+4. `PPX_CONFIG_FILE` 指向的 TOML，默认 [`config/default.toml`](config/default.toml)；
+5. 文件密钥源。
+
+常用环境变量：
+
+```dotenv
+PPX_CONFIG_FILE=./config/default.toml
+PPX_API__HOST=0.0.0.0
+PPX_API__PORT=8000
+PPX_DATA_DIR=./data
+PPX_DATABASE_PATH=./data/app.db
+PPX_LOG__LEVEL=INFO
 ```
 
-### Docker Compose
+ServerConfig 修改后需要重启服务。
 
-从源码构建镜像时，Docker 会在构建阶段打包前端 console，容器启动后自带 Web 控制台：
+### AppSettings：运行时设置
 
-```bash
-docker compose up --build
-```
+AppSettings 通过 Web Settings 页面或 `/api/v1/settings` API 修改，并持久化到 `data/app_settings.toml`。主要设置包括：
 
-默认访问：
+- LLM Provider 与 API key；
+- 各 Agent 的 Provider、temperature、token、timeout 和 reasoning 参数；
+- 本地或云端 MinerU；
+- Data Process worker、重试与超时；
+- Librarian 参数；
+- Pandoc 路径、HTML template 和 PDF engine。
 
-```text
-http://127.0.0.1:8000
-```
-
-发布镜像会推送到 GHCR：
-
-```text
-ghcr.io/<owner>/paper-plane-x-backend:<version>
-ghcr.io/<owner>/paper-plane-x-backend:latest
-```
-
-如果使用已发布镜像，可以设置 `GHCR_OWNER` 和可选的 `PPX_VERSION` 后启动：
-
-```bash
-GHCR_OWNER=<owner> PPX_VERSION=0.1.0 docker compose -f docker-compose.release.yml up
-```
+这些设置通常即时生效，无需重启。
 
 ## 首次配置
 
-LLM Provider 和 Agent LLM 绑定是运行时设置。推荐在前端 Settings 页面配置。
-
-也可以通过 API 配置：
+推荐通过 Web 控制台完成。也可以直接调用 API：
 
 ```bash
-curl -s -X POST http://127.0.0.1:8000/api/v1/settings/providers \
+curl -fsS -X POST http://127.0.0.1:8000/api/v1/settings/providers \
   -H "Content-Type: application/json" \
   -d '{
     "name": "default",
-    "model": "deepseek-chat",
-    "api_key": "sk-xxx",
-    "base_url": "https://api.deepseek.com/v1"
+    "model": "your-model",
+    "api_key": "your-api-key",
+    "base_url": "https://provider.example/v1"
   }'
 ```
 
@@ -135,173 +178,110 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/settings/providers \
 
 ```bash
 for agent in extraction analysis fact_check deep_diver query_builder global_finder; do
-  curl -s -X PUT "http://127.0.0.1:8000/api/v1/settings/agent_llm/${agent}" \
+  curl -fsS -X PUT \
+    "http://127.0.0.1:8000/api/v1/settings/agent_llm/${agent}" \
     -H "Content-Type: application/json" \
     -d '{"provider_name":"default"}'
 done
 ```
 
-需要完整处理 PDF 时，还要配置 PDF Parser。默认配置面向本地 [MinerU](https://opendatalab.github.io/MinerU/) 服务；如果使用云端 MinerU，请在 Settings 页面或 Settings API 中切换。MinerU 源码见 [opendatalab/MinerU](https://github.com/opendatalab/MinerU)。
+不要在脚本、Issue、日志或提交中暴露真实 API key。
 
-## 配置和数据目录
+## 数据目录与备份
 
-| 层           | 来源                                     | 内容                                                         | 生效方式       |
-| ------------ | ---------------------------------------- | ------------------------------------------------------------ | -------------- |
-| ServerConfig | `.env`、环境变量、`PPX_CONFIG_FILE` TOML | host、port、data_dir、database_path、日志、console 目录      | 修改后重启     |
-| AppSettings  | Settings API / 前端 Settings 页面        | LLM Provider、Agent LLM、PDF Parser、Data Process、Librarian | 运行时即时生效 |
+默认数据目录是 `./data`：
 
-默认数据目录：
+| 路径                | 内容                          |
+| ------------------- | ----------------------------- |
+| `app.db`            | SQLite 数据库                 |
+| `app_settings.toml` | 运行时设置与密钥              |
+| `papers/`           | PDF 解析结果、Markdown 和图片 |
+| `projects/`         | 项目文件沙箱                  |
+| `logs/`             | 后端日志与轮转文件            |
+| `console/`          | 可选 Web 控制台构建产物       |
 
-```text
-paper_plane_x_backend/data/
-```
+生产部署至少应备份数据库、`app_settings.toml`、`papers/` 和 `projects/`。数据目录可能包含论文原文、模型密钥和研究内容，应限制文件权限并避免公开挂载。
 
-常见内容：
+## API 概览
 
-- `app.db`：SQLite 数据库。
-- `papers/`：PDF 解析产物和图片。
-- `project_files/`：项目文件沙箱。
-- `logs/`：后端日志。
-- `console/`：可选的前端构建产物。
+业务 API 默认位于 `/api/v1`：
 
-## API 模块
+| 模块          | 路径前缀               | 说明                                     |
+| ------------- | ---------------------- | ---------------------------------------- |
+| Paper         | `/papers`              | 上传、查询、重处理、Markdown、Agent note |
+| Project       | `/projects`            | 项目 CRUD、论文关联和导出                |
+| Project Files | `/projects/{id}/files` | 文件 list/read/write/patch/upload/export |
+| Librarian     | `/librarian`           | 搜索、矩阵、deep dive、query builder     |
+| Data Process  | `/data-process`        | 后台任务查询与取消                       |
+| Settings      | `/settings`            | Provider、Agent、Parser、Pandoc 等设置   |
+| Agent Traces  | `/agent-traces`        | Agent 调用记录与查询                     |
+| PDF Parse     | `/parse`               | 独立 PDF 转 Markdown API                 |
 
-所有业务 API 默认挂在 `/api/v1`。
+完整请求与响应模型以运行中服务的 `/docs` 为准。
 
-**Project**
+## CLI 与外部 Agent
 
-- `POST /projects`
-- `GET /projects`
-- `GET /projects/{project_id}`
-- `PATCH /projects/{project_id}`
-- `DELETE /projects/{project_id}`
-- `POST /projects/{project_id}/papers/{paper_id}`
-- `DELETE /projects/{project_id}/papers/{paper_id}`
-- `POST /projects/{project_id}/export`
-
-**Project files**
-
-- `GET /projects/{project_id}/files`
-- `GET /projects/{project_id}/files/content`
-- `PUT /projects/{project_id}/files/content`
-- `POST /projects/{project_id}/files/upload`
-- `PATCH /projects/{project_id}/files/lines`
-- `PATCH /projects/{project_id}/files/text`
-- `PATCH /projects/{project_id}/files/patch`
-- `POST /projects/{project_id}/files/export`
-
-**Paper**
-
-- `POST /papers`
-- `GET /papers/{paper_id}`
-- `PATCH /papers/{paper_id}`
-- `DELETE /papers/{paper_id}`
-- `GET /papers/{paper_id}/markdown`
-- `POST /papers/{paper_id}/reprocess`
-- `GET/PUT/PATCH/DELETE /papers/{paper_id}/agent-note`
-
-**Librarian**
-
-- `POST /librarian/global-finder`
-- `POST /librarian/global-finder/agent-summary`
-- `POST /librarian/search`
-- `POST /librarian/matrix`
-- `POST /librarian/deep-dive`
-- `POST /librarian/query-builder`
-
-**Data Process**
-
-- `GET /data-process/tasks`
-- `GET /data-process/tasks/{task_id}`
-- `POST /data-process/tasks/{task_id}/cancel`
-- `WS /ws/data-process`
-
-**Settings**
-
-- `GET/POST /settings/providers`
-- `GET/PUT /settings/agent_llm/{agent}`
-- `GET /settings/pdf-parser`
-- `PUT /settings/pdf-parser/local`
-- `PUT /settings/pdf-parser/cloud`
-- `GET/PUT /settings/data-process`
-- `GET/PUT /settings/librarian`
-
-**Agent traces**
-
-- `POST /agent-traces/list`
-- `POST /agent-traces/query`
-- `DELETE /agent-traces/{trace_id}`
-
-## 让后端托管前端
-
-在前端目录构建 console：
+安装已发布 CLI：
 
 ```bash
-cd ../paper_plane_x_frontend
-pnpm build:console
+uv tool install paper-plane-x-cli
+ppx context set \
+  --base-url http://127.0.0.1:8000/api/v1 \
+  --project-id prj_x
+ppx context show
 ```
 
-然后访问：
+CLI 与 Skills 的完整说明见 [`paper_plane_x_cli`](https://github.com/WindLX/paper_plane_x_cli)。
 
-```text
-http://127.0.0.1:8000
-```
+## 开发与测试
 
-后端会渲染 `index.html` 并注入正确的 API base URL。
-
-## ppx CLI 和外部 Agent
-
-`ppx` CLI 位于兄弟包 `../paper_plane_x_cli`，适合脚本和外部 Agent 使用：
+推荐命令：
 
 ```bash
-uvx --from ../paper_plane_x_cli ppx --help
-uv tool install ../paper_plane_x_cli
-```
-
-常用命令：
-
-```bash
-ppx context set --base-url http://127.0.0.1:8000/api/v1 --project-id prj_x
-ppx project global-finder
-ppx librarian search --query-expr "(meta.title CONTAINS transformer)"
-ppx librarian matrix --paper-ids pap_a,pap_b --field-paths meta.title,quick_scan.quick_summary
-ppx paper markdown --paper-id pap_x --save-dir ./paper-markdown
-ppx files upload --source ./notes.md --path /notes/notes.md
-```
-
-外部 Agent 可使用 `paper_plane_x_cli/skills/ppx-researcher` 和 `paper_plane_x_cli/skills/ppx-pdf-to-markdown`。
-
-## 常用开发命令
-
-推荐使用 `just`：
-
-```bash
+just setup
 just dev
-just test
 just lint
+just format-check
 just typecheck
+just test
 just build
 just pre-commit
 ```
 
-等价原始命令：
+直接使用 uv：
 
 ```bash
-uv run app
-uv run pytest
+uv sync
 uv run ruff check src tests
+uv run ruff format --check src tests
 uv run pyright
+uv run pytest
 uv build
 ```
 
+测试分为 `tests/unit` 与 `tests/integration`。行为变更应优先补充对应测试；API 变更还应更新 schema、前端类型和相关文档。
+
+## 贡献与 Pull Request
+
+1. 从最新 `main` 创建功能分支。
+2. 保持改动聚焦，并遵循现有类型与日志约定。
+3. 新增或修改行为时补充测试。
+4. 路由、配置或命令变更时同步更新 README 或 `docs/`。
+5. 提交前运行 `just pre-commit`。
+6. PR 描述中列出动机、API/数据兼容性、验证命令和必要的迁移步骤。
+
+请勿提交 `.env`、`data/`、数据库、日志、证书、模型密钥或论文私有数据。
+
 ## 更多文档
 
-- [Backend Quickstart](docs/workflow_quickstart.md)
+- [Workflow Quickstart](docs/workflow_quickstart.md)
 - [Architecture](docs/architecture.md)
 - [Librarian](docs/librarian.md)
-- [Logging](docs/logging_conventions.md)
+- [Logging Conventions](docs/logging_conventions.md)
+- [MinerU Cloud API](docs/mineru_cloud_api.md)
 - [Roadmap](docs/roadmap.md)
+- [Issues](https://github.com/WindLX/paper_plane_x_backend/issues)
 
 ## License
 
-Paper Plane X Backend 使用 [GNU Affero General Public License v3.0 or later](LICENSE)。
+Paper Plane X Backend 使用 [GNU Affero General Public License v3.0 or later](LICENSE)。分发修改版本或通过网络向用户提供修改后的服务时，请遵守 AGPL-3.0-or-later。
