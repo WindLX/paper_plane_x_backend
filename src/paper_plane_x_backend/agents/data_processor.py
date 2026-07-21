@@ -45,6 +45,7 @@ class StructuredDataProcessorAgent(Generic[TOutput]):
         caller_id: str | None = None,
     ) -> None:
         self.llm_config = llm_config or resolve_agent_llm_config(self.llm_config_name)
+        self._task_prompt = self._build_task_prompt()
 
         self._agent = BaseAgent(
             output_schema=self.output_schema,
@@ -59,13 +60,16 @@ class StructuredDataProcessorAgent(Generic[TOutput]):
         )
 
     def _build_system_prompt(self) -> str:
-        system_md = settings.load_prompt("data_processor", "System.md")
+        """加载所有 DataProcessor Agent 共享的稳定系统提示词。"""
+        return settings.load_prompt("data_processor", "System.md")
+
+    def _build_task_prompt(self) -> str:
+        """加载任务专属提示词，并在论文消息之后发送。"""
         task_md = settings.load_prompt("data_processor", self.prompt_filename)
-        task_md = self._inject_schema_template(
+        return self._inject_schema_template(
             prompt_template=task_md,
             schema_model=self.output_schema,
         )
-        return f"{system_md}\n\n{task_md}"
 
     @staticmethod
     def _inject_schema_template(
@@ -93,6 +97,10 @@ class StructuredDataProcessorAgent(Generic[TOutput]):
 
     def append_user_message(self, payload: dict[str, Any]) -> None:
         self._agent.memory.append_user_message(payload)
+
+    def append_task_message(self) -> None:
+        """在共享论文消息之后追加当前 Agent 的任务契约。"""
+        self._agent.memory.append_user_message({"content": self._task_prompt})
 
     def append_assistant_message(self, payload: dict[str, Any], *, name: str) -> None:
         self._agent.memory.append_assistant_message(
@@ -212,11 +220,13 @@ class DataProcessorAgentGroup:
                 md_content=md_content, images=images
             )
         )
+        self.extraction_agent.append_task_message()
         self.fact_check_agent1.append_user_message(
             self.fact_check_agent1.build_user_message(
                 md_content=md_content, images=images
             )
         )
+        self.fact_check_agent1.append_task_message()
 
         while retry_count < max_retries:
             extraction_result = await self.extraction_agent.run()
@@ -295,11 +305,13 @@ class DataProcessorAgentGroup:
         self.analysis_agent.append_user_message(
             self.analysis_agent.build_user_message(md_content=md_content, images=images)
         )
+        self.analysis_agent.append_task_message()
         self.fact_check_agent2.append_user_message(
             self.fact_check_agent2.build_user_message(
                 md_content=md_content, images=images
             )
         )
+        self.fact_check_agent2.append_task_message()
 
         while retry_count < max_retries:
             analysis_result = await self.analysis_agent.run()

@@ -1,10 +1,99 @@
 """DataProcessorAgentGroup behavior tests."""
 
+import json
 from typing import Any
 
 import pytest
 
-from paper_plane_x_backend.agents.data_processor import DataProcessorAgentGroup
+from paper_plane_x_backend.agents.data_processor import (
+    AnalysisAgent,
+    DataProcessorAgentGroup,
+    ExtractionAgent,
+    FactCheckAgent,
+)
+from paper_plane_x_backend.models.app_settings import LLMConfig
+
+
+def _llm_config(*, is_vlm: bool = False) -> LLMConfig:
+    return LLMConfig(model="test-model", api_key="test-key", is_vlm=is_vlm)
+
+
+def test_agents_share_system_and_document_prefix_before_task_contract() -> None:
+    agents = [
+        ExtractionAgent(llm_config=_llm_config()),
+        AnalysisAgent(llm_config=_llm_config()),
+        FactCheckAgent(llm_config=_llm_config()),
+    ]
+
+    for agent in agents:
+        agent.append_user_message(
+            agent.build_user_message(md_content="# Shared paper", images=[])
+        )
+        agent.append_task_message()
+
+    messages_by_agent = [agent._agent.memory.get_messages() for agent in agents]
+    common_prefix = [messages[:2] for messages in messages_by_agent]
+    assert common_prefix[0] == common_prefix[1] == common_prefix[2]
+
+    system_message, paper_message = common_prefix[0]
+    assert system_message["role"] == "system"
+    assert "不可信数据" in system_message["content"]
+    assert paper_message["role"] == "user"
+    assert json.loads(paper_message["content"]) == {"md_content": "# Shared paper"}
+
+    task_messages = [messages[2] for messages in messages_by_agent]
+    assert all(message["role"] == "user" for message in task_messages)
+    assert "quick_scan" in task_messages[0]["content"]
+    assert "analysis_report" in task_messages[1]["content"]
+    assert "is_passed" in task_messages[2]["content"]
+    assert len({message["content"] for message in task_messages}) == 3
+
+
+def test_vlm_agents_share_stable_paper_and_image_prefix() -> None:
+    extraction = ExtractionAgent(llm_config=_llm_config(is_vlm=True))
+    fact_check = FactCheckAgent(llm_config=_llm_config(is_vlm=True))
+    images = ["data:image/png;base64,first", "data:image/png;base64,second"]
+
+    for agent in (extraction, fact_check):
+        agent.append_user_message(
+            agent.build_user_message(md_content="# Shared paper", images=images)
+        )
+        agent.append_task_message()
+
+    extraction_messages = extraction._agent.memory.get_messages()
+    fact_check_messages = fact_check._agent.memory.get_messages()
+    assert extraction_messages[:2] == fact_check_messages[:2]
+    assert extraction_messages[1]["content"] == [
+        {"type": "text", "text": '{"md_content": "# Shared paper"}'},
+        {"type": "image_url", "image_url": {"url": images[0]}},
+        {"type": "image_url", "image_url": {"url": images[1]}},
+    ]
+
+
+def test_fact_check_report_and_retry_feedback_follow_task_contract() -> None:
+    agent = FactCheckAgent(llm_config=_llm_config())
+    agent.append_user_message(
+        agent.build_user_message(md_content="# Shared paper", images=[])
+    )
+    agent.append_task_message()
+    agent.append_assistant_message(
+        {"extraction_result": {"quick_scan": {"title": "Example"}}},
+        name="ExtractionAgent",
+    )
+    agent._agent.memory.append_validation_feedback("missing errors")
+
+    messages = agent._agent.memory.get_messages()
+    assert [message["role"] for message in messages] == [
+        "system",
+        "user",
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert json.loads(messages[1]["content"]) == {"md_content": "# Shared paper"}
+    assert "is_passed" in messages[2]["content"]
+    assert "extraction_result" in messages[3]["content"]
+    assert "Output validation failed" in messages[4]["content"]
 
 
 class _FakeSection:
@@ -63,6 +152,9 @@ class _FakeExtractionAgent:
     def append_user_message(self, payload: dict[str, Any]) -> None:
         return
 
+    def append_task_message(self) -> None:
+        return
+
     def append_assistant_message(self, payload: dict[str, Any], *, name: str) -> None:
         return
 
@@ -84,6 +176,9 @@ class _FakeFactCheckAgent:
         return
 
     def append_user_message(self, payload: dict[str, Any]) -> None:
+        return
+
+    def append_task_message(self) -> None:
         return
 
     def append_assistant_message(self, payload: dict[str, Any], *, name: str) -> None:
@@ -121,6 +216,9 @@ class _FakeAnalysisAgent:
         return
 
     def append_user_message(self, payload: dict[str, Any]) -> None:
+        return
+
+    def append_task_message(self) -> None:
         return
 
     def append_assistant_message(self, payload: dict[str, Any], *, name: str) -> None:

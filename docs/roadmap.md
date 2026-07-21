@@ -141,3 +141,5 @@
 - [x] 修复前端 json 无法复制的问题
 - [x] Agent 备注可编辑
 - [ ] External Editor
+- [x] Agent 缓存优化
+- [ ] 优化前端项目页面展示
