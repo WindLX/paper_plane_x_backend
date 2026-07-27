@@ -76,6 +76,10 @@ async def list_data_process_tasks(
     task_manager: TaskManagerDep,
     offset: int = Query(0, ge=0, description="分页偏移量"),
     limit: int = Query(20, ge=1, le=200, description="每页数量"),
+    keyword: str | None = Query(
+        default=None,
+        description="按 task_id、paper_id、status 或 retry_of_task_id 搜索",
+    ),
     sort_order: SortOrder = Query(SortOrder.DESC, description="按 sort_by 排序"),
     sort_by: TaskSortKey = Query(TaskSortKey.CREATED_AT, description="排序字段"),
 ) -> DataProcessTaskListResponse:
@@ -83,7 +87,11 @@ async def list_data_process_tasks(
     orchestrator = _build_orchestrator(db, task_manager)
     try:
         states, counts, total = orchestrator.list_tasks(
-            offset=offset, limit=limit, sort_order=sort_order, sort_by=sort_by
+            keyword=keyword,
+            offset=offset,
+            limit=limit,
+            sort_order=sort_order,
+            sort_by=sort_by,
         )
     except DataProcessDomainError as exc:
         _raise_as_http(exc)

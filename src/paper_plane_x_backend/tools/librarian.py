@@ -6,7 +6,7 @@ from paper_plane_x_backend.core.agent_runtime import AgentExecutionError
 from paper_plane_x_backend.core.agent_runtime.tooling import tool
 from paper_plane_x_backend.core.query_parser import (
     LibrarianQueryError,
-    parse_librarian_query_expr_or_fallback,
+    parse_librarian_query_expr,
 )
 from paper_plane_x_backend.services.app_settings import get_app_settings_repo
 from paper_plane_x_backend.services.database import get_db
@@ -129,7 +129,7 @@ def search_paper(
 ) -> dict[str, Any]:
     repo = PaperQueryRepository(get_db())
     try:
-        query_group = parse_librarian_query_expr_or_fallback(query_expr)
+        query_group = parse_librarian_query_expr(query_expr)
         paper_ids, total = repo.search_paper(
             project_id=project_id,
             paper_id=None,

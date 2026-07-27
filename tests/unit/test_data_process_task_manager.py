@@ -366,3 +366,65 @@ def test_sqlite_task_state_store_round_trips_trace_ids(db) -> None:
     assert loaded.analysis_trace_ids == ["trace-analysis"]
     assert loaded.extraction_fact_check_trace_ids == ["trace-extraction-fc"]
     assert loaded.analysis_fact_check_trace_ids == ["trace-analysis-fc"]
+
+
+def test_sqlite_task_state_store_searches_all_documented_fields(db) -> None:
+    store = DataProcessTaskStateStore(db)
+    states = [
+        DataProcessTaskState(
+            task_id="tsk-alpha_100%",
+            paper_id="pap-target",
+            payload={},
+            status=DataProcessTaskStatus.FAILED,
+            created_at=datetime.now(),
+            retry_of_task_id="tsk-original",
+        ),
+        DataProcessTaskState(
+            task_id="tsk-other",
+            paper_id="pap-other",
+            payload={},
+            status=DataProcessTaskStatus.COMPLETED,
+            created_at=datetime.now(),
+        ),
+    ]
+    for state in states:
+        store.upsert(state)
+
+    searches = {
+        "alpha_100%": "tsk-alpha_100%",
+        "PAP-TARGET": "tsk-alpha_100%",
+        "failed": "tsk-alpha_100%",
+        "ORIGINAL": "tsk-alpha_100%",
+    }
+    for keyword, expected_task_id in searches.items():
+        matches = store.list(keyword=keyword, limit=20)
+        assert [item.task_id for item in matches] == [expected_task_id]
+        assert store.count_total(keyword=keyword) == 1
+
+
+def test_sqlite_task_state_store_search_paginates_filtered_results(db) -> None:
+    store = DataProcessTaskStateStore(db)
+    for index in range(25):
+        store.upsert(
+            DataProcessTaskState(
+                task_id=f"tsk-search-{index:02d}",
+                paper_id=f"pap-{index:02d}",
+                payload={},
+                status=DataProcessTaskStatus.QUEUED,
+                created_at=datetime.now(),
+            )
+        )
+    store.upsert(
+        DataProcessTaskState(
+            task_id="tsk-unrelated",
+            paper_id="pap-unrelated",
+            payload={},
+            status=DataProcessTaskStatus.QUEUED,
+            created_at=datetime.now(),
+        )
+    )
+
+    matches = store.list(keyword="tsk-search", offset=20, limit=20)
+
+    assert len(matches) == 5
+    assert store.count_total(keyword="tsk-search") == 25

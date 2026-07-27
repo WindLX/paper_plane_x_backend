@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
+from paper_plane_x_backend.core.query_parser import SIMPLE_QUERY_FIELDS
 from paper_plane_x_backend.schemas.agent_io.data_processor import (
     AnalysisReport,
     QuickScan,
@@ -128,6 +129,7 @@ def _build_projection_field_tree() -> dict[str, object]:
 
 def _build_query_field_tree() -> dict[str, object]:
     return {
+        "paper_id": "CONTAINS string",
         "meta": {
             "title": "CONTAINS string",
             "authors": "CONTAINS string",
@@ -241,9 +243,13 @@ def build_librarian_guide_payload() -> dict[str, object]:
             },
         },
         "query_schema": {
-            "mode": "query_expr | paper_id",
+            "mode": "simple_query | query_expr | paper_id",
             "project_id": "可选，限定 project 作用域",
             "paper_id": "精确匹配单篇论文",
+            "simple_query": {
+                "description": "在全部简易搜索字段中执行大小写不敏感的包含匹配",
+                "fields": list(SIMPLE_QUERY_FIELDS),
+            },
             "query_expr": _build_query_field_tree(),
             "paging": {
                 "limit": "number",

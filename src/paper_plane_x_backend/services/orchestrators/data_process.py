@@ -462,6 +462,7 @@ class DataProcessOrchestrator:
     def list_tasks(
         self,
         *,
+        keyword: str | None = None,
         offset: int = 0,
         limit: int = 20,
         sort_order: SortOrder = SortOrder.DESC,
@@ -470,10 +471,14 @@ class DataProcessOrchestrator:
         logger.debug("event=data_process.tasks_list_requested")
 
         states = self.task_manager.list_tasks(
-            offset=offset, limit=limit, sort_order=sort_order, sort_by=sort_by
+            keyword=keyword,
+            offset=offset,
+            limit=limit,
+            sort_order=sort_order,
+            sort_by=sort_by,
         )
         counts = self.task_manager.count_task_statuses()
-        total = self.task_manager.count_total_tasks()
+        total = self.task_manager.count_total_tasks(keyword=keyword)
         return states, counts, total
 
     def cancel(

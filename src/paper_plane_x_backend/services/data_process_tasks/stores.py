@@ -1,5 +1,7 @@
 """Data process task state stores."""
 
+from __future__ import annotations
+
 from collections.abc import Iterator, MutableMapping
 from typing import Any
 
@@ -97,16 +99,23 @@ class DataProcessTaskStateStore:
     def list(
         self,
         paper_id: str | None = None,
+        keyword: str | None = None,
         offset: int = 0,
         limit: int | None = None,
         sort_order: SortOrder = SortOrder.DESC,
         sort_by: TaskSortKey = TaskSortKey.CREATED_AT,
     ) -> list[DataProcessTaskState]:
         params: list[Any] = []
-        where_clause = ""
+        where_clauses: list[str] = []
         if paper_id is not None:
-            where_clause = "WHERE paper_id = ?"
+            where_clauses.append("paper_id = ?")
             params.append(paper_id)
+        keyword_clause, keyword_params = self._build_keyword_filter(keyword)
+        if keyword_clause:
+            where_clauses.append(keyword_clause)
+            params.extend(keyword_params)
+
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
         limit_clause = ""
         if limit is not None:
@@ -124,15 +133,42 @@ class DataProcessTaskStateStore:
         )
         return [self._row_to_state(row) for row in rows]
 
-    def count_total(self, paper_id: str | None = None) -> int:
-        if paper_id is None:
-            row = self._db.fetchone("SELECT COUNT(*) AS count FROM data_process_tasks")
-        else:
-            row = self._db.fetchone(
-                "SELECT COUNT(*) AS count FROM data_process_tasks WHERE paper_id = ?",
-                (paper_id,),
-            )
+    def count_total(
+        self,
+        paper_id: str | None = None,
+        keyword: str | None = None,
+    ) -> int:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if paper_id is not None:
+            where_clauses.append("paper_id = ?")
+            params.append(paper_id)
+        keyword_clause, keyword_params = self._build_keyword_filter(keyword)
+        if keyword_clause:
+            where_clauses.append(keyword_clause)
+            params.extend(keyword_params)
+        where_sql = f" WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        row = self._db.fetchone(
+            f"SELECT COUNT(*) AS count FROM data_process_tasks{where_sql}",
+            tuple(params),
+        )
         return int(row["count"]) if row else 0
+
+    @staticmethod
+    def _build_keyword_filter(keyword: str | None) -> tuple[str, list[str]]:
+        normalized = (keyword or "").strip().lower()
+        if not normalized:
+            return "", []
+
+        escaped = (
+            normalized.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        pattern = f"%{escaped}%"
+        fields = ("task_id", "paper_id", "status", "retry_of_task_id")
+        clauses = [
+            f"LOWER(COALESCE({field}, '')) LIKE ? ESCAPE '\\'" for field in fields
+        ]
+        return f"({' OR '.join(clauses)})", [pattern] * len(fields)
 
     def count_statuses(self) -> dict[str, int]:
         counts: dict[str, int] = {

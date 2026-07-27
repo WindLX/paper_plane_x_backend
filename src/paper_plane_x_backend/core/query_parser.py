@@ -15,6 +15,21 @@ class LibrarianQueryError(Exception):
         self.error_code = error_code
 
 
+SIMPLE_QUERY_FIELDS = (
+    "paper_id",
+    "meta.title",
+    "meta.authors",
+    "meta.year",
+    "meta.publication",
+    "meta.doi",
+    "meta.custom_meta",
+    "md_content",
+    "quick_scan",
+    "synthesis_data",
+    "analysis_report",
+)
+
+
 @dataclass(frozen=True)
 class Token:
     kind: str
@@ -268,34 +283,20 @@ def parse_librarian_query_expr(query_expr: str) -> dict[str, Any]:
     return _ast_to_query_group(ast)
 
 
-def parse_librarian_query_expr_or_fallback(query_expr: str) -> dict[str, Any]:
-    """尝试解析 DSL 查询表达式；失败时退化为简单模式搜索。
-
-    简单模式会在所有高级搜索支持的文本字段中执行 CONTAINS 匹配，
-    任意字段包含用户输入字符串即视为命中（OR 逻辑）。
-    """
-    try:
-        return parse_librarian_query_expr(query_expr)
-    except LibrarianQueryError:
-        text = query_expr.strip()
-        return {
-            "logic": "OR",
-            "predicates": [
-                {
-                    "field": field,
-                    "op": "CONTAINS",
-                    "value": text,
-                }
-                for field in [
-                    "meta.title",
-                    "meta.authors",
-                    "meta.publication",
-                    "meta.doi",
-                    "md_content",
-                    "quick_scan",
-                    "synthesis_data",
-                    "analysis_report",
-                ]
-            ],
-            "groups": [],
-        }
+def build_librarian_simple_query(simple_query: str) -> dict[str, Any]:
+    """Build the OR predicate group used by the explicit simple-search mode."""
+    text = simple_query.strip()
+    if not text:
+        raise LibrarianQueryError("simple_query cannot be empty")
+    return {
+        "logic": "OR",
+        "predicates": [
+            {
+                "field": field,
+                "op": "CONTAINS",
+                "value": text,
+            }
+            for field in SIMPLE_QUERY_FIELDS
+        ],
+        "groups": [],
+    }

@@ -8,7 +8,8 @@ from typing import Any, NoReturn, cast
 from paper_plane_x_backend.agents.global_finder import GlobalFinderAgent
 from paper_plane_x_backend.core.query_parser import (
     LibrarianQueryError,
-    parse_librarian_query_expr_or_fallback,
+    build_librarian_simple_query,
+    parse_librarian_query_expr,
 )
 from paper_plane_x_backend.models import PaperSortKey, SortOrder
 from paper_plane_x_backend.schemas.agent_io import (
@@ -96,6 +97,7 @@ class LibrarianOrchestrator:
         *,
         project_id: str | None,
         paper_id: str | None,
+        simple_query: str | None,
         query_expr: str | None,
         limit: int,
         offset: int,
@@ -104,11 +106,11 @@ class LibrarianOrchestrator:
         only_completed: bool = True,
     ) -> tuple[list[str], int]:
         try:
-            query_group = (
-                parse_librarian_query_expr_or_fallback(query_expr)
-                if query_expr
-                else None
-            )
+            query_group = None
+            if simple_query:
+                query_group = build_librarian_simple_query(simple_query)
+            elif query_expr:
+                query_group = parse_librarian_query_expr(query_expr)
             return self.query_repo.search_paper(
                 project_id=project_id,
                 paper_id=paper_id,

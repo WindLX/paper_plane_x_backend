@@ -1,6 +1,6 @@
 """Librarian API schemas."""
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from paper_plane_x_backend.models import PaperSortKey, SortOrder
 from paper_plane_x_backend.schemas.agent_io import (
@@ -47,6 +47,10 @@ class LibrarianUnifiedSearchRequest(BaseModel):
 
     project_id: str | None = Field(default=None, description="项目作用域，可选")
     paper_id: str | None = Field(default=None, description="按论文 ID 精确搜索")
+    simple_query: str | None = Field(
+        default=None,
+        description="简易搜索文本，在所有声明的可搜索字段中执行包含匹配",
+    )
     query_expr: str | None = Field(
         default=None,
         description="条件表达式，例如 (meta.title CONTAINS xxx) AND (meta.year BETWEEN [2020, 2025])",
@@ -63,6 +67,19 @@ class LibrarianUnifiedSearchRequest(BaseModel):
         default=True,
         description="是否仅返回解析完毕的 paper",
     )
+
+    @model_validator(mode="after")
+    def validate_search_mode(self) -> "LibrarianUnifiedSearchRequest":
+        supplied_modes = [
+            value
+            for value in (self.paper_id, self.simple_query, self.query_expr)
+            if value is not None and value.strip()
+        ]
+        if len(supplied_modes) > 1:
+            raise ValueError(
+                "Only one of paper_id, simple_query, or query_expr may be provided"
+            )
+        return self
 
 
 class LibrarianUnifiedSearchResponse(BaseModel):

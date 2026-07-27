@@ -163,19 +163,17 @@ class PaperQueryRepository:
         where_clauses: list[str] = []
         params: list[object] = []
 
+        if project_id:
+            where_clauses.append("pp.project_id = ?")
+            params.append(project_id)
+
         if paper_id:
             where_clauses.append("p.paper_id = ?")
             params.append(paper_id)
-        else:
-            if project_id:
-                where_clauses.append("pp.project_id = ?")
-                params.append(project_id)
-            if query_group is not None:
-                group_clause, group_params = self._build_search_group_predicate(
-                    query_group
-                )
-                where_clauses.append(f"({group_clause})")
-                params.extend(group_params)
+        elif query_group is not None:
+            group_clause, group_params = self._build_search_group_predicate(query_group)
+            where_clauses.append(f"({group_clause})")
+            params.extend(group_params)
 
         if only_completed:
             status_clause, status_params = self._build_search_status_predicate()
@@ -213,6 +211,7 @@ class PaperQueryRepository:
     @staticmethod
     def _resolve_search_field_expr(field: str) -> str:
         scalar_map: dict[str, str] = {
+            "paper_id": "p.paper_id",
             "year": "p.year",
             "meta": (
                 "json_object('title', p.title, 'authors', p.authors, 'year', p.year, "

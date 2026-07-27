@@ -162,6 +162,85 @@ class TestLibrarianAPI:
         assert payload["total"] == 1
         assert payload["paper_ids"] == ["paper-search-n1"]
 
+    def test_simple_search_covers_all_declared_fields(
+        self, client: TestClient, db: Database
+    ) -> None:
+        _insert_paper(db, "paper-simple-id-marker")
+        db.update(
+            table="papers",
+            data={
+                "title": "TitleMarker",
+                "authors": json.dumps(["AuthorMarker"]),
+                "year": 2097,
+                "publication": "VenueMarker",
+                "doi": "DoiMarker",
+                "custom_meta": json.dumps({"key": "CustomMarker"}),
+                "md_content": "MarkdownMarker",
+                "quick_scan": json.dumps({"reason": "QuickMarker"}),
+                "synthesis_data": json.dumps({"summary": "SynthesisMarker"}),
+                "analysis_report": json.dumps({"summary": "AnalysisMarker"}),
+            },
+            where="paper_id = ?",
+            where_params=("paper-simple-id-marker",),
+        )
+
+        markers = [
+            "SIMPLE-ID-MARKER",
+            "titlemarker",
+            "authormarker",
+            "2097",
+            "venuemarker",
+            "doimarker",
+            "custommarker",
+            "markdownmarker",
+            "quickmarker",
+            "synthesismarker",
+            "analysismarker",
+        ]
+        for marker in markers:
+            response = client.post(
+                "/api/v1/librarian/search",
+                json={"simple_query": marker, "only_completed": False},
+            )
+            assert response.status_code == 200
+            assert response.json()["paper_ids"] == ["paper-simple-id-marker"]
+
+    def test_search_modes_are_mutually_exclusive(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/v1/librarian/search",
+            json={
+                "paper_id": "paper-1",
+                "simple_query": "paper",
+            },
+        )
+
+        assert response.status_code == 422
+
+    def test_invalid_query_expr_is_not_treated_as_simple_search(
+        self, client: TestClient, db: Database
+    ) -> None:
+        _insert_paper(db, "paper-invalid-dsl")
+
+        response = client.post(
+            "/api/v1/librarian/search",
+            json={"query_expr": "paper-invalid-dsl"},
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "invalid_query_expr"
+
+    def test_guide_exposes_search_modes_and_fields(self, client: TestClient) -> None:
+        response = client.get("/api/v1/librarian/guide")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["query_schema"]["mode"] == (
+            "simple_query | query_expr | paper_id"
+        )
+        assert "paper_id" in payload["query_schema"]["simple_query"]["fields"]
+        assert "analysis_report" in payload["query_schema"]["query_expr"]
+        assert payload["query_examples"]
+
     def test_search_returns_422_for_invalid_field(
         self, client: TestClient, db: Database
     ) -> None:

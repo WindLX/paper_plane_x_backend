@@ -258,6 +258,47 @@ class TestPaperRepository:
         assert total == 1
         assert paper_ids == [p1.paper_id]
 
+    def test_exact_paper_id_respects_project_scope(self, db) -> None:
+        db.insert(
+            "projects",
+            {
+                "project_id": "proj-exact",
+                "name": "Exact Project",
+                "created_at": datetime.now(),
+                "updated_at": datetime.now(),
+                "operation_logs": "[]",
+            },
+        )
+        write_repo = PaperRepository(db)
+        query_repo = PaperQueryRepository(db)
+        linked = write_repo.create(extraction_status=ExtractionStatus.COMPLETED)
+        outside = write_repo.create(extraction_status=ExtractionStatus.COMPLETED)
+        for paper in (linked, outside):
+            write_repo.manual_update(
+                paper_id=paper.paper_id,
+                extraction_fact_check_status=FactCheckStatus.PASSED,
+                analysis_fact_check_status=FactCheckStatus.PASSED,
+            )
+        write_repo.link_to_project(linked.paper_id, "proj-exact")
+
+        linked_ids, linked_total = query_repo.search_paper(
+            project_id="proj-exact",
+            paper_id=linked.paper_id,
+            limit=10,
+            offset=0,
+        )
+        outside_ids, outside_total = query_repo.search_paper(
+            project_id="proj-exact",
+            paper_id=outside.paper_id,
+            limit=10,
+            offset=0,
+        )
+
+        assert linked_total == 1
+        assert linked_ids == [linked.paper_id]
+        assert outside_total == 0
+        assert outside_ids == []
+
     def test_search_paper_auto_filters_unqualified_status(self, db) -> None:
         """验证统一搜索会自动过滤未通过状态的数据。"""
         write_repo = PaperRepository(db)

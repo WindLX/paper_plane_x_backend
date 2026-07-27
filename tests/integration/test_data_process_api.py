@@ -865,6 +865,17 @@ class TestDataProcessAPI:
         assert "offset" in payload
         assert "limit" in payload
 
+        paper_id = create_task_resp.json()["paper_id"]
+        search_resp = client.get(
+            "/api/v1/data-process/tasks",
+            params={"keyword": paper_id.upper(), "limit": 1},
+        )
+        assert search_resp.status_code == 200
+        search_payload = search_resp.json()
+        assert search_payload["total"] == 1
+        assert search_payload["items"][0]["paper_id"] == paper_id
+        assert search_payload["queued"] >= 1
+
     def test_get_data_process_task_by_id(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -143,3 +143,7 @@
 - [ ] External Editor
 - [x] Agent 缓存优化
 - [ ] 优化前端项目页面展示
+- [x] zotero 批量刷新
+- [x] task 搜索 paper id 搜索不到的问题
+- [x] 前端搜索页面提示
+- [x] 前端搜索页面支持直接输入 paper id

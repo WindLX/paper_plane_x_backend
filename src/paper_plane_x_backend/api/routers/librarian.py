@@ -55,6 +55,15 @@ def _raise_as_http(exc: LibrarianDomainError) -> NoReturn:
     )
 
 
+@router.get(
+    "/guide",
+    response_model=dict[str, object],
+    summary="获取 Librarian 查询语法与字段说明",
+)
+def get_librarian_guide(db: DBDep) -> dict[str, object]:
+    return _build_orchestrator(db).build_guide()
+
+
 @router.post(
     "/search",
     response_model=LibrarianUnifiedSearchResponse,
@@ -69,6 +78,7 @@ def run_search_paper(
         paper_ids, total = orchestrator.run_search(
             project_id=request.project_id,
             paper_id=request.paper_id,
+            simple_query=request.simple_query,
             query_expr=request.query_expr,
             limit=request.limit,
             offset=request.offset,

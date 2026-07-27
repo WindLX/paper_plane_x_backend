@@ -243,6 +243,7 @@ class DataProcessTaskManager:
         self,
         *,
         paper_id: str | None = None,
+        keyword: str | None = None,
         offset: int = 0,
         limit: int = 20,
         sort_order: SortOrder = SortOrder.DESC,
@@ -250,14 +251,19 @@ class DataProcessTaskManager:
     ) -> list[DataProcessTaskState]:
         return self._state_store.list(
             paper_id=paper_id,
+            keyword=keyword,
             offset=offset,
             limit=limit,
             sort_order=sort_order,
             sort_by=sort_by,
         )
 
-    def count_total_tasks(self, paper_id: str | None = None) -> int:
-        return self._state_store.count_total(paper_id=paper_id)
+    def count_total_tasks(
+        self,
+        paper_id: str | None = None,
+        keyword: str | None = None,
+    ) -> int:
+        return self._state_store.count_total(paper_id=paper_id, keyword=keyword)
 
     def count_task_statuses(self) -> dict[str, int]:
         return self._state_store.count_statuses()
