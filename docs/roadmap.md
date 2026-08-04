@@ -147,3 +147,5 @@
 - [x] task 搜索 paper id 搜索不到的问题
 - [x] 前端搜索页面提示
 - [x] 前端搜索页面支持直接输入 paper id
+- [x] 添加 pdf 下载 api
+- [x] 前端支持阅读 pdf

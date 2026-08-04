@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from pathlib import Path
 from typing import Any
 
 from fastapi import UploadFile, status
@@ -92,6 +93,27 @@ class PaperOrchestrator:
             len(paper.md_content),
         )
         return paper.md_content
+
+    def get_pdf_path(self, *, paper_id: str) -> Path:
+        paper = self.get_paper(paper_id=paper_id)
+        if not paper.raw_pdf_path:
+            raise PaperDomainError(
+                status.HTTP_409_CONFLICT,
+                f"Paper {paper_id} has no original PDF file",
+            )
+
+        pdf_path = Path(paper.raw_pdf_path).expanduser()
+        if not pdf_path.is_file():
+            raise PaperDomainError(
+                status.HTTP_409_CONFLICT,
+                f"Paper {paper_id} original PDF file is unavailable",
+            )
+        logger.info(
+            "event=paper.pdf_fetched paper_id=%s path=%s",
+            paper_id,
+            pdf_path,
+        )
+        return pdf_path
 
     def batch_get_papers(
         self,

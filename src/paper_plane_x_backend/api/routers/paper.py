@@ -5,7 +5,7 @@ from typing import NoReturn
 from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 
 from paper_plane_x_backend.api.dependencies import DBDep, TaskManagerDep
 from paper_plane_x_backend.models import (
@@ -238,6 +238,35 @@ async def download_paper_markdown(
         media_type="text/markdown",
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{download_name}"
+        },
+    )
+
+
+@router.get(
+    "/{paper_id}/pdf",
+    response_class=FileResponse,
+    summary="查看或下载论文原始 PDF",
+)
+async def get_paper_pdf(
+    paper_id: str,
+    db: DBDep,
+    task_manager: TaskManagerDep,
+    download: bool = Query(False, description="是否以附件形式下载"),
+) -> FileResponse:
+    orchestrator = _build_orchestrator(db, task_manager)
+    try:
+        pdf_path = orchestrator.get_pdf_path(paper_id=paper_id)
+    except PaperDomainError as exc:
+        _raise_as_http(exc)
+
+    return FileResponse(
+        path=pdf_path,
+        media_type="application/pdf",
+        filename=f"{paper_id}.pdf",
+        content_disposition_type="attachment" if download else "inline",
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
         },
     )
 
