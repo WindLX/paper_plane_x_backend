@@ -154,6 +154,57 @@ class DataProcessOrchestrator:
                 digest.update(chunk)
         return digest.hexdigest()
 
+    @staticmethod
+    def _remove_superseded_upload(pdf_path: Path) -> None:
+        """删除 SHA 去重后不再使用的上传文件及其空目录。"""
+        try:
+            pdf_path.unlink(missing_ok=True)
+            pdf_path.parent.rmdir()
+        except OSError:
+            logger.warning(
+                "event=data_process.superseded_upload_cleanup_failed path=%s",
+                str(pdf_path),
+                exc_info=True,
+            )
+
+    def _adopt_upload_as_raw_source(
+        self,
+        *,
+        pdf_path: Path,
+        paper_id: str,
+        raw_pdf_sha256: str,
+    ) -> Path:
+        """把复用命中时的新上传迁移到既有 Paper 的规范目录。"""
+        app_settings = get_app_settings_repo().get()
+        upload_dir = get_pdf_parser_save_dir(app_settings, paper_id)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        destination = upload_dir / pdf_path.name
+
+        if destination.exists():
+            if self._compute_pdf_sha256(destination) != raw_pdf_sha256:
+                raise PaperRepositoryError(
+                    f"Raw PDF destination already contains different content: {destination}",
+                    paper_id=paper_id,
+                )
+            self._remove_superseded_upload(pdf_path)
+        else:
+            pdf_path.replace(destination)
+            try:
+                pdf_path.parent.rmdir()
+            except OSError:
+                logger.warning(
+                    "event=data_process.adopted_upload_parent_cleanup_failed path=%s",
+                    str(pdf_path.parent),
+                    exc_info=True,
+                )
+
+        self.paper_repo.set_raw_pdf_source(
+            paper_id=paper_id,
+            raw_pdf_path=str(destination),
+            raw_pdf_sha256=raw_pdf_sha256,
+        )
+        return destination
+
     def _reset_paper_for_retry(
         self,
         *,
@@ -225,6 +276,23 @@ class DataProcessOrchestrator:
                         reusable_paper.paper_id,
                     )
                 self.paper_repo.delete(paper.paper_id)
+                reusable_pdf_path = reusable_paper.raw_pdf_path
+                if reusable_pdf_path:
+                    self._remove_superseded_upload(pdf_path)
+                elif reusable_paper.extraction_status in {
+                    ExtractionStatus.COMPLETED,
+                    ExtractionStatus.HUMAN_COMPLETED,
+                    ExtractionStatus.FAILED,
+                }:
+                    reusable_pdf_path = str(
+                        self._adopt_upload_as_raw_source(
+                            pdf_path=pdf_path,
+                            paper_id=reusable_paper.paper_id,
+                            raw_pdf_sha256=raw_pdf_sha256,
+                        )
+                    )
+                else:
+                    self._remove_superseded_upload(pdf_path)
 
                 if reusable_paper.extraction_status in {
                     ExtractionStatus.COMPLETED,
@@ -234,7 +302,7 @@ class DataProcessOrchestrator:
                         task_id=generate_task_id(),
                         paper_id=reusable_paper.paper_id,
                         payload={
-                            "pdf_path": reusable_paper.raw_pdf_path or str(pdf_path),
+                            "pdf_path": reusable_pdf_path,
                         },
                         status=DataProcessTaskStatus.COMPLETED,
                         created_at=datetime.now(),
@@ -282,7 +350,7 @@ class DataProcessOrchestrator:
                     task_id=generate_task_id(),
                     paper_id=reusable_paper.paper_id,
                     payload={
-                        "pdf_path": reusable_paper.raw_pdf_path or str(pdf_path),
+                        "pdf_path": reusable_pdf_path,
                     },
                 )
                 task_state = await self._submit_task(queue_task)

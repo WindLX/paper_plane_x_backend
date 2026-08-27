@@ -441,6 +441,69 @@ class TestDataProcessOrchestrator:
         count_row = db.fetchone("SELECT COUNT(*) AS count FROM papers")
         assert count_row is not None
         assert count_row["count"] == 1
+        assert list(tmp_path.glob("*.pdf")) == []
+
+    @pytest.mark.asyncio
+    async def test_start_adopts_upload_when_completed_paper_has_no_raw_path(
+        self,
+        orchestrator: DataProcessOrchestrator,
+        db,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        project_id = _insert_project(db)
+        now = datetime.now()
+        pdf_bytes = b"%PDF-1.4 completed-without-raw-path"
+        pdf_hash = sha256(pdf_bytes).hexdigest()
+
+        _insert_linked_paper(
+            db,
+            project_id,
+            {
+                "paper_id": "paper-completed-no-path",
+                "title": "Existing",
+                "authors": json.dumps([], ensure_ascii=False),
+                "md_content": "# parsed",
+                "raw_pdf_path": None,
+                "raw_pdf_sha256": pdf_hash,
+                "images_paths": json.dumps([], ensure_ascii=False),
+                "extraction_status": "COMPLETED",
+                "extraction_fact_check_status": "PASSED",
+                "analysis_fact_check_status": "PASSED",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+        async def fake_save_upload_file(self, upload_file, paper_id_arg: str) -> Path:
+            path = tmp_path / "incoming" / paper_id_arg / "original.pdf"
+            path.parent.mkdir(parents=True)
+            path.write_bytes(pdf_bytes)
+            return path
+
+        monkeypatch.setattr(
+            DataProcessOrchestrator, "_save_upload_file", fake_save_upload_file
+        )
+        monkeypatch.setattr(
+            "paper_plane_x_backend.services.orchestrators.data_process.get_pdf_parser_save_dir",
+            lambda settings, paper_id: tmp_path / "canonical" / paper_id,
+        )
+
+        task_state, paper_id = await orchestrator.start(
+            upload_file=UploadFile(filename="same.pdf", file=io.BytesIO(pdf_bytes)),
+            metadata={},
+        )
+
+        expected_path = (
+            tmp_path / "canonical" / "paper-completed-no-path" / "original.pdf"
+        )
+        assert paper_id == "paper-completed-no-path"
+        assert task_state.status == DataProcessTaskStatus.COMPLETED
+        assert task_state.payload["pdf_path"] == str(expected_path)
+        assert expected_path.read_bytes() == pdf_bytes
+        updated = orchestrator.paper_repo.get(paper_id)
+        assert updated is not None
+        assert updated.raw_pdf_path == str(expected_path)
 
     @pytest.mark.asyncio
     async def test_start_reuse_processing_paper_returns_conflict(
@@ -500,6 +563,7 @@ class TestDataProcessOrchestrator:
         count_row = db.fetchone("SELECT COUNT(*) AS count FROM papers")
         assert count_row is not None
         assert count_row["count"] == 1
+        assert list(tmp_path.glob("*.pdf")) == []
 
     @pytest.mark.asyncio
     async def test_start_reuses_failed_paper_and_enqueue_retry(
@@ -567,6 +631,78 @@ class TestDataProcessOrchestrator:
         count_row = db.fetchone("SELECT COUNT(*) AS count FROM papers")
         assert count_row is not None
         assert count_row["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_start_adopts_upload_when_failed_paper_has_no_raw_path(
+        self,
+        orchestrator: DataProcessOrchestrator,
+        db,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        project_id = _insert_project(db)
+        now = datetime.now()
+        pdf_bytes = b"%PDF-1.4 failed-without-raw-path"
+        pdf_hash = sha256(pdf_bytes).hexdigest()
+
+        _insert_linked_paper(
+            db,
+            project_id,
+            {
+                "paper_id": "paper-failed-no-path",
+                "title": "Existing",
+                "authors": json.dumps([], ensure_ascii=False),
+                "md_content": "",
+                "raw_pdf_path": None,
+                "raw_pdf_sha256": pdf_hash,
+                "images_paths": json.dumps([], ensure_ascii=False),
+                "extraction_status": "FAILED",
+                "extraction_fact_check_status": "FAILED",
+                "analysis_fact_check_status": "FAILED",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+        async def fake_save_upload_file(self, upload_file, paper_id_arg: str) -> Path:
+            path = tmp_path / "incoming" / paper_id_arg / "original.pdf"
+            path.parent.mkdir(parents=True)
+            path.write_bytes(pdf_bytes)
+            return path
+
+        captured: dict[str, object] = {}
+
+        async def fake_submit(self, task):
+            captured["pdf_path"] = task.payload["pdf_path"]
+            return DataProcessTaskState(
+                task_id="task-adopted-retry",
+                paper_id=task.paper_id,
+                payload=task.payload,
+                status=DataProcessTaskStatus.QUEUED,
+                created_at=datetime.now(),
+            )
+
+        monkeypatch.setattr(
+            DataProcessOrchestrator, "_save_upload_file", fake_save_upload_file
+        )
+        monkeypatch.setattr(DataProcessOrchestrator, "_submit_task", fake_submit)
+        monkeypatch.setattr(
+            "paper_plane_x_backend.services.orchestrators.data_process.get_pdf_parser_save_dir",
+            lambda settings, paper_id: tmp_path / "canonical" / paper_id,
+        )
+
+        task_state, paper_id = await orchestrator.start(
+            upload_file=UploadFile(filename="same.pdf", file=io.BytesIO(pdf_bytes)),
+            metadata={},
+        )
+
+        expected_path = tmp_path / "canonical" / paper_id / "original.pdf"
+        assert task_state.status == DataProcessTaskStatus.QUEUED
+        assert captured["pdf_path"] == str(expected_path)
+        assert expected_path.read_bytes() == pdf_bytes
+        updated = orchestrator.paper_repo.get(paper_id)
+        assert updated is not None
+        assert updated.raw_pdf_path == str(expected_path)
 
     def test_update_paper_success(self, orchestrator: DataProcessOrchestrator, db):
         project_id = _insert_project(db)
