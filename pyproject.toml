@@ -1,6 +1,6 @@
 [project]
 name = "paper-plane-x-backend"
-version = "0.1.10"
+version = "0.1.11"
 description = "AI Agent-powered research survey workflow system"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
