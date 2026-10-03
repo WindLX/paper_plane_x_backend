@@ -22,6 +22,8 @@
 7. [../tests/README.md](../tests/README.md)
    - 测试结构、运行方式、在哪里补测试。
 
+本地 MinerU 4.x 的接口迁移、模型与按需服务部署见 [mineru_v4.md](mineru_v4.md)。
+
 ## 文档分工
 
 ### `README.md`

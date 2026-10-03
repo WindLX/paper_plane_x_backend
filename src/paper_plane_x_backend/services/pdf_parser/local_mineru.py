@@ -1,15 +1,17 @@
-"""本地 MinerU 解析器实现."""
+"""MinerU 4.x V1 document parsing adapter."""
 
 import asyncio
-import base64
+import hashlib
+import io
 import logging
 import re
-from enum import Enum
+import zipfile
 from pathlib import Path
-from typing import Any, cast
+from typing import Literal, cast
 from urllib.parse import unquote, urlparse
 
 import httpx
+from pydantic import BaseModel, ValidationError
 
 from paper_plane_x_backend.services.pdf_parser.base import (
     PdfParserError,
@@ -19,209 +21,213 @@ from paper_plane_x_backend.services.pdf_parser.base import (
 logger = logging.getLogger(__name__)
 
 
-class Backend(str, Enum):
-    PIPELINE = "pipeline"
-    VLM_AUTO = "vlm-auto-engine"
-    VLM_HTTP = "vlm-http-client"
-    HYBRID_AUTO = "hybrid-auto-engine"
+class FileRef(BaseModel):
+    id: str
 
 
-class ParseMethod(str, Enum):
-    AUTO = "auto"
-    TXT = "txt"
-    OCR = "ocr"
+class UploadResponse(BaseModel):
+    id: str
+    status: Literal["pending", "completed", "cancelled", "expired"]
+    upload_url: str | None = None
+    upload_method: Literal["PUT"] | None = None
+    upload_headers: dict[str, str] | None = None
+    file: FileRef | None = None
+
+
+class OutputRef(BaseModel):
+    file_id: str
+
+
+class OutputFiles(BaseModel):
+    zip: OutputRef | None = None
+
+
+class JobError(BaseModel):
+    code: str
+    message: str
+
+
+class JobFile(BaseModel):
+    status: Literal["queued", "running", "completed", "failed"]
+    output_files: OutputFiles | None = None
+    error: JobError | None = None
+
+
+class JobResponse(BaseModel):
+    job_id: str
+    status: Literal["queued", "running", "completed", "partial", "failed", "canceled"]
+    files: list[JobFile]
 
 
 class LocalMinerUParser:
-    """本地部署的 MinerU 解析器.
+    """Upload a PDF, await a V1 parse job, and download Markdown and images.
 
-    兼容原有 `MinerUClient` 行为，直接调用本地 ``POST /file_parse`` 接口。
+    ``output_dir`` belongs to PPX; paths on this host are never sent to MinerU.
+    Standard is the server's document-quality tier, independent of its VLM engine.
     """
 
-    def __init__(self, base_url: str, output_dir: str | Path = "./output"):
+    def __init__(self, base_url: str, output_dir: str | Path = "./output") -> None:
         self.base_url = base_url.rstrip("/")
-        self.parse_endpoint = f"{self.base_url}/file_parse"
         self.output_dir = Path(output_dir)
 
     async def parse_pdf(
-        self,
-        file_path: Path,
-        output_md_name: str,
-        save_dir: Path,
-        output_dir: Path | None = None,
-        lang_list: list[str] = ["ch"],
-        backend: Backend = Backend.HYBRID_AUTO,
-        parse_method: ParseMethod = ParseMethod.AUTO,
-        formula_enable: bool = True,
-        table_enable: bool = True,
-        server_url: str | None = None,
-        return_md: bool = True,
-        return_middle_json: bool = False,
-        return_model_output: bool = False,
-        return_content_list: bool = False,
-        return_images: bool = True,
-        response_format_zip: bool = False,
-        start_page_id: int = 0,
-        end_page_id: int = 99999,
+        self, file_path: Path, output_md_name: str, save_dir: Path
     ) -> PdfParseResult:
-        """调用本地 MinerU 解析 PDF."""
-        if not file_path.exists():
-            logger.warning(
-                "event=local_mineru.parse_file_not_found file_path=%s", file_path
-            )
+        if not file_path.is_file():
             raise PdfParserError(f"File not found: {file_path}")
-
-        effective_output_dir = output_dir or self.output_dir
-
-        payload: dict[str, Any] = {
-            "output_dir": str(effective_output_dir),
-            "backend": backend.value,
-            "parse_method": parse_method.value,
-            "formula_enable": str(formula_enable).lower(),
-            "table_enable": str(table_enable).lower(),
-            "return_md": str(return_md).lower(),
-            "return_middle_json": str(return_middle_json).lower(),
-            "return_model_output": str(return_model_output).lower(),
-            "return_content_list": str(return_content_list).lower(),
-            "return_images": str(return_images).lower(),
-            "response_format_zip": str(response_format_zip).lower(),
-            "start_page_id": str(start_page_id),
-            "end_page_id": str(end_page_id),
-        }
-
-        if server_url:
-            payload["server_url"] = server_url
-
         file_bytes = await asyncio.to_thread(file_path.read_bytes)
-        files = {"files": (file_path.name, file_bytes, "application/pdf")}
-        payload["lang_list"] = lang_list
-        logger.info(
-            "event=local_mineru.parse_started endpoint=%s file=%s backend=%s "
-            "parse_method=%s lang_list=%s",
-            self.parse_endpoint,
-            file_path,
-            backend.value,
-            parse_method.value,
-            lang_list,
-        )
-
+        digest = hashlib.sha256(file_bytes).hexdigest()
         try:
-            async with httpx.AsyncClient(timeout=300.0) as client:
+            # Includes cold startup and queued/in-flight work. Polling alone must
+            # not allow an unavailable or stuck service to run without a deadline.
+            async with (
+                asyncio.timeout(1800),
+                httpx.AsyncClient(
+                    timeout=httpx.Timeout(600, connect=15), follow_redirects=True
+                ) as client,
+            ):
                 response = await client.post(
-                    self.parse_endpoint,
-                    data=payload,
-                    files=files,
+                    f"{self.base_url}/v1/uploads",
+                    json={
+                        "filename": file_path.name,
+                        "bytes": len(file_bytes),
+                        "mime_type": "application/pdf",
+                        "purpose": "parse",
+                        "sha256sum": digest,
+                    },
                 )
-
-                if response.status_code != 200:
-                    logger.error(
-                        "event=local_mineru.parse_http_error status=%s file=%s",
-                        response.status_code,
-                        file_path,
+                response.raise_for_status()
+                upload = UploadResponse.model_validate(response.json())
+                if upload.status == "pending":
+                    if not upload.upload_url or upload.upload_method != "PUT":
+                        raise PdfParserError("MinerU returned an invalid upload target")
+                    upload_url = httpx.URL(self.base_url + "/").join(upload.upload_url)
+                    base = httpx.URL(self.base_url)
+                    if (upload_url.scheme, upload_url.host, upload_url.port) != (
+                        base.scheme,
+                        base.host,
+                        base.port,
+                    ):
+                        raise PdfParserError(
+                            "Local MinerU returned a different-origin upload target"
+                        )
+                    response = await client.put(
+                        upload_url, content=file_bytes, headers=upload.upload_headers
                     )
+                    response.raise_for_status()
+                    response = await client.post(
+                        f"{self.base_url}/v1/uploads/{upload.id}/complete",
+                        json={"sha256sum": digest},
+                    )
+                    response.raise_for_status()
+                    upload = UploadResponse.model_validate(response.json())
+                if upload.status != "completed" or upload.file is None:
+                    raise PdfParserError("MinerU upload did not complete")
+                response = await client.post(
+                    f"{self.base_url}/v1/parse/jobs",
+                    json={
+                        "files": [
+                            {
+                                "source": {
+                                    "type": "file_id",
+                                    "file_id": upload.file.id,
+                                },
+                                "page_range": "all",
+                            }
+                        ],
+                        "tier": "standard",
+                        "ocr_mode": "auto",
+                        "output_formats": ["zip"],
+                    },
+                )
+                response.raise_for_status()
+                job = JobResponse.model_validate(response.json())
+                logger.info("event=local_mineru.job_submitted job_id=%s", job.job_id)
+                while job.status in ("queued", "running"):
+                    await asyncio.sleep(2)
+                    response = await client.get(
+                        f"{self.base_url}/v1/parse/jobs/{job.job_id}"
+                    )
+                    response.raise_for_status()
+                    job = JobResponse.model_validate(response.json())
+                if (
+                    job.status != "completed"
+                    or len(job.files) != 1
+                    or job.files[0].status != "completed"
+                ):
+                    errors = "; ".join(f.error.code for f in job.files if f.error)
                     raise PdfParserError(
-                        f"HTTP Error {response.status_code}: {response.text}"
+                        f"MinerU job {job.job_id} ended as {job.status}: {errors}"
                     )
-
-                logger.info(
-                    "event=local_mineru.parse_response_received status=%s file=%s",
-                    response.status_code,
-                    file_path,
+                outputs = job.files[0].output_files
+                if outputs is None or outputs.zip is None:
+                    raise PdfParserError(
+                        f"MinerU job {job.job_id} is missing the artifact archive"
+                    )
+                response = await client.get(
+                    f"{self.base_url}/v1/files/{outputs.zip.file_id}/content"
                 )
-                return self._parse_response(response, output_md_name, save_dir)
-
-        except httpx.HTTPStatusError as e:
-            logger.exception(
-                "event=local_mineru.parse_http_status_exception file=%s", file_path
-            )
+                response.raise_for_status()
+                return await asyncio.to_thread(
+                    self._save_artifacts,
+                    response.content,
+                    output_md_name,
+                    save_dir,
+                )
+        except TimeoutError as exc:
             raise PdfParserError(
-                f"HTTP Error {e.response.status_code}: {e.response.text}"
-            ) from e
-        except Exception as e:
-            logger.exception("event=local_mineru.parse_failed file=%s", file_path)
-            raise PdfParserError(f"Connection failed: {str(e)}") from e
+                "MinerU parsing exceeded 1800 seconds; the remote job may still be running"
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            raise PdfParserError(
+                f"MinerU HTTP {exc.response.status_code} at {exc.request.url.path}"
+            ) from exc
+        except (
+            httpx.RequestError,
+            ValidationError,
+            ValueError,
+            OSError,
+            zipfile.BadZipFile,
+        ) as exc:
+            raise PdfParserError(
+                f"MinerU transport or artifact failure: {type(exc).__name__}"
+            ) from exc
 
-    def _parse_response(
-        self,
-        response: httpx.Response,
-        output_md_name: str,
-        save_dir: Path,
+    def _save_artifacts(
+        self, archive_bytes: bytes, output_md_name: str, save_dir: Path
     ) -> PdfParseResult:
-        data = cast(dict[str, Any], response.json())
-
-        results = data.get("results")
-        if not results or not isinstance(results, dict):
-            logger.error("event=local_mineru.response_invalid_results")
-            raise PdfParserError(
-                "Invalid response format: 'results' field missing or invalid"
-            )
-
-        results_dict = cast(dict[str, Any], results)
-
-        try:
-            first_file_result = next(iter(results_dict.values()))
-        except StopIteration:
-            logger.error("event=local_mineru.response_empty_results")
-            raise PdfParserError("Invalid response format: 'results' is empty")
-
-        if not isinstance(first_file_result, dict):
-            logger.error("event=local_mineru.response_invalid_first_result")
-            raise PdfParserError("Invalid result format: expected a dictionary")
-
-        first_result_dict = cast(dict[str, Any], first_file_result)
-        md_content = first_result_dict.get("md_content")
-
-        if not md_content or not isinstance(md_content, str):
-            logger.error("event=local_mineru.response_missing_md_content")
-            raise PdfParserError(
-                "'md_content' not found or invalid in result. Keys: "
-                f"{list(first_result_dict.keys())}"
-            )
-
-        image_save_dir = save_dir / "images"
-        image_save_dir.mkdir(parents=True, exist_ok=True)
-
-        with open(save_dir / output_md_name, "w", encoding="utf-8") as md_file:
-            md_file.write(md_content)
-        logger.info(
-            "event=local_mineru.markdown_saved path=%s", save_dir / output_md_name
+        if Path(output_md_name).name != output_md_name:
+            raise PdfParserError("Markdown filename must not include a directory")
+        save_dir.mkdir(parents=True, exist_ok=True)
+        image_dir = save_dir / "images"
+        image_dir.mkdir(exist_ok=True)
+        # Read only referenced image members. Never extract archive paths supplied
+        # by the remote service into the local filesystem.
+        with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+            # V1's standalone Markdown embeds base64 images. The self-contained
+            # ZIP's Markdown uses paths matching the packaged image members.
+            try:
+                md_content = archive.read("markdown.md").decode("utf-8")
+            except KeyError as exc:
+                raise PdfParserError("MinerU archive is missing markdown.md") from exc
+            referenced = self._extract_referenced_image_names(md_content)
+            for name in referenced:
+                matches = [
+                    item
+                    for item in archive.infolist()
+                    if not item.is_dir() and Path(item.filename).name == name
+                ]
+                if len(matches) != 1:
+                    raise PdfParserError(
+                        f"MinerU archive has missing or ambiguous image: {name}"
+                    )
+                (image_dir / name).write_bytes(archive.read(matches[0]))
+        (save_dir / output_md_name).write_text(md_content, encoding="utf-8")
+        self._prune_unreferenced_images(md_content, image_dir)
+        return PdfParseResult(
+            md_content=md_content,
+            image_paths=self._get_image_paths(md_content, image_dir),
         )
-
-        images_info_raw = first_result_dict.get("images", {})
-        images_info: dict[str, str] = {}
-        if isinstance(images_info_raw, dict):
-            for key, value in cast(dict[Any, Any], images_info_raw).items():
-                if isinstance(key, str) and isinstance(value, str):
-                    images_info[key] = value
-
-        decoded_image_count = 0
-        for img_name, img_data in images_info.items():
-            if not img_data.startswith("data:image"):
-                continue
-            base64_data = img_data.split(",", 1)[1]
-            img_bytes = base64.b64decode(base64_data)
-
-            img_path = image_save_dir / img_name
-            with open(img_path, "wb") as img_file:
-                img_file.write(img_bytes)
-            decoded_image_count += 1
-
-        logger.info(
-            "event=local_mineru.images_decoded count=%s image_dir=%s",
-            decoded_image_count,
-            image_save_dir,
-        )
-
-        self._prune_unreferenced_images(md_content, image_save_dir)
-        image_paths = self._get_image_paths(md_content, image_save_dir)
-        logger.info(
-            "event=local_mineru.parse_artifacts_ready "
-            "referenced_image_count=%s save_dir=%s",
-            len(image_paths),
-            save_dir,
-        )
-
-        return PdfParseResult(md_content=md_content, image_paths=image_paths)
 
     def _get_image_paths(self, md_content: str, image_dir: Path) -> list[Path]:
         if not image_dir.exists():

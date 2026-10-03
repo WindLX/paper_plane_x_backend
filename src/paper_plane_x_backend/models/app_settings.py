@@ -150,10 +150,11 @@ class LocalPdfParserConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     base_url: str = Field(
-        default="http://localhost:7860", description="MinerU API 地址"
+        default="http://localhost:7860",
+        description="MinerU 4.x V1 API 基础地址（不含 /v1）",
     )
     output_dir: Path = Field(
-        default=Path("./data/papers"), description="MinerU 服务端输出目录参数"
+        default=Path("./data/papers"), description="PPX 本地解析产物目录"
     )
 
 

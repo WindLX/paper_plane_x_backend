@@ -1,0 +1,15 @@
+[Unit]
+Description=MinerU on-demand HTTP gateway and idle shutdown
+After=network-online.target
+
+[Service]
+WorkingDirectory=/root/hpc_setup/docker/mineru
+ExecStart=/root/hpc_setup/docker/mineru/MinerU-4.0.10/.venv/bin/python /root/hpc_setup/docker/mineru/gateway.py
+Environment=MINERU_IDLE_SECONDS=3600
+Environment=MINERU_START_TIMEOUT=600
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

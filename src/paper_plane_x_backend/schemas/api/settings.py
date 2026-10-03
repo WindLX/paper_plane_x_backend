@@ -146,8 +146,8 @@ class LocalPdfParserConfigResponse(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    base_url: str = Field(..., description="MinerU API 地址")
-    output_dir: str = Field(..., description="MinerU 服务端输出目录参数")
+    base_url: str = Field(..., description="MinerU 4.x V1 API 基础地址（不含 /v1）")
+    output_dir: str = Field(..., description="PPX 本地解析产物目录")
 
 
 class LocalPdfParserConfigUpdateRequest(BaseModel):
@@ -156,10 +156,10 @@ class LocalPdfParserConfigUpdateRequest(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
     base_url: str | None = Field(
-        default=None, min_length=1, description="MinerU API 地址"
+        default=None, min_length=1, description="MinerU 4.x V1 API 基础地址（不含 /v1）"
     )
     output_dir: str | None = Field(
-        default=None, min_length=1, description="MinerU 服务端输出目录参数"
+        default=None, min_length=1, description="PPX 本地解析产物目录"
     )
 
 

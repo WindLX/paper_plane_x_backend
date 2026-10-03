@@ -285,3 +285,7 @@ uv build
 ## License
 
 Paper Plane X Backend 使用 [GNU Affero General Public License v3.0 or later](LICENSE)。分发修改版本或通过网络向用户提供修改后的服务时，请遵守 AGPL-3.0-or-later。
+
+## MinerU 4 migration / MinerU 4 迁移
+
+Local parsing requires MinerU 4.x V1. See [migration and on-demand deployment](docs/mineru_v4.md) for the request contract, cold startup, and idle shutdown. 本地解析要求 MinerU 4.x V1；配置与按需部署说明见上述文档。

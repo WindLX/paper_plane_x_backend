@@ -1,0 +1,16 @@
+[Unit]
+Description=MinerU 4 WebUI (on demand)
+After=network-online.target mineru-api.service
+Requires=mineru-api.service
+
+[Service]
+WorkingDirectory=/root/hpc_setup/docker/mineru
+EnvironmentFile=/root/hpc_setup/docker/mineru/mineru4.env
+ExecStart=/root/hpc_setup/docker/mineru/MinerU-4.0.10/.venv/bin/mineru-kit webui --server-name 127.0.0.1 --server-port 17861 --api-url http://127.0.0.1:17860
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=MinerU 4 V1 parsing API (on demand)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/root/hpc_setup/docker/mineru
+EnvironmentFile=/root/hpc_setup/docker/mineru/mineru4.env
+ExecStart=/root/hpc_setup/docker/mineru/MinerU-4.0.10/.venv/bin/mineru-kit api-server --host 127.0.0.1 --port 17860 --tier standard --concurrency 2 --upload-dir /home/windlx/mineru4-runtime/uploads
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=180
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target
