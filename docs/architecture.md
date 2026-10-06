@@ -32,6 +32,8 @@ Paper Plane X Backend 为科研项目提供稳定的文献工作流：
 - 托管已构建的 console 静态资源。
 - 在 lifespan 中初始化目录、数据库、app settings、worker pool。
 
+任务取消和退出的状态约束：`CANCELING` 仅表示清理尚未结束；取消完成后任务为 `CANCELED`，文献为可重试的 `FAILED`。任务存储持久化取消/失败状态时，仅释放没有其他活跃任务的文献。worker 关闭后不继续消费积压队列，未执行任务保留并在重启时恢复；重启不会恢复用户已经请求取消的任务。历史状态修复采用显式备份命令，见 [退出、取消与旧状态修复](workflow_quickstart.md#退出取消与旧状态修复)。
+
 ### 2.2 API 层
 
 目录：

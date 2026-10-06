@@ -253,7 +253,7 @@ async def test_process_cancellation_is_propagated(db) -> None:
 
     latest = repo.get(paper.paper_id)
     assert latest is not None
-    assert latest.extraction_status == ExtractionStatus.PROCESSING
+    assert latest.extraction_status == ExtractionStatus.FAILED
 
 
 @pytest.mark.asyncio

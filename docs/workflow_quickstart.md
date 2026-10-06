@@ -55,6 +55,25 @@ cd paper_plane_x_backend
 uv run app
 ```
 
+### 退出、取消与旧状态修复
+
+`Ctrl-C` 触发退出后，worker 停止领取新任务，取消当前任务；仍在队列中的任务保留为 `QUEUED`，下次启动恢复。`api.graceful_shutdown_timeout`（默认 5 秒，可由 `PPX_API__GRACEFUL_SHUTDOWN_TIMEOUT` 覆盖）限制 Uvicorn 在进入应用关闭前等待 HTTP / WebSocket 请求结束的时间；`data_process.shutdown_timeout` 单独限制 worker 清理等待时间。worker 自身被取消时必须传播取消，避免继续领取任务。应用停止等待后，Python 事件循环仍需完成尚未结束的取消清理；该时限不能强制终止阻塞的同步调用或拒绝退出的第三方协程。
+
+取消运行中任务时先返回 `CANCELING`，清理完成后变为 `CANCELED`。文献使用现有 `FAILED` 状态表达处理被中断；取消排队任务也会释放文献的 `PENDING` 状态。已有 Markdown、图片和提取结果保留；无其他活跃任务时可删除文献，或通过 `/api/v1/papers/{paper_id}/reprocess`（Zotero 重试使用的接口）重新提交。服务重启时，`CANCELING` 任务完成取消，不会重新入队。
+
+旧版本可能留下“任务已取消/失败，但文献仍为 `PENDING` / `PROCESSING`”的记录。新版本不在启动时隐式批量修复这些历史记录。在 backend 目录显式运行：
+
+```bash
+# 只统计符合修复条件的文献
+uv run python scripts/repair_interrupted_papers.py
+# 创建 SQLite 一致性备份，然后将这些文献改为 FAILED
+uv run python scripts/repair_interrupted_papers.py --apply
+```
+
+默认使用当前配置的 `database_path`，可通过 `--database /absolute/path/to/app.db` 指定。修复仅处理有取消/失败记录、且没有 `QUEUED`、`RUNNING`、`CANCELING` 任务的文献，保留论文内容和任务历史；命令输出备份路径及修复数量，可重复运行。回滚时先停止后端，并通过 SQLite backup API 从该备份恢复数据库；不要覆盖正在运行的 SQLite 数据库或只替换其主文件而留下旧 WAL 文件。
+
+Exit and cancellation: workers stop taking queued work during shutdown; queued tasks resume after restart. Once cancellation finishes, interrupted papers become `FAILED` and can be deleted or reprocessed. Existing parsed content and results remain. To repair legacy records explicitly, run the command above without `--apply` to preview the count, then with `--apply` to create a consistent backup and repair papers with no active tasks. Stop the backend before restoring a backup.
+
 ## 3. 首次配置 LLM Provider
 
 上传和处理论文需要 LLM。Provider 不在 `.env` 中配置，而是通过 Settings API 或前端 Settings 页面管理。

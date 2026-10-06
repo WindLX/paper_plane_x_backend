@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import TypeAlias, cast
 
 from paper_plane_x_backend.models import (
+    DataProcessTaskStatus,
     ExtractionStatus,
     FactCheckStatus,
     Paper,
@@ -513,6 +514,46 @@ class PaperRepository:
         if not row:
             return None
         return Paper.from_db_row(row)
+
+    def release_interrupted_processing(
+        self, paper_id: str | None = None, *, dry_run: bool = False
+    ) -> int:
+        """释放已取消/失败且没有活跃任务的文献；不清除已有解析或提取结果。"""
+        where_sql = """
+            WHERE extraction_status IN (?, ?)
+              AND (? IS NULL OR paper_id = ?)
+              AND EXISTS (
+                SELECT 1 FROM data_process_tasks t
+                WHERE t.paper_id = papers.paper_id AND t.status IN (?, ?)
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM data_process_tasks t
+                WHERE t.paper_id = papers.paper_id AND t.status IN (?, ?, ?)
+              )
+        """
+        params = (
+            ExtractionStatus.PENDING.value,
+            ExtractionStatus.PROCESSING.value,
+            paper_id,
+            paper_id,
+            DataProcessTaskStatus.CANCELED.value,
+            DataProcessTaskStatus.FAILED.value,
+            DataProcessTaskStatus.QUEUED.value,
+            DataProcessTaskStatus.RUNNING.value,
+            DataProcessTaskStatus.CANCELING.value,
+        )
+        with self.db.get_connection() as conn:
+            if dry_run:
+                row = conn.execute(
+                    f"SELECT COUNT(*) FROM papers {where_sql}", params
+                ).fetchone()
+                return int(row[0])
+            cursor = conn.execute(
+                f"UPDATE papers SET extraction_status = ?, updated_at = ? {where_sql}",
+                (ExtractionStatus.FAILED.value, datetime.now(), *params),
+            )
+            conn.commit()
+            return cursor.rowcount
 
     def list_all(
         self,

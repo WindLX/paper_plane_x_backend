@@ -2,7 +2,20 @@
 
 from datetime import datetime
 
-from paper_plane_x_backend.models import ExtractionStatus, FactCheckStatus, Project
+import pytest
+
+from paper_plane_x_backend.models import (
+    DataProcessTaskStatus,
+    ExtractionStatus,
+    FactCheckStatus,
+    Project,
+)
+from paper_plane_x_backend.services.data_process_tasks.models import (
+    DataProcessTaskState,
+)
+from paper_plane_x_backend.services.data_process_tasks.stores import (
+    DataProcessTaskStateStore,
+)
 from paper_plane_x_backend.services.paper.repository import (
     PaperQueryRepository,
     PaperRepository,
@@ -12,6 +25,71 @@ from paper_plane_x_backend.services.paper.repository import (
 
 class TestPaperRepository:
     """PaperRepository 测试类。"""
+
+    @pytest.mark.parametrize("active_status", list(DataProcessTaskStatus))
+    def test_release_interrupted_processing_preserves_active_tasks(
+        self, db, active_status: DataProcessTaskStatus
+    ) -> None:
+        repo = PaperRepository(db)
+        paper = repo.create(extraction_status=ExtractionStatus.PROCESSING)
+        store = DataProcessTaskStateStore(db)
+        store.upsert(
+            DataProcessTaskState(
+                task_id="other",
+                paper_id=paper.paper_id,
+                payload={},
+                status=active_status,
+                created_at=datetime.now(),
+            )
+        )
+        store.upsert(
+            DataProcessTaskState(
+                task_id="canceled",
+                paper_id=paper.paper_id,
+                payload={},
+                status=DataProcessTaskStatus.CANCELED,
+                created_at=datetime.now(),
+            )
+        )
+        latest = repo.get(paper.paper_id)
+        assert latest is not None
+        if active_status in {
+            DataProcessTaskStatus.QUEUED,
+            DataProcessTaskStatus.RUNNING,
+            DataProcessTaskStatus.CANCELING,
+        }:
+            assert latest.extraction_status == ExtractionStatus.PROCESSING
+        else:
+            assert latest.extraction_status == ExtractionStatus.FAILED
+
+    def test_explicit_repair_is_dry_run_capable_and_preserves_results(self, db) -> None:
+        repo = PaperRepository(db)
+        paper = repo.create(extraction_status=ExtractionStatus.PROCESSING)
+        repo.update(
+            paper.paper_id,
+            {"md_content": "# parsed", "quick_scan": '{"summary":"saved"}'},
+        )
+        db.insert(
+            "data_process_tasks",
+            {
+                "task_id": "legacy-canceled",
+                "paper_id": paper.paper_id,
+                "payload": "{}",
+                "status": "CANCELED",
+                "created_at": datetime.now(),
+            },
+        )
+        assert repo.release_interrupted_processing(dry_run=True) == 1
+        latest = repo.get(paper.paper_id)
+        assert latest is not None
+        assert latest.extraction_status == ExtractionStatus.PROCESSING
+        assert repo.release_interrupted_processing() == 1
+        assert repo.release_interrupted_processing() == 0
+        latest = repo.get(paper.paper_id)
+        assert latest is not None
+        assert latest.extraction_status == ExtractionStatus.FAILED
+        assert latest.md_content == "# parsed"
+        assert latest.quick_scan == {"summary": "saved"}
 
     def test_update_parse_result_serializes_images_paths(self, db) -> None:
         """验证解析结果更新时 images_paths 会被正确序列化并可反序列化读取。"""

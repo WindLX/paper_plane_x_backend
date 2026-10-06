@@ -57,6 +57,7 @@ class DataProcessTaskManager:
         self._task_max_seconds = max(0.1, task_max_seconds)
         self._task_states_view = TaskStateStoreView(self._state_store)
         self._on_status_change = on_status_change
+        self._stopping = False
 
     async def _notify_status_change(self, state: DataProcessTaskState) -> None:
         """如果注册了状态变更回调，则异步调用。"""
@@ -82,20 +83,17 @@ class DataProcessTaskManager:
         if not pending_tasks:
             return True
 
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(*pending_tasks, return_exceptions=True),
-                timeout=timeout,
-            )
-            return True
-        except asyncio.TimeoutError:
+        done, pending = await asyncio.wait(pending_tasks, timeout=timeout)
+        await asyncio.gather(*done, return_exceptions=True)
+        if pending:
             logger.warning(
                 "event=%s timeout_seconds=%.1f pending_count=%s",
                 event_name,
                 timeout,
-                len([task for task in pending_tasks if not task.done()]),
+                len(pending),
             )
             return False
+        return True
 
     @property
     def task_states(self) -> MutableMapping[str, DataProcessTaskState]:
@@ -107,6 +105,7 @@ class DataProcessTaskManager:
 
         self._running_jobs.clear()
         self._cancel_requests.clear()
+        self._stopping = False
         self._queue = asyncio.Queue()
         await self._recover_tasks_on_startup()
         self._workers = [
@@ -128,10 +127,13 @@ class DataProcessTaskManager:
         resumed_count = 0
 
         for state in states:
-            if state.status in {
-                DataProcessTaskStatus.RUNNING,
-                DataProcessTaskStatus.CANCELING,
-            }:
+            if state.status == DataProcessTaskStatus.CANCELING:
+                state.status = DataProcessTaskStatus.CANCELED
+                state.finished_at = datetime.now()
+                state.error = "Task canceled before server restart"
+                self._state_store.upsert(state)
+
+            if state.status == DataProcessTaskStatus.RUNNING:
                 state.status = DataProcessTaskStatus.QUEUED
                 state.started_at = None
                 state.finished_at = None
@@ -162,42 +164,17 @@ class DataProcessTaskManager:
         if self._queue is None:
             return
 
-        # 先请求取消正在执行的任务，避免 worker 长时间阻塞在外部调用（例如 LLM 请求）。
+        # 停止取新任务；未执行的队列记录保留为 QUEUED，重启后恢复。
+        self._stopping = True
         running_jobs = list(self._running_jobs.values())
-        for job in running_jobs:
-            if not job.done():
-                job.cancel()
-
-        await self._wait_tasks_with_timeout(
-            running_jobs,
-            timeout=self._shutdown_timeout,
-            event_name="task_manager.running_jobs_cancel_timeout",
-        )
-
-        queue = self._queue
         workers = list(self._workers)
-
-        for _ in workers:
-            await queue.put(None)
-
-        workers_stopped = await self._wait_tasks_with_timeout(
-            workers,
+        for worker in workers:
+            worker.cancel()
+        await self._wait_tasks_with_timeout(
+            [*workers, *running_jobs],
             timeout=self._shutdown_timeout,
             event_name="task_manager.workers_stop_timeout",
         )
-        if not workers_stopped:
-            logger.warning(
-                "event=task_manager.workers_force_stop timeout_seconds=%.1f",
-                self._shutdown_timeout,
-            )
-            for worker in workers:
-                if not worker.done():
-                    worker.cancel()
-            await self._wait_tasks_with_timeout(
-                workers,
-                timeout=self._shutdown_timeout,
-                event_name="task_manager.workers_force_stop_timeout",
-            )
 
         self._workers = []
         self._queue = None
@@ -206,7 +183,7 @@ class DataProcessTaskManager:
         logger.info("event=task_manager.workers_stopped")
 
     async def submit_task(self, task: DataProcessQueueTask) -> DataProcessTaskState:
-        if self._queue is None:
+        if self._queue is None or self._stopping:
             logger.error(
                 "event=task_manager.submit_rejected_not_started task_id=%s paper_id=%s",
                 task.task_id,
@@ -308,19 +285,20 @@ class DataProcessTaskManager:
         return state
 
     async def _worker_loop(self, worker_id: int) -> None:
-        if self._queue is None:
+        queue = self._queue
+        if queue is None:
             return
 
-        while True:
-            task = await self._queue.get()
+        while not self._stopping:
+            task = await queue.get()
             if task is None:
-                self._queue.task_done()
+                queue.task_done()
                 logger.info("event=task_manager.worker_stopped worker_id=%s", worker_id)
                 break
 
             state = self._state_store.get(task.task_id)
             if state is None:
-                self._queue.task_done()
+                queue.task_done()
                 continue
 
             if task.task_id in self._cancel_requests:
@@ -334,7 +312,7 @@ class DataProcessTaskManager:
                     task.task_id,
                 )
                 await self._notify_status_change(state)
-                self._queue.task_done()
+                queue.task_done()
                 continue
 
             state.status = DataProcessTaskStatus.RUNNING
@@ -346,11 +324,12 @@ class DataProcessTaskManager:
                 task.task_id,
                 task.paper_id,
             )
-            await self._notify_status_change(state)
-
+            job = asyncio.create_task(self._run_data_process_task(task))
+            self._running_jobs[task.task_id] = job
             try:
-                job = asyncio.create_task(self._run_data_process_task(task))
-                self._running_jobs[task.task_id] = job
+                await self._notify_status_change(state)
+                if task.task_id in self._cancel_requests:
+                    job.cancel()
                 result = await asyncio.wait_for(job, timeout=self._task_max_seconds)
                 self._sync_trace_ids_from_result(state, result)
                 state.status = DataProcessTaskStatus.COMPLETED
@@ -373,14 +352,23 @@ class DataProcessTaskManager:
                     self._task_max_seconds,
                 )
             except asyncio.CancelledError:
+                job.cancel()
+                await asyncio.gather(job, return_exceptions=True)
                 state.status = DataProcessTaskStatus.CANCELED
-                state.error = "Task canceled by user"
+                state.error = (
+                    "Task canceled during server shutdown"
+                    if self._stopping
+                    else "Task canceled by user"
+                )
                 state.finished_at = datetime.now()
                 logger.info(
                     "event=task_manager.task_canceled_running worker_id=%s task_id=%s",
                     worker_id,
                     task.task_id,
                 )
+                worker = asyncio.current_task()
+                if self._stopping or (worker is not None and worker.cancelling()):
+                    raise
             except Exception as exc:
                 if isinstance(exc, PaperProcessorError):
                     state.extraction_trace_ids = list(exc.extraction_trace_ids)
@@ -415,7 +403,7 @@ class DataProcessTaskManager:
                             task.cleanup_path,
                             exc,
                         )
-                self._queue.task_done()
+                queue.task_done()
 
     @staticmethod
     def _sync_trace_ids_from_result(

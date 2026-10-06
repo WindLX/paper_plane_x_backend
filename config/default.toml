@@ -10,6 +10,7 @@ prompts_dir = "./prompts"
 host = "127.0.0.1"
 port = 8000
 reload = false
+graceful_shutdown_timeout = 5
 cors_allow_origins = ["*"]
 # ssl_certfile = "./certs/cert.pem"
 # ssl_keyfile = "./certs/key.pem"

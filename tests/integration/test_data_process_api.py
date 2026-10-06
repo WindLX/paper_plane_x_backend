@@ -59,6 +59,57 @@ def _insert_linked_paper(
 class TestDataProcessAPI:
     """Data-process API 测试类。"""
 
+    @pytest.mark.parametrize("action", ["delete", "reprocess"])
+    @pytest.mark.parametrize("paper_status", ["PENDING", "PROCESSING"])
+    def test_canceled_paper_can_be_deleted_or_reprocessed(
+        self,
+        client: TestClient,
+        db: Database,
+        monkeypatch: pytest.MonkeyPatch,
+        action: str,
+        paper_status: str,
+    ) -> None:
+        from paper_plane_x_backend.models import ExtractionStatus
+        from paper_plane_x_backend.services.paper.repository import PaperRepository
+
+        repo = PaperRepository(db)
+        paper = repo.create(extraction_status=ExtractionStatus(paper_status))
+        manager = get_data_process_task_manager()
+        task = DataProcessQueueTask(
+            task_id="queued-cancel", paper_id=paper.paper_id, payload={}
+        )
+        manager.task_states[task.task_id] = DataProcessTaskState(
+            task_id=task.task_id,
+            paper_id=paper.paper_id,
+            payload={},
+            status=DataProcessTaskStatus.QUEUED,
+            created_at=datetime.now(),
+        )
+        response = client.post(f"/api/v1/data-process/tasks/{task.task_id}/cancel")
+        assert response.status_code == 200
+        assert response.json()["status"] == "CANCELED"
+        detail = client.get(f"/api/v1/papers/{paper.paper_id}")
+        assert detail.status_code == 200
+        assert detail.json()["extraction_status"] == "FAILED"
+        if action == "delete":
+            response = client.delete(f"/api/v1/papers/{paper.paper_id}")
+            assert response.status_code == 200
+            assert repo.get(paper.paper_id) is None
+        else:
+
+            async def submit(
+                self: DataProcessOrchestrator, task: DataProcessQueueTask
+            ) -> DataProcessTaskState:
+                return _stub_enqueue_state(task)
+
+            monkeypatch.setattr(DataProcessOrchestrator, "_submit_task", submit)
+            response = client.post(
+                f"/api/v1/papers/{paper.paper_id}/reprocess",
+                files={"pdf_file": ("retry.pdf", b"%PDF-1.4 retry", "application/pdf")},
+            )
+            assert response.status_code == 202
+            assert response.json()["paper_id"] == paper.paper_id
+
     def test_start_data_process_queues_task(
         self,
         client: TestClient,

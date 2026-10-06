@@ -30,6 +30,130 @@ def _new_manager(db: Database) -> DataProcessTaskManager:
     )
 
 
+async def test_stop_does_not_start_backlog(
+    db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _new_manager(db)
+    started = asyncio.Event()
+    executed: list[str] = []
+
+    async def run(self: DataProcessTaskManager, task: DataProcessQueueTask) -> None:
+        executed.append(task.task_id)
+        if task.task_id == "running":
+            started.set()
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(DataProcessTaskManager, "_run_data_process_task", run)
+    await manager.start()
+    await manager.submit_task(
+        DataProcessQueueTask(task_id="running", paper_id="paper", payload={})
+    )
+    await started.wait()
+    for index in range(20):
+        await manager.submit_task(
+            DataProcessQueueTask(
+                task_id=f"queued-{index}", paper_id="paper", payload={}
+            )
+        )
+    await manager.stop()
+    assert executed == ["running"]
+    assert all(
+        manager.get_task(f"queued-{index}").status == DataProcessTaskStatus.QUEUED
+        for index in range(20)
+    )
+
+
+async def test_wait_timeout_does_not_wait_for_cancellation_cleanup(
+    db: Database,
+) -> None:
+    manager = _new_manager(db)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_cancel() -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            while not release.is_set():
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    continue
+            raise
+
+    job = asyncio.create_task(slow_cancel())
+    await started.wait()
+    job.cancel()
+    timer = asyncio.get_running_loop().call_later(0.3, release.set)
+    begin = time.monotonic()
+    try:
+        stopped = await manager._wait_tasks_with_timeout(
+            [job], timeout=0.05, event_name="test.timeout"
+        )
+        assert not stopped
+        assert time.monotonic() - begin < 0.2
+    finally:
+        timer.cancel()
+        release.set()
+        await asyncio.gather(job, return_exceptions=True)
+
+
+async def test_start_finishes_canceling_tasks_without_resuming(
+    db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _new_manager(db)
+    state = DataProcessTaskState(
+        task_id="interrupted-cancel",
+        paper_id="paper",
+        payload={},
+        status=DataProcessTaskStatus.CANCELING,
+        created_at=datetime.now(),
+    )
+    manager.task_states[state.task_id] = state
+    executed: list[str] = []
+
+    async def run(self: DataProcessTaskManager, task: DataProcessQueueTask) -> None:
+        executed.append(task.task_id)
+
+    monkeypatch.setattr(DataProcessTaskManager, "_run_data_process_task", run)
+    await manager.start()
+    await asyncio.sleep(0)
+    await manager.stop()
+    latest = manager.get_task(state.task_id)
+    assert latest is not None
+    assert latest.status == DataProcessTaskStatus.CANCELED
+    assert latest.finished_at is not None
+    assert executed == []
+
+
+async def test_worker_cancellation_is_not_swallowed(
+    db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _new_manager(db)
+    started = asyncio.Event()
+
+    async def run(self: DataProcessTaskManager, task: DataProcessQueueTask) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(DataProcessTaskManager, "_run_data_process_task", run)
+    await manager.start()
+    await manager.submit_task(
+        DataProcessQueueTask(task_id="running", paper_id="paper", payload={})
+    )
+    await started.wait()
+    worker = manager._workers[0]
+    worker.cancel()
+    try:
+        done, pending = await asyncio.wait([worker], timeout=0.2)
+        assert not pending
+        assert worker in done
+        assert worker.cancelled()
+    finally:
+        await manager.stop()
+
+
 @pytest.mark.asyncio
 async def test_stop_cancels_running_job_quickly(
     db: Database,

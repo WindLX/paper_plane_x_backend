@@ -15,6 +15,7 @@ from paper_plane_x_backend.services.data_process_tasks.models import (
     DataProcessTaskState,
 )
 from paper_plane_x_backend.services.database import Database
+from paper_plane_x_backend.services.paper.repository import PaperRepository
 
 
 class DataProcessTaskStateStore:
@@ -83,6 +84,12 @@ class DataProcessTaskStateStore:
                 db_dict["analysis_fact_check_trace_ids"],
             ),
         )
+
+        if state.status in {
+            DataProcessTaskStatus.CANCELED,
+            DataProcessTaskStatus.FAILED,
+        }:
+            PaperRepository(self._db).release_interrupted_processing(state.paper_id)
 
     def get(self, task_id: str) -> DataProcessTaskState | None:
         row = self._db.fetchone(

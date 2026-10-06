@@ -139,6 +139,7 @@ class PaperProcessor:
             )
 
         except asyncio.CancelledError:
+            self.repo.update_status(paper_id=paper_id, status=ExtractionStatus.FAILED)
             logger.info("event=paper.processing_canceled paper_id=%s", paper_id)
             raise
         except Exception as e:

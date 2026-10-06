@@ -58,6 +58,11 @@ class APIConfig(BaseModel):
     host: str = Field(default="127.0.0.1", description="监听地址")
     port: int = Field(default=8000, description="监听端口")
     reload: bool = Field(default=False, description="是否启用 reload")
+    graceful_shutdown_timeout: int = Field(
+        default=5,
+        ge=0,
+        description="退出时等待 HTTP/WebSocket 请求结束的秒数 / HTTP/WebSocket graceful shutdown timeout in seconds",
+    )
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: ["*"],
         description="允许的 CORS origins",

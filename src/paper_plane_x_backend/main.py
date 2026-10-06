@@ -211,6 +211,7 @@ def run():
         reload=settings.api.reload,
         ssl_certfile=settings.api.ssl_certfile,
         ssl_keyfile=settings.api.ssl_keyfile,
+        timeout_graceful_shutdown=settings.api.graceful_shutdown_timeout,
     )
 
 
