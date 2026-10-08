@@ -118,6 +118,39 @@ def read_project_sandbox_file(
 
 
 @router.get(
+    "/download",
+    response_class=Response,
+    summary="下载项目沙箱文件原始字节",
+)
+def download_project_sandbox_file(
+    db: DBDep,
+    project_id: str,
+    file_path: str = Query(..., description="相对文件路径，如 /notes/idea.md"),
+) -> Response:
+    """以附件形式下载项目沙箱文件原始字节.
+
+    与 /content 不同，下载不做 UTF-8 解码，返回磁盘上的原始字节；
+    路径、扩展名、大小均复用项目文件沙箱的既有校验与错误语义。
+    """
+    _ensure_project_exists(db, project_id)
+    try:
+        result = get_project_file_manager().download_file(project_id, file_path)
+    except ProjectFileError as exc:
+        _raise_project_file_error(exc)
+    logger.info(
+        "event=project_file.download project_id=%s file_path=%s bytes=%s",
+        project_id,
+        file_path,
+        len(result.content),
+    )
+    return Response(
+        content=result.content,
+        media_type=result.content_type,
+        headers={"Content-Disposition": _content_disposition(result.download_name)},
+    )
+
+
+@router.get(
     "/lines",
     response_model=ProjectFileReadLinesResponse,
     summary="按行读取项目沙箱文件内容",

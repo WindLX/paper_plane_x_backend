@@ -175,3 +175,79 @@ def test_collect_sandbox_files_skips_symlinks(manager: ProjectFileManager) -> No
     files = manager.collect_sandbox_files("proj-1")
 
     assert files == [(sandbox / "notes" / "draft.md", "notes/draft.md")]
+
+
+def test_download_file_returns_raw_bytes_without_decoding(
+    manager: ProjectFileManager,
+) -> None:
+    sandbox = manager.ensure_project_sandbox("proj-1")
+    payload = b"\x00\xff\xfe\r\nraw bytes\r\n"
+    target = sandbox / "notes" / "raw.txt"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(payload)
+
+    result = manager.download_file("proj-1", "/notes/raw.txt")
+
+    assert result.content == payload
+    assert result.content_type == "text/plain"
+    assert result.download_name == "raw.txt"
+
+
+def test_download_file_keeps_non_ascii_download_name(
+    manager: ProjectFileManager,
+) -> None:
+    manager.ensure_project_sandbox("proj-1")
+    manager.write_file("proj-1", "/中文/报告.md", "# 报告\n")
+
+    result = manager.download_file("proj-1", "/中文/报告.md")
+
+    assert result.content == "# 报告\n".encode()
+    assert result.content_type == "text/markdown"
+    assert result.download_name == "报告.md"
+
+
+def test_download_file_reuses_missing_directory_and_extension_errors(
+    manager: ProjectFileManager,
+) -> None:
+    sandbox = manager.ensure_project_sandbox("proj-1")
+    (sandbox / "empty").mkdir()
+
+    with pytest.raises(ProjectFileError) as missing_exc:
+        manager.download_file("proj-1", "/missing.md")
+    assert missing_exc.value.code == "not_found"
+
+    with pytest.raises(ProjectFileError) as directory_exc:
+        manager.download_file("proj-1", "/empty")
+    assert directory_exc.value.code == "path_is_directory"
+
+    with pytest.raises(ProjectFileError) as extension_exc:
+        manager.download_file("proj-1", "/script.py")
+    assert extension_exc.value.code == "invalid_extension"
+
+    with pytest.raises(ProjectFileError) as traversal_exc:
+        manager.download_file("proj-1", "/../escape.md")
+    assert traversal_exc.value.code == "path_traversal"
+
+
+def test_download_file_rejects_symlink_escape(manager: ProjectFileManager) -> None:
+    sandbox = manager.ensure_project_sandbox("proj-1")
+    outside = settings.data_dir / "outside.md"
+    outside.write_text("outside", encoding="utf-8")
+    (sandbox / "escape.md").symlink_to(outside)
+
+    with pytest.raises(ProjectFileError) as exc_info:
+        manager.download_file("proj-1", "/escape.md")
+
+    assert exc_info.value.code == "path_escapes_sandbox"
+
+
+def test_download_file_rejects_oversized_file(manager: ProjectFileManager) -> None:
+    sandbox = manager.ensure_project_sandbox("proj-1")
+    huge = sandbox / "huge.md"
+    huge.write_bytes(b"x" * (MAX_FILE_SIZE + 1))
+
+    with pytest.raises(ProjectFileError) as exc_info:
+        manager.download_file("proj-1", "/huge.md")
+
+    assert exc_info.value.code == "file_too_large"
+    assert exc_info.value.status_code == 413

@@ -26,6 +26,15 @@ ALLOWED_EXTENSIONS: frozenset[str] = frozenset(
 SUPPORTED_EXPORT_FORMATS: frozenset[str] = frozenset(
     {"markdown", "docx", "pdf", "html"}
 )
+_DOWNLOAD_CONTENT_TYPES: dict[str, str] = {
+    ".md": "text/markdown",
+    ".txt": "text/plain",
+    ".json": "application/json",
+    ".csv": "text/csv",
+    ".yaml": "application/yaml",
+    ".yml": "application/yaml",
+    ".toml": "application/toml",
+}
 _PROJECT_FILE_ACTIONS: frozenset[str] = frozenset(
     {"replace", "insert_before", "insert_after", "delete"}
 )
@@ -44,6 +53,15 @@ class ProjectFileError(Exception):
 @dataclass(frozen=True)
 class ProjectFileExportResult:
     """Single project-file export result."""
+
+    content: bytes
+    content_type: str
+    download_name: str
+
+
+@dataclass(frozen=True)
+class ProjectFileDownloadResult:
+    """Single project-file raw attachment download result."""
 
     content: bytes
     content_type: str
@@ -266,7 +284,11 @@ class ProjectFileManager:
                 413,
             )
 
-    def _read_text_file(self, project_id: str, file_path: str) -> tuple[Path, str]:
+    def _resolve_readable_file(
+        self,
+        project_id: str,
+        file_path: str,
+    ) -> Path:
         target = self.resolve_file_path(project_id, file_path, allow_missing=False)
         if target.is_dir():
             raise ProjectFileError(
@@ -283,6 +305,10 @@ class ProjectFileManager:
                 500,
             ) from exc
         self._ensure_max_size(size, file_path)
+        return target
+
+    def _read_text_file(self, project_id: str, file_path: str) -> tuple[Path, str]:
+        target = self._resolve_readable_file(project_id, file_path)
         try:
             content = target.read_text(encoding="utf-8")
         except UnicodeDecodeError as exc:
@@ -298,6 +324,38 @@ class ProjectFileManager:
                 500,
             ) from exc
         return target, content
+
+    def download_file(
+        self,
+        project_id: str,
+        file_path: str,
+    ) -> ProjectFileDownloadResult:
+        """Read a sandbox file as raw bytes for attachment download.
+
+        与文本读取不同，这里不做 UTF-8 解码，保证下载字节与磁盘内容一致。
+        """
+        target = self._resolve_readable_file(project_id, file_path)
+        suffix = target.suffix.lower()
+        content_type = _DOWNLOAD_CONTENT_TYPES.get(suffix)
+        if content_type is None:
+            raise ProjectFileError(
+                "unsupported_content_type",
+                f"No download content type for extension: {suffix}",
+                500,
+            )
+        try:
+            content = target.read_bytes()
+        except OSError as exc:
+            raise ProjectFileError(
+                "read_failed",
+                f"Failed to read file: {file_path}",
+                500,
+            ) from exc
+        return ProjectFileDownloadResult(
+            content=content,
+            content_type=content_type,
+            download_name=target.name,
+        )
 
     def _write_text_file(self, target: Path, content: str, display_path: str) -> int:
         encoded = content.encode("utf-8")

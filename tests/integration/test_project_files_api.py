@@ -119,3 +119,91 @@ def test_project_file_oversized_upload_returns_413(client: TestClient) -> None:
 
     assert response.status_code == 413
     assert response.json()["detail"]["code"] == "file_too_large"
+
+
+def test_project_file_download_returns_raw_bytes(client: TestClient) -> None:
+    project_id = _create_project(client)
+    payload = b"line1\r\n\xff\xfe binary \x00\r\n"
+    upload_response = client.post(
+        f"/api/v1/projects/{project_id}/files/upload",
+        data={"file_path": "/notes/raw.txt"},
+        files={"file": ("raw.txt", payload, "text/plain")},
+    )
+    assert upload_response.status_code == 200
+
+    response = client.get(
+        f"/api/v1/projects/{project_id}/files/download",
+        params={"file_path": "/notes/raw.txt"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == payload
+    assert response.headers["content-type"] == "text/plain; charset=utf-8"
+    assert response.headers["content-disposition"] == 'attachment; filename="raw.txt"'
+
+
+def test_project_file_download_non_ascii_filename_uses_rfc5987(
+    client: TestClient,
+) -> None:
+    project_id = _create_project(client)
+    payload = "# 报告\n".encode()
+    upload_response = client.post(
+        f"/api/v1/projects/{project_id}/files/upload",
+        data={"file_path": "/中文/报告.md"},
+        files={"file": ("报告.md", payload, "text/markdown")},
+    )
+    assert upload_response.status_code == 200
+
+    response = client.get(
+        f"/api/v1/projects/{project_id}/files/download",
+        params={"file_path": "/中文/报告.md"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == payload
+    assert response.headers["content-disposition"] == (
+        "attachment; filename*=UTF-8''%E6%8A%A5%E5%91%8A.md"
+    )
+
+
+def test_project_file_download_missing_returns_404(client: TestClient) -> None:
+    project_id = _create_project(client)
+
+    response = client.get(
+        f"/api/v1/projects/{project_id}/files/download",
+        params={"file_path": "/missing.md"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "not_found"
+
+
+def test_project_file_download_traversal_returns_400(client: TestClient) -> None:
+    project_id = _create_project(client)
+
+    response = client.get(
+        f"/api/v1/projects/{project_id}/files/download",
+        params={"file_path": "/../escape.md"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "path_traversal"
+
+
+def test_project_file_download_empty_directory_returns_400(
+    client: TestClient,
+) -> None:
+    project_id = _create_project(client)
+    directory_response = client.put(
+        f"/api/v1/projects/{project_id}/files/content",
+        json={"file_path": "/empty-dir", "is_dir": True},
+    )
+    assert directory_response.status_code == 200
+
+    response = client.get(
+        f"/api/v1/projects/{project_id}/files/download",
+        params={"file_path": "/empty-dir"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "path_is_directory"

@@ -55,7 +55,7 @@ Paper Plane X Backend 为科研项目提供稳定的文献工作流：
 | ----------------- | ------------------------------------- | ----------------------------------------------------------------- |
 | `paper`           | `/api/v1/papers`                      | 论文上传、详情、更新、删除、重处理、agent note                    |
 | `project`         | `/api/v1/projects`                    | 项目 CRUD、agent summary、导出、论文关联、项目搜索                |
-| `project_files`   | `/api/v1/projects/{project_id}/files` | 项目文件沙箱 list/read/write/find/patch/export                    |
+| `project_files`   | `/api/v1/projects/{project_id}/files` | 项目文件沙箱 list/read/write/find/patch/export/download           |
 | `librarian`       | `/api/v1/librarian`                   | search、matrix、deep-dive、global-finder、query-builder           |
 | `data_process`    | `/api/v1/data-process`                | 任务列表、详情、取消、重试、删除                                  |
 | `data_process_ws` | `/api/v1/ws/data-process`             | Data Process 任务实时事件                                         |

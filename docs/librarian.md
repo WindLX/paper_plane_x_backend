@@ -35,6 +35,7 @@ Researcher 还配套两类项目资产工具：
 
 - `GET /api/v1/projects/{project_id}/files?dir_path=/`
 - `GET /api/v1/projects/{project_id}/files/content?file_path=/notes/a.md`
+- `GET /api/v1/projects/{project_id}/files/download?file_path=/notes/a.md`
 - `PUT /api/v1/projects/{project_id}/files/content`
 - `POST /api/v1/projects/{project_id}/files/upload`
 - `DELETE /api/v1/projects/{project_id}/files/content?file_path=/notes/a.md`
@@ -44,6 +45,10 @@ Researcher 还配套两类项目资产工具：
 - `PATCH /api/v1/projects/{project_id}/files/text`
 - `PATCH /api/v1/projects/{project_id}/files/patch`
 - `POST /api/v1/projects/{project_id}/files/export`
+
+`/files/download` 以附件返回沙箱文件在磁盘上的原始字节，不做 UTF-8 解码；
+路径、扩展名白名单和 10MB 上限与其它 project files 接口一致。中文等非 ASCII 文件名
+通过 RFC 5987 的 `filename*=UTF-8''...` 形式放在 `Content-Disposition` 中。
 
 ### 2.3 Paper notes
 
