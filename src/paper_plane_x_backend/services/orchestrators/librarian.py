@@ -31,6 +31,7 @@ from paper_plane_x_backend.services.paper.repository import (
     PaperRepository,
     PaperRepositoryError,
 )
+from paper_plane_x_backend.services.project.activity import ProjectActivityStore
 from paper_plane_x_backend.services.project.repository import (
     ProjectRepository as ProjectRepo,
 )
@@ -180,6 +181,11 @@ class LibrarianOrchestrator:
             caller=caller,
             caller_id=caller_id,
         )
+        if not agent_summary or not agent_summary.strip():
+            raise LibrarianDomainError(
+                502,
+                "Summary generation failed; see project activity for the failed run",
+            )
         return agent_summary
 
     async def _generate_agent_summary(
@@ -338,9 +344,29 @@ class LibrarianOrchestrator:
                 stats=stats,
             )
         )
+        # Project-scoped agent activity: explicit project id, no prompt text, and
+        # caller attribution only when the caller is actually known.
+        activity_store = ProjectActivityStore(self.project_repo.db)
+        activity_detail: dict[str, Any] = {"agent_name": agent.agent_name}
+        if caller is not None:
+            activity_detail["caller"] = caller
+        if caller_id is not None:
+            activity_detail["caller_id"] = caller_id
+        activity_id = activity_store.record_pending(
+            project_id=project_id,
+            category="agent",
+            event_type="agent_summary",
+            object_name=agent.agent_name,
+            detail=activity_detail,
+        )
         try:
             result = await agent.run()
         except Exception as exc:
+            activity_store.fail(
+                activity_id,
+                error=str(exc),
+                trace_ids=agent.trace_ids,
+            )
             logger.warning(
                 "event=global_finder.agent_failed project_id=%s error=%s",
                 project_id,
@@ -349,6 +375,14 @@ class LibrarianOrchestrator:
             return None
 
         summary = result.agent_summary
+        if not summary or not summary.strip():
+            activity_store.fail(
+                activity_id,
+                error="Agent returned an empty summary",
+                trace_ids=agent.trace_ids,
+            )
+            return None
+        activity_store.complete(activity_id, trace_ids=agent.trace_ids)
         if summary:
             self.project_repo.set_agent_summary(project_id, summary)
             logger.info(

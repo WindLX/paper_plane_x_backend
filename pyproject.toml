@@ -1,6 +1,6 @@
 [project]
 name = "paper-plane-x-backend"
-version = "0.2.1"
+version = "0.2.2"
 description = "AI Agent-powered research survey workflow system"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -15,6 +15,10 @@ dependencies = [
     "jinja2>=3.1.6",
     "httpx>=0.28.1",
     "rtoml>=0.13.0",
+    "pillow>=11.0.0",
+    "defusedxml>=0.7.1",
+    "markdown-it-py>=3.0.0",
+    "tinycss2>=1.5.1",
 ]
 
 [dependency-groups]

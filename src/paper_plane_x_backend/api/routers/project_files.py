@@ -63,20 +63,27 @@ def _raise_project_file_error(exc: ProjectFileError) -> NoReturn:
         exc.status_code,
         exc.message,
     )
+    detail: dict[str, object] = {"code": exc.code, "message": exc.message}
+    if exc.details is not None:
+        detail["details"] = exc.details
     raise HTTPException(
         status_code=exc.status_code,
-        detail={"code": exc.code, "message": exc.message},
+        detail=detail,
     )
 
 
-def _content_disposition(download_name: str) -> str:
-    """Build an RFC 5987-aware attachment disposition."""
+def _content_disposition(
+    download_name: str,
+    *,
+    disposition: str = "attachment",
+) -> str:
+    """Build an RFC 5987-aware content disposition."""
     try:
         download_name.encode("latin-1")
-        return f'attachment; filename="{download_name}"'
+        return f'{disposition}; filename="{download_name}"'
     except UnicodeEncodeError:
         encoded_name = quote(download_name, safe="")
-        return f"attachment; filename*=UTF-8''{encoded_name}"
+        return f"{disposition}; filename*=UTF-8''{encoded_name}"
 
 
 @router.get(
@@ -92,7 +99,7 @@ def list_project_sandbox_files(
     """列出项目沙箱中的文件和目录."""
     _ensure_project_exists(db, project_id)
     try:
-        payload = get_project_file_manager().list_files(project_id, dir_path)
+        payload = get_project_file_manager(db).list_files(project_id, dir_path)
     except ProjectFileError as exc:
         _raise_project_file_error(exc)
     return ProjectFileListResponse.model_validate(payload)
@@ -111,7 +118,7 @@ def read_project_sandbox_file(
     """读取项目沙箱中的文件内容."""
     _ensure_project_exists(db, project_id)
     try:
-        payload = get_project_file_manager().read_file(project_id, file_path)
+        payload = get_project_file_manager(db).read_file(project_id, file_path)
     except ProjectFileError as exc:
         _raise_project_file_error(exc)
     return ProjectFileContentResponse.model_validate(payload)
@@ -134,10 +141,10 @@ def download_project_sandbox_file(
     """
     _ensure_project_exists(db, project_id)
     try:
-        result = get_project_file_manager().download_file(project_id, file_path)
+        result = get_project_file_manager(db).download_file(project_id, file_path)
     except ProjectFileError as exc:
         _raise_project_file_error(exc)
-    logger.info(
+    logger.debug(
         "event=project_file.download project_id=%s file_path=%s bytes=%s",
         project_id,
         file_path,
@@ -147,6 +154,47 @@ def download_project_sandbox_file(
         content=result.content,
         media_type=result.content_type,
         headers={"Content-Disposition": _content_disposition(result.download_name)},
+    )
+
+
+@router.get(
+    "/preview",
+    response_class=Response,
+    summary="内联预览项目沙箱图片",
+)
+def preview_project_sandbox_file(
+    db: DBDep,
+    project_id: str,
+    file_path: str = Query(..., description="相对文件路径，如 /images/figure.png"),
+) -> Response:
+    """以内联方式返回项目沙箱中的图片字节.
+
+    MIME 类型按校验后的真实内容返回；响应带 CSP ``sandbox``，即使直接打开 SVG 也无法执行脚本。
+    预览只接受图片，文本文件继续走 /content 与 /download。
+    """
+    _ensure_project_exists(db, project_id)
+    try:
+        result = get_project_file_manager(db).preview_image(project_id, file_path)
+    except ProjectFileError as exc:
+        _raise_project_file_error(exc)
+    logger.debug(
+        "event=project_file.preview project_id=%s file_path=%s bytes=%s content_type=%s",
+        project_id,
+        file_path,
+        len(result.content),
+        result.content_type,
+    )
+    return Response(
+        content=result.content,
+        media_type=result.content_type,
+        headers={
+            "Content-Disposition": _content_disposition(
+                result.download_name,
+                disposition="inline",
+            ),
+            "Content-Security-Policy": "sandbox",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
@@ -164,7 +212,7 @@ def read_project_sandbox_file_lines(
 ) -> ProjectFileReadLinesResponse:
     _ensure_project_exists(db, project_id)
     try:
-        payload = get_project_file_manager().read_file_lines(
+        payload = get_project_file_manager(db).read_file_lines(
             project_id,
             file_path,
             start_line,
@@ -190,7 +238,7 @@ def find_project_sandbox_file_text(
 ) -> ProjectFileFindResponse:
     _ensure_project_exists(db, project_id)
     try:
-        payload = get_project_file_manager().find_in_file(
+        payload = get_project_file_manager(db).find_in_file(
             project_id,
             file_path,
             query,
@@ -216,7 +264,7 @@ def write_project_sandbox_file(
     _ensure_project_exists(db, project_id)
     is_dir = request.is_dir or False
     try:
-        payload = get_project_file_manager().write_file(
+        payload = get_project_file_manager(db).write_file(
             project_id,
             request.file_path,
             request.content,
@@ -241,12 +289,15 @@ async def upload_project_sandbox_file(
     """上传文件到项目沙箱.
 
     Upload 复用项目文件沙箱的安全约束：路径不能逃逸项目目录、扩展名必须在白名单内、
-    单文件大小不能超过 MAX_FILE_SIZE。
+    单文件大小不能超过 MAX_FILE_SIZE。文本文件按原样保存；图片文件（PNG/JPEG/WebP/GIF/SVG）
+    额外按真实内容校验，SVG 必须是静态自包含文档。
     """
     _ensure_project_exists(db, project_id)
     content = await file.read(MAX_FILE_SIZE + 1)
     try:
-        payload = get_project_file_manager().write_bytes(project_id, file_path, content)
+        payload = get_project_file_manager(db).write_bytes(
+            project_id, file_path, content
+        )
     except ProjectFileError as exc:
         _raise_project_file_error(exc)
     logger.info(
@@ -271,7 +322,7 @@ def replace_project_sandbox_file_lines(
 ) -> ProjectFileReplaceLinesResponse:
     _ensure_project_exists(db, project_id)
     try:
-        payload = get_project_file_manager().replace_file_lines(
+        payload = get_project_file_manager(db).replace_file_lines(
             project_id,
             request.file_path,
             request.start_line,
@@ -295,7 +346,7 @@ def replace_project_sandbox_file_text(
 ) -> ProjectFileReplaceTextResponse:
     _ensure_project_exists(db, project_id)
     try:
-        payload = get_project_file_manager().replace_file_text(
+        payload = get_project_file_manager(db).replace_file_text(
             project_id,
             request.file_path,
             request.old_text,
@@ -320,7 +371,7 @@ def patch_project_sandbox_file(
 ) -> ProjectFilePatchResponse:
     _ensure_project_exists(db, project_id)
     try:
-        payload = get_project_file_manager().patch_file(
+        payload = get_project_file_manager(db).patch_file(
             project_id,
             request.file_path,
             request.action,
@@ -346,7 +397,7 @@ def delete_project_sandbox_file(
     """删除项目沙箱中的文件或空目录."""
     _ensure_project_exists(db, project_id)
     try:
-        payload = get_project_file_manager().remove_path(project_id, file_path)
+        payload = get_project_file_manager(db).remove_path(project_id, file_path)
     except ProjectFileError as exc:
         _raise_project_file_error(exc)
     return ProjectFileDeleteResponse.model_validate(payload)
@@ -364,7 +415,7 @@ def export_project_sandbox_file(
     """将项目沙箱中的 markdown 文件导出为指定格式."""
     _ensure_project_exists(db, project_id)
     try:
-        result = get_project_file_manager().export_markdown_file(
+        result = get_project_file_manager(db).export_markdown_file(
             project_id,
             request.file_path,
             request.format,

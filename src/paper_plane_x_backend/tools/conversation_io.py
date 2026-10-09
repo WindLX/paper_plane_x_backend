@@ -7,6 +7,7 @@ import logging
 from typing import Any, Callable
 
 from paper_plane_x_backend.core.agent_runtime.tooling import tool
+from paper_plane_x_backend.services.database import get_db
 from paper_plane_x_backend.services.project.files import (
     ALLOWED_EXTENSIONS,
     MAX_FILE_SIZE,
@@ -80,7 +81,9 @@ def read_project_file(
     """读取项目文件."""
 
     def _operation() -> dict[str, object]:
-        payload = get_project_file_manager().read_file(project_id or "", file_path)
+        payload = get_project_file_manager(get_db()).read_file(
+            project_id or "", file_path
+        )
         return {"content": payload["content"]}
 
     return _run_project_file_operation(
@@ -111,7 +114,7 @@ def write_project_file(
     """写入项目文件."""
 
     def _operation() -> dict[str, object]:
-        payload = get_project_file_manager().write_file(
+        payload = get_project_file_manager(get_db()).write_file(
             project_id or "",
             file_path,
             content,
@@ -153,7 +156,7 @@ def read_project_file_lines(
     project_id: str | None = None,
 ) -> dict[str, Any]:
     return _run_project_file_operation(
-        lambda: get_project_file_manager().read_file_lines(
+        lambda: get_project_file_manager(get_db()).read_file_lines(
             project_id or "",
             file_path,
             start_line,
@@ -184,7 +187,7 @@ def find_in_project_file(
     project_id: str | None = None,
 ) -> dict[str, Any]:
     return _run_project_file_operation(
-        lambda: get_project_file_manager().find_in_file(
+        lambda: get_project_file_manager(get_db()).find_in_file(
             project_id or "",
             file_path,
             query,
@@ -216,7 +219,7 @@ def replace_project_file_lines(
     project_id: str | None = None,
 ) -> dict[str, Any]:
     return _run_project_file_operation(
-        lambda: get_project_file_manager().replace_file_lines(
+        lambda: get_project_file_manager(get_db()).replace_file_lines(
             project_id or "",
             file_path,
             start_line,
@@ -249,7 +252,7 @@ def replace_project_file_text(
     project_id: str | None = None,
 ) -> dict[str, Any]:
     return _run_project_file_operation(
-        lambda: get_project_file_manager().replace_file_text(
+        lambda: get_project_file_manager(get_db()).replace_file_text(
             project_id or "",
             file_path,
             old_text,
@@ -283,7 +286,7 @@ def patch_project_file(
     project_id: str | None = None,
 ) -> dict[str, Any]:
     return _run_project_file_operation(
-        lambda: get_project_file_manager().patch_file(
+        lambda: get_project_file_manager(get_db()).patch_file(
             project_id or "",
             file_path,
             action,
@@ -303,7 +306,8 @@ def patch_project_file(
         "列出项目文件沙箱中的文件和目录。"
         "适用场景：浏览项目文件结构，查找已有笔记或草稿。"
         "\n输入：dir_path（相对目录路径，默认为 /）。"
-        "\n输出：成功时返回 {items: [{name, is_dir, size}]}；失败时返回 {error}。"
+        "\n输出：成功时返回 {items: [{name, is_dir, size, kind, content_type, modified_at}]}；失败时返回 {error}。"
+        "\n说明：kind 为 directory、text 或 image；图片文件不能通过文本工具读取。"
     ),
     context_params={"project_id": "project_id"},
     shared_guides=_build_project_file_shared_guides(),
@@ -314,7 +318,9 @@ def list_project_files(
 ) -> dict[str, Any]:
     """列出项目文件."""
     return _run_project_file_operation(
-        lambda: get_project_file_manager().list_files(project_id or "", dir_path),
+        lambda: get_project_file_manager(get_db()).list_files(
+            project_id or "", dir_path
+        ),
         event="list_project_files",
         failure_prefix="List failed",
         file_path=dir_path,
@@ -338,7 +344,9 @@ def remove_project_file(
 ) -> dict[str, Any]:
     """删除项目文件."""
     return _run_project_file_operation(
-        lambda: get_project_file_manager().remove_path(project_id or "", file_path),
+        lambda: get_project_file_manager(get_db()).remove_path(
+            project_id or "", file_path
+        ),
         event="remove_project_file",
         failure_prefix="Remove failed",
         file_path=file_path,

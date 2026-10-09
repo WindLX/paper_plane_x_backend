@@ -572,3 +572,36 @@ class TestLibrarianGlobalFinderAPI:
 
         repo = ProjectRepository(db)
         assert repo.get_agent_summary("proj-gf-2") == "generated summary"
+
+
+def test_explicit_summary_failure_preserves_saved_summary_and_activity(
+    client: TestClient, db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from paper_plane_x_backend.agents.global_finder import GlobalFinderAgent
+    from paper_plane_x_backend.services.project.activity import ProjectActivityStore
+    from paper_plane_x_backend.services.project.repository import ProjectRepository
+
+    response = client.post(
+        "/api/v1/projects", json={"name": "Synthetic summary project"}
+    )
+    project_id = response.json()["project_id"]
+    ProjectRepository(db).set_agent_summary(project_id, "Saved summary")
+    monkeypatch.setattr(
+        GlobalFinderAgent,
+        "run",
+        AsyncMock(side_effect=RuntimeError("Synthetic failure")),
+    )
+    monkeypatch.setattr(
+        GlobalFinderAgent, "_build_system_prompt", lambda self: "Synthetic prompt"
+    )
+    response = client.post(
+        "/api/v1/librarian/global-finder/agent-summary", json={"project_id": project_id}
+    )
+    assert response.status_code == 502
+    assert ProjectRepository(db).get_agent_summary(project_id) == "Saved summary"
+    activities, total = ProjectActivityStore(db).list(project_id, category="agent")
+    assert total == 1
+    assert activities[0].status == "failed"
+    assert activities[0].error == "Synthetic failure"

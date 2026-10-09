@@ -29,6 +29,7 @@ from paper_plane_x_backend.schemas.agent_io.base import (
     ToolCallFunction,
     ToolCallMessage,
 )
+from paper_plane_x_backend.utils.logging import log_verbose
 
 
 class ModelTokenLimits(TypedDict, total=False):
@@ -568,7 +569,8 @@ class LLMClient:
                 usage_keys = sorted(chunk_usage.keys())
 
                 if chunk_index % 10 == 0:
-                    logger.debug(
+                    log_verbose(
+                        logger,
                         "event=llm.stream_chunk_summary model=%s chunk_index=%s choices_len=%s finish_reason=%s has_usage=%s usage_type=%s usage_keys=%s",
                         last_model or request["model"],
                         chunk_index,
@@ -581,7 +583,8 @@ class LLMClient:
 
                 if not chunk.choices:
                     if chunk_usage:
-                        logger.debug(
+                        log_verbose(
+                            logger,
                             "event=llm.stream_usage_chunk model=%s usage=%s",
                             last_model or request["model"],
                             chunk_usage,

@@ -126,7 +126,7 @@ class DataProcessOrchestrator:
             ExtractionStatus.PENDING,
             ExtractionStatus.PROCESSING,
         }:
-            logger.info(
+            logger.warning(
                 "event=data_process.retry_blocked paper_id=%s status=%s",
                 paper_id,
                 status_value,

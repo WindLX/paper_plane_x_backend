@@ -16,6 +16,7 @@ from paper_plane_x_backend.services.data_process_tasks.models import (
 )
 from paper_plane_x_backend.services.database import Database
 from paper_plane_x_backend.services.paper.repository import PaperRepository
+from paper_plane_x_backend.services.project.activity import ProjectActivityStore
 
 
 class DataProcessTaskStateStore:
@@ -26,6 +27,7 @@ class DataProcessTaskStateStore:
 
     def clear(self) -> None:
         self._db.execute("DELETE FROM data_process_tasks")
+        ProjectActivityStore(self._db).mark_all_tasks_missing()
 
     def upsert(self, state: DataProcessTaskState) -> None:
         task = DataProcessTask(
@@ -91,6 +93,8 @@ class DataProcessTaskStateStore:
         }:
             PaperRepository(self._db).release_interrupted_processing(state.paper_id)
 
+        self._record_activity(state)
+
     def get(self, task_id: str) -> DataProcessTaskState | None:
         row = self._db.fetchone(
             "SELECT * FROM data_process_tasks WHERE task_id = ?",
@@ -102,6 +106,29 @@ class DataProcessTaskStateStore:
 
     def delete(self, task_id: str) -> None:
         self._db.delete("data_process_tasks", "task_id = ?", (task_id,))
+        ProjectActivityStore(self._db).mark_task_missing(task_id)
+
+    def _record_activity(self, state: DataProcessTaskState) -> None:
+        """Project the task onto every project currently linked to its paper.
+
+        The store captures the associated project ids at observation time; the
+        activity table keeps previously recorded joins alive on later updates.
+        """
+        project_ids: list[str] = []
+        if state.paper_id:
+            rows = self._db.fetchall(
+                "SELECT project_id FROM paper_projects WHERE paper_id = ?",
+                (state.paper_id,),
+            )
+            project_ids = [
+                str(row["project_id"])
+                for row in rows
+                if isinstance(row.get("project_id"), str)
+            ]
+        ProjectActivityStore(self._db).record_task_state(
+            state,
+            project_ids=project_ids,
+        )
 
     def list(
         self,

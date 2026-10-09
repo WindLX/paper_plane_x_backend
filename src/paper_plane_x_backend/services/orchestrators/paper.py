@@ -62,7 +62,7 @@ class PaperOrchestrator:
         papers = self.repo.list_all(
             offset=offset, limit=limit, sort_by=sort_by, sort_order=sort_order
         )
-        logger.info(
+        logger.debug(
             "event=paper.listed offset=%s limit=%s returned=%s total=%s",
             offset,
             limit,
@@ -77,7 +77,7 @@ class PaperOrchestrator:
             raise PaperDomainError(
                 status.HTTP_404_NOT_FOUND, f"Paper {paper_id} not found"
             )
-        logger.info("event=paper.fetched paper_id=%s", paper_id)
+        logger.debug("event=paper.fetched paper_id=%s", paper_id)
         return paper
 
     def get_markdown(self, *, paper_id: str) -> str:
@@ -87,7 +87,7 @@ class PaperOrchestrator:
                 status.HTTP_409_CONFLICT,
                 f"Paper {paper_id} has no parsed markdown content",
             )
-        logger.info(
+        logger.debug(
             "event=paper.markdown_fetched paper_id=%s chars=%s",
             paper_id,
             len(paper.md_content),
@@ -108,7 +108,7 @@ class PaperOrchestrator:
                 status.HTTP_409_CONFLICT,
                 f"Paper {paper_id} original PDF file is unavailable",
             )
-        logger.info(
+        logger.debug(
             "event=paper.pdf_fetched paper_id=%s path=%s",
             paper_id,
             pdf_path,
@@ -135,7 +135,7 @@ class PaperOrchestrator:
             sort_by=sort_by,
             sort_order=sort_order,
         )
-        logger.info(
+        logger.debug(
             "event=paper.batch_fetched requested_ids=%s offset=%s limit=%s returned=%s total=%s",
             paper_ids,
             offset,
@@ -149,7 +149,7 @@ class PaperOrchestrator:
         return self.repo.count_global_statuses()
 
     def list_paper_project_ids(self, paper_id: str) -> list[str]:
-        logger.info("event=paper.list_project_ids paper_id=%s", paper_id)
+        logger.debug("event=paper.list_project_ids paper_id=%s", paper_id)
         return self.repo.list_project_ids(paper_id)
 
     async def create_paper_and_start_processing(

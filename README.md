@@ -11,7 +11,7 @@ Web 控制台、`ppx` CLI、Zotero 插件和外部 Agent Skills 都通过该服�
 ## 主要能力
 
 - **Paper pipeline**：上传 PDF，保存解析后的 Markdown，运行 Extraction、Analysis 和 Fact Check。
-- **Project workspace**：维护项目元数据、关联论文、项目文件和项目导出。
+- **Project workspace**：维护项目元数据、关联论文、项目文件和项目导出，并提供只读项目总览、持久活动历史与后台 ZIP 导出任务。
 - **Librarian**：全局发现、DSL 搜索、字段矩阵、query builder 和单篇 deep dive。
 - **Background tasks**：管理并通过 WebSocket 推送数据处理任务状态。
 - **Runtime Settings**：配置 LLM Provider、Agent LLM、PDF Parser、Pandoc、worker 和 Librarian。
@@ -25,7 +25,7 @@ Web 控制台、`ppx` CLI、Zotero 插件和外部 Agent Skills 都通过该服�
 - [uv](https://docs.astral.sh/uv/)
 - 一个可访问的 PDF Parser：本地 MinerU 或 MinerU Cloud
 - 至少一个与 OpenAI API 兼容的 LLM Provider（使用 Agent 能力时必需）
-- 可选：[Pandoc](https://pandoc.org/) 与 PDF engine，用于项目文件导出
+- 可选：[Pandoc](https://pandoc.org/) 与 PDF engine，用于项目文件导出；导出包含 SVG 的项目文件还需要 `rsvg-convert`
 - 可选：Docker / Docker Compose
 
 ## 安装与运行
@@ -210,7 +210,9 @@ done
 | ------------- | ---------------------- | ---------------------------------------- |
 | Paper         | `/papers`              | 上传、查询、重处理、Markdown、Agent note |
 | Project       | `/projects`            | 项目 CRUD、论文关联和导出                |
-| Project Files | `/projects/{id}/files` | 文件 list/read/write/patch/upload/export |
+| Project Workbench | `/projects/{id}/overview`、`/projects/{id}/activities` | 只读总览与活动历史 |
+| Project Exports | `/projects/{id}/exports` | 后台导出的提交、查询、取消与下载 |
+| Project Files | `/projects/{id}/files` | 文件 list/read/write/patch/upload/export、原字节下载与图片预览 |
 | Librarian     | `/librarian`           | 搜索、矩阵、deep dive、query builder     |
 | Data Process  | `/data-process`        | 后台任务查询与取消                       |
 | Settings      | `/settings`            | Provider、Agent、Parser、Pandoc 等设置   |
@@ -277,6 +279,7 @@ uv build
 - [Workflow Quickstart](docs/workflow_quickstart.md)
 - [Architecture](docs/architecture.md)
 - [Librarian](docs/librarian.md)
+- [Project Workbench](docs/project-workbench.md)
 - [Logging Conventions](docs/logging_conventions.md)
 - [MinerU Cloud API](docs/mineru_cloud_api.md)
 - [Roadmap](docs/roadmap.md)

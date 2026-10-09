@@ -18,7 +18,9 @@ from paper_plane_x_backend.api.routers import (
     paper,
     pdf_parser,
     project,
+    project_exports,
     project_files,
+    project_workbench,
 )
 from paper_plane_x_backend.api.routers import (
     settings as settings_router,
@@ -30,6 +32,7 @@ from paper_plane_x_backend.services.data_process_tasks.lifecycle import (
     stop_worker_pool,
 )
 from paper_plane_x_backend.services.database import get_db
+from paper_plane_x_backend.services.project.export_jobs import ProjectExportManager
 from paper_plane_x_backend.services.project.files import get_project_file_manager
 from paper_plane_x_backend.utils.logging import (
     get_active_log_file_path,
@@ -60,6 +63,8 @@ app.add_middleware(
 # 注册路由
 app.include_router(paper.router, prefix="/api/v1")
 app.include_router(project.router, prefix="/api/v1")
+app.include_router(project_exports.router, prefix="/api/v1")
+app.include_router(project_workbench.router, prefix="/api/v1")
 app.include_router(agent_traces.router, prefix="/api/v1")
 app.include_router(librarian.router, prefix="/api/v1")
 app.include_router(data_process.router, prefix="/api/v1")
@@ -172,6 +177,9 @@ async def lifespan(app: FastAPI):
         logger.info("event=app.sandbox_dirs_checked count=%s", checked_count)
 
     await start_worker_pool()
+    export_manager = ProjectExportManager(db, settings.data_dir / "exports")
+    await export_manager.start()
+    app.state.project_exports = export_manager
     logger.info(
         "event=app.startup_completed log_file=%s",
         (
@@ -181,6 +189,7 @@ async def lifespan(app: FastAPI):
         ),
     )
     yield
+    await export_manager.stop()
     await stop_worker_pool()
     logger.info("event=app.shutdown_completed")
 

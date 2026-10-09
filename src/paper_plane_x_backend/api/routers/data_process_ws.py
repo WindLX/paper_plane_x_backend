@@ -81,7 +81,7 @@ async def data_process_websocket(websocket: WebSocket) -> None:
                 )
 
     except WebSocketDisconnect:
-        logger.info("event=data_process_ws.disconnected")
+        logger.debug("event=data_process_ws.disconnected")
     except Exception as exc:
         logger.exception("event=data_process_ws.error")
         await websocket.send_json(

@@ -6,6 +6,7 @@ from typing import NoReturn
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 
 from paper_plane_x_backend.api.dependencies import DBDep
 from paper_plane_x_backend.api.routers.librarian import run_search_paper
@@ -317,7 +318,8 @@ async def export_project(
     )
     orchestrator = _build_orchestrator(db)
     try:
-        zip_path, download_name = orchestrator.export_project_bundle(
+        zip_path, download_name = await run_in_threadpool(
+            orchestrator.export_project_bundle,
             project_id=project_id,
             fields=request.fields,
             citations_mode=request.citations_mode,

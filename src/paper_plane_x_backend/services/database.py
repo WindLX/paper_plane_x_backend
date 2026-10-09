@@ -116,6 +116,33 @@ CREATE VIRTUAL TABLE IF NOT EXISTS papers_fts USING fts5(
     content_rowid='rowid'
 );
 
+CREATE TABLE IF NOT EXISTS project_exports (
+    export_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    options TEXT NOT NULL,
+    status TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    processed_files INTEGER NOT NULL DEFAULT 0,
+    total_files INTEGER,
+    current_file TEXT,
+    error TEXT,
+    download_name TEXT,
+    file_size INTEGER,
+    created_at TEXT NOT NULL,
+    finished_at TEXT,
+    expires_at TEXT,
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    artifact_path TEXT,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS project_export_active
+ON project_exports(project_id) WHERE status IN ('queued', 'running');
+CREATE INDEX IF NOT EXISTS project_export_recent ON project_exports(project_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS project_activity_migrations (
+    migration_id TEXT PRIMARY KEY,
+    finished_at TEXT NOT NULL
+);
+
 CREATE TRIGGER IF NOT EXISTS papers_ai AFTER INSERT ON papers BEGIN
     INSERT INTO papers_fts(paper_id, title, md_content, quick_scan, synthesis_data, analysis_report)
     VALUES (NEW.paper_id, NEW.title, NEW.md_content, NEW.quick_scan, NEW.synthesis_data, NEW.analysis_report);
@@ -160,16 +187,44 @@ class Database:
             conn.close()
 
     def init_tables(self) -> None:
+        from paper_plane_x_backend.services.project.activity_schema import (
+            PROJECT_ACTIVITY_SCHEMA_SQL,
+        )
+
         with self.get_connection() as conn:
+            existing_projects = self._table_exists(conn, "projects")
+            workbench_migration = existing_projects and not self._table_exists(
+                conn, "project_activities"
+            )
+            if workbench_migration:
+                self._backup_database_before_migration(conn)
             conn.executescript(CREATE_TABLES_SQL)
+            conn.executescript(PROJECT_ACTIVITY_SCHEMA_SQL)
             has_legacy_conversation_tables = self._has_legacy_conversation_tables(conn)
-            if self._needs_schema_migration(conn) or has_legacy_conversation_tables:
+            if not workbench_migration and (
+                self._needs_schema_migration(conn) or has_legacy_conversation_tables
+            ):
                 self._backup_database_before_migration(conn)
             self._ensure_schema_migrations(conn)
             if has_legacy_conversation_tables:
                 self._drop_legacy_conversation_tables(conn)
             self._ensure_papers_fts_healthy(conn)
             conn.commit()
+        if (
+            self.fetchone(
+                "SELECT 1 FROM project_activity_migrations WHERE migration_id='legacy_operation_logs'"
+            )
+            is None
+        ):
+            from paper_plane_x_backend.services.project.activity import (
+                migrate_legacy_operation_logs,
+            )
+
+            migrate_legacy_operation_logs(self)
+            self.execute(
+                "INSERT INTO project_activity_migrations(migration_id,finished_at) VALUES (?,?)",
+                ("legacy_operation_logs", datetime.now().isoformat()),
+            )
         logger.info("event=database.tables_initialized")
 
     def _needs_schema_migration(self, conn: sqlite3.Connection) -> bool:

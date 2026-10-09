@@ -1,5 +1,7 @@
 """Project sandbox file API schemas."""
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -11,6 +13,18 @@ class ProjectFileItem(BaseModel):
     name: str = Field(..., description="文件/目录名称")
     is_dir: bool = Field(..., description="是否为目录")
     size: int | None = Field(default=None, description="文件大小（字节），目录为 null")
+    kind: Literal["directory", "text", "image"] = Field(
+        ...,
+        description="条目类型：directory、text 或 image",
+    )
+    content_type: str | None = Field(
+        default=None,
+        description="文件 MIME 类型，目录为 null",
+    )
+    modified_at: str | None = Field(
+        default=None,
+        description="最后修改时间（UTC ISO 8601）",
+    )
 
 
 class ProjectFileListResponse(BaseModel):

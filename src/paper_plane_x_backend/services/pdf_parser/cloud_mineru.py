@@ -186,7 +186,7 @@ class CloudMinerUParser:
                 )
 
             progress = task_data.get("extract_progress", {})
-            logger.info(
+            logger.debug(
                 "event=cloud_mineru.task_polling batch_id=%s state=%s progress=%s",
                 batch_id,
                 state,

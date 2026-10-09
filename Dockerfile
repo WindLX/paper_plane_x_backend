@@ -24,7 +24,7 @@ WORKDIR /app
 
 # Install uv and keep curl for docker-compose healthcheck
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && apt-get install -y --no-install-recommends curl ca-certificates librsvg2-bin \
     && curl -fsSL https://astral.sh/uv/install.sh | sh \
     && rm -rf /var/lib/apt/lists/* /root/.cache
 

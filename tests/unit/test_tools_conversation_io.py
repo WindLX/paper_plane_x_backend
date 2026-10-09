@@ -1,13 +1,28 @@
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from paper_plane_x_backend.config import settings
+from paper_plane_x_backend.models import Project
+from paper_plane_x_backend.services.database import Database
+from paper_plane_x_backend.services.project.repository import ProjectRepository
 from paper_plane_x_backend.tools import conversation_io
 
 
 @pytest.fixture
-def project_sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def project_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, db: Database
+) -> Path:
+    ProjectRepository(db).create(
+        Project(
+            project_id="proj-1",
+            name="Synthetic",
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+    )
+    monkeypatch.setattr(conversation_io, "get_db", lambda: db)
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     sandbox = tmp_path / "projects" / "proj-1"
     sandbox.mkdir(parents=True, exist_ok=True)

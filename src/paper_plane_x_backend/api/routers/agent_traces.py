@@ -104,7 +104,7 @@ async def query_agent_traces(
             items.append(trace)
             seen.add(trace_id)
 
-    logger.info(
+    logger.debug(
         "event=agent_trace.query_completed requested=%s found=%s",
         len(trace_ids),
         len(items),
@@ -182,7 +182,7 @@ async def list_agent_traces(
 
     items = [_trace_dict_to_response(t) for t in trace_dicts]
 
-    logger.info(
+    logger.debug(
         "event=agent_trace.list_completed offset=%s limit=%s returned=%s total=%s",
         request.offset,
         request.limit,

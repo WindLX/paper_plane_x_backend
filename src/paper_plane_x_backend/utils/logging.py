@@ -11,6 +11,30 @@ from paper_plane_x_backend.config import settings
 
 _active_log_file_path: Path | None = None
 
+# VERBOSE 位于 DEBUG 之下，用于逐项数据输出（如逐 chunk、逐记录日志），
+# 默认与 DEBUG 一同关闭；只有显式配置 level=VERBOSE 时才输出。
+VERBOSE = 5
+logging.addLevelName(VERBOSE, "VERBOSE")
+
+_LEVEL_VALUES: dict[str, int] = {
+    "VERBOSE": VERBOSE,
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
+
+
+def resolve_log_level(name: str) -> int:
+    """将已校验的日志级别名映射为 logging 级别数值。"""
+    return _LEVEL_VALUES[name]
+
+
+def log_verbose(logger: logging.Logger, msg: str, *args: object) -> None:
+    """以 VERBOSE 级别输出逐项数据日志。"""
+    logger.log(VERBOSE, msg, *args)
+
 
 class AppNamespaceFilter(logging.Filter):
     """仅放行应用命名空间日志。"""
@@ -54,7 +78,7 @@ def setup_logging() -> None:
         _active_log_file_path = None
 
     logging.basicConfig(
-        level=getattr(logging, settings.log.level.upper(), logging.INFO),
+        level=resolve_log_level(settings.log.level),
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
         handlers=handlers,
         force=True,

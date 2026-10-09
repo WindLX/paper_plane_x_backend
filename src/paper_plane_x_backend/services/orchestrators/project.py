@@ -4,6 +4,7 @@ import json
 import logging
 import tempfile
 import zipfile
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
@@ -18,8 +19,11 @@ from paper_plane_x_backend.models import (
     ProjectSortKey,
     SortOrder,
 )
+from paper_plane_x_backend.models.export_progress import ExportCanceled, ExportProgress
+from paper_plane_x_backend.schemas.api.project_exports import ProjectExportPhase
 from paper_plane_x_backend.services.database import Database
 from paper_plane_x_backend.services.paper.repository import PaperRepository
+from paper_plane_x_backend.services.project.activity import ProjectActivityStore
 from paper_plane_x_backend.services.project.files import (
     ProjectFileError,
     ProjectFileManager,
@@ -54,7 +58,7 @@ class ProjectOrchestrator:
     ) -> None:
         self.paper_repo = PaperRepository(db)
         self.project_repo = ProjectRepository(db)
-        self.file_manager = file_manager or get_project_file_manager()
+        self.file_manager = file_manager or get_project_file_manager(db)
 
     def _ensure_project_exists(self, project_id: str) -> None:
         try:
@@ -197,6 +201,15 @@ class ProjectOrchestrator:
         return project
 
     def delete_project(self, project_id: str) -> None:
+        self._ensure_project_exists(project_id)
+        from paper_plane_x_backend.config import settings
+        from paper_plane_x_backend.services.project.export_jobs import (
+            delete_project_exports,
+        )
+
+        delete_project_exports(
+            self.project_repo.db, project_id, settings.data_dir / "exports"
+        )
         try:
             self.project_repo.delete(project_id)
         except ProjectRepositoryError as exc:
@@ -326,7 +339,57 @@ class ProjectOrchestrator:
         fields: Sequence[str],
         citations_mode: str,
         include_sandbox_files: bool = False,
+        output_path: Path | None = None,
+        on_progress: Callable[[ExportProgress], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+        activity_id: str | None = None,
     ) -> tuple[str, str]:
+        """Record synchronous exports; queued jobs own their existing activity."""
+        project = self.get_project(project_id)
+        store = ProjectActivityStore(self.project_repo.db)
+        owns_activity = activity_id is None
+        if activity_id is None:
+            activity_id = store.record_pending(
+                project_id=project_id,
+                category="export",
+                event_type="project_exported",
+                object_name=project.name,
+            )
+        try:
+            result = self._pack_project_bundle(
+                project_id=project_id,
+                fields=fields,
+                citations_mode=citations_mode,
+                include_sandbox_files=include_sandbox_files,
+                output_path=output_path,
+                on_progress=on_progress,
+                should_cancel=should_cancel,
+            )
+        except (ProjectDomainError, OSError, zipfile.BadZipFile, ExportCanceled) as exc:
+            if owns_activity:
+                store.fail(
+                    activity_id,
+                    error=str(exc),
+                    status="canceled" if isinstance(exc, ExportCanceled) else "failed",
+                )
+            raise
+        if owns_activity:
+            store.complete(activity_id, detail={"download_name": result[1]})
+        return result
+
+    def _pack_project_bundle(
+        self,
+        *,
+        project_id: str,
+        fields: Sequence[str],
+        citations_mode: str,
+        include_sandbox_files: bool = False,
+        output_path: Path | None = None,
+        on_progress: Callable[[ExportProgress], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> tuple[str, str]:
+        if on_progress is not None:
+            on_progress(ExportProgress(ProjectExportPhase.PREPARING))
         project = self.get_project(project_id)
         papers = self.list_all_papers(project_id=project_id)
         try:
@@ -351,8 +414,11 @@ class ProjectOrchestrator:
         selected_fields = list(dict.fromkeys(fields))
         export_items: list[dict[str, Any]] = []
         file_entries: list[dict[str, Any]] = []
+        paper_files: list[tuple[Path, str]] = []
 
         for paper in papers:
+            if should_cancel is not None and should_cancel():
+                raise ExportCanceled()
             full_payload = self._paper_detail_payload(paper)
             item: dict[str, Any] = {}
             for field in selected_fields:
@@ -375,11 +441,18 @@ class ProjectOrchestrator:
                 candidate_dir = Path(raw_pdf_path).expanduser().resolve().parent
                 if candidate_dir.exists() and candidate_dir.is_dir():
                     folder_path = str(candidate_dir)
-                    file_count = sum(
-                        1
-                        for p in candidate_dir.rglob("*")
-                        if p.is_file() and not p.is_symlink()
-                    )
+                    for path in candidate_dir.rglob("*"):
+                        if should_cancel is not None and should_cancel():
+                            raise ExportCanceled()
+                        relative = path.relative_to(candidate_dir)
+                        if path.is_file() and not path.is_symlink():
+                            paper_files.append(
+                                (
+                                    path,
+                                    f"paper_files/{paper.paper_id}/{relative.as_posix()}",
+                                )
+                            )
+                            file_count += 1
             file_entries.append(
                 {
                     "paper_id": paper.paper_id,
@@ -421,42 +494,92 @@ class ProjectOrchestrator:
         )
         now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         base_name = f"project_{safe_project_id}_export_{now_str}"
-        tmp_file = tempfile.NamedTemporaryFile(
-            suffix=".zip",
-            prefix=f"{base_name}_",
-            delete=False,
-        )
-        zip_path = Path(tmp_file.name)
-        tmp_file.close()
-
-        with zipfile.ZipFile(
-            zip_path,
-            mode="w",
-            compression=zipfile.ZIP_DEFLATED,
-        ) as zf:
-            zf.writestr(
-                f"{base_name}/project_export.json",
-                json.dumps(export_payload, ensure_ascii=False, indent=2),
+        if output_path is None:
+            tmp_file = tempfile.NamedTemporaryFile(
+                suffix=".zip", prefix=f"{base_name}_", delete=False
             )
-
-            for paper in papers:
-                raw_pdf_path = paper.raw_pdf_path
-                if not raw_pdf_path:
-                    continue
-                candidate_dir = Path(raw_pdf_path).expanduser().resolve().parent
-                if not candidate_dir.exists() or not candidate_dir.is_dir():
-                    continue
-                for file_path in candidate_dir.rglob("*"):
-                    if not file_path.is_file() or file_path.is_symlink():
-                        continue
-                    relative_path = file_path.relative_to(candidate_dir)
-                    arcname = f"{base_name}/paper_files/{paper.paper_id}/{relative_path.as_posix()}"
-                    zf.write(file_path, arcname=arcname)
-
-            if include_sandbox_files:
-                for file_path, relative_path in sandbox_files:
-                    arcname = f"{base_name}/project_files/{relative_path}"
-                    zf.write(file_path, arcname=arcname)
+            zip_path = Path(tmp_file.name)
+            tmp_file.close()
+        else:
+            zip_path = output_path
+            zip_path.parent.mkdir(parents=True, exist_ok=True)
+        entries = paper_files + [
+            (path, f"project_files/{relative}") for path, relative in sandbox_files
+        ]
+        total = len(entries) + 1  # The metadata JSON is a real archive entry too.
+        processed = 0
+        try:
+            if should_cancel is not None and should_cancel():
+                raise ExportCanceled()
+            if on_progress is not None:
+                on_progress(
+                    ExportProgress(
+                        ProjectExportPhase.PACKING,
+                        processed,
+                        total,
+                        "project_export.json",
+                    )
+                )
+            with zipfile.ZipFile(
+                zip_path, mode="w", compression=zipfile.ZIP_DEFLATED
+            ) as zf:
+                zf.writestr(
+                    f"{base_name}/project_export.json",
+                    json.dumps(export_payload, ensure_ascii=False, indent=2),
+                )
+                processed += 1
+                if on_progress is not None:
+                    on_progress(
+                        ExportProgress(
+                            ProjectExportPhase.PACKING,
+                            processed,
+                            total,
+                            "project_export.json",
+                        )
+                    )
+                for file_path, relative_path in entries:
+                    if should_cancel is not None and should_cancel():
+                        raise ExportCanceled()
+                    if on_progress is not None:
+                        on_progress(
+                            ExportProgress(
+                                ProjectExportPhase.PACKING,
+                                processed,
+                                total,
+                                relative_path,
+                            )
+                        )
+                    # Stream rather than buffer entire PDFs; check cancellation
+                    # between chunks so one large file cannot lock cancellation.
+                    with (
+                        file_path.open("rb") as source,
+                        zf.open(
+                            f"{base_name}/{relative_path}", "w", force_zip64=True
+                        ) as target,
+                    ):
+                        while block := source.read(1024 * 1024):
+                            if should_cancel is not None and should_cancel():
+                                raise ExportCanceled()
+                            target.write(block)
+                    processed += 1
+                    if on_progress is not None:
+                        on_progress(
+                            ExportProgress(
+                                ProjectExportPhase.PACKING,
+                                processed,
+                                total,
+                                relative_path,
+                            )
+                        )
+                if on_progress is not None:
+                    on_progress(
+                        ExportProgress(ProjectExportPhase.FINALIZING, processed, total)
+                    )
+            if should_cancel is not None and should_cancel():
+                raise ExportCanceled()
+        except (ExportCanceled, OSError, zipfile.BadZipFile):
+            zip_path.unlink(missing_ok=True)
+            raise
 
         logger.info(
             "event=project.exported project_id=%s papers=%s zip_path=%s",

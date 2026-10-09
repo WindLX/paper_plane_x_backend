@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from dotenv import dotenv_values
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -40,7 +40,10 @@ def _read_config_file_from_dotenv() -> str | None:
 class LogConfig(BaseModel):
     """日志配置."""
 
-    level: str = Field(default="INFO", description="日志级别")
+    level: str = Field(
+        default="INFO",
+        description="日志级别：VERBOSE / DEBUG / INFO / WARNING / ERROR / CRITICAL",
+    )
     app_only: bool = Field(default=True, description="是否仅输出应用日志")
     to_file: bool = Field(default=True, description="是否输出到文件")
     file_path: Path = Field(
@@ -50,6 +53,23 @@ class LogConfig(BaseModel):
         default=10 * 1024 * 1024, description="日志文件最大大小"
     )
     file_backup_count: int = Field(default=5, description="日志文件轮转数量")
+
+    @field_validator("level")
+    @classmethod
+    def _validate_level(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in {
+            "VERBOSE",
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR",
+            "CRITICAL",
+        }:
+            raise ValueError(
+                "log.level must be one of VERBOSE/DEBUG/INFO/WARNING/ERROR/CRITICAL"
+            )
+        return normalized
 
 
 class APIConfig(BaseModel):

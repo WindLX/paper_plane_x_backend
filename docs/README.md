@@ -16,7 +16,7 @@
 4. [architecture.md](./architecture.md)
    - 当前后端分层、数据流、Agent runtime、CLI/skill 边界。
 5. [logging_conventions.md](./logging_conventions.md)
-   - 日志字段、事件命名、排障建议。
+   - 日志级别语义（VERBOSE/DEBUG/INFO/WARNING/ERROR）、级别配置、字段与事件命名、排障建议。
 6. [roadmap.md](./roadmap.md)
    - 当前实现状态和下一步方向。
 7. [../tests/README.md](../tests/README.md)
@@ -25,6 +25,8 @@
 本地 MinerU 4.x 的接口迁移、模型与按需服务部署见 [mineru_v4.md](mineru_v4.md)。
 
 Agent 配置与自动输出预算见 [token_budget.md](token_budget.md)。
+
+项目工作台（只读总览、持久活动历史、图片文件与后台导出任务）见 [project-workbench.md](project-workbench.md)。
 
 ## 文档分工
 
@@ -73,6 +75,16 @@ Agent 配置与自动输出预算见 [token_budget.md](token_budget.md)。
 - Agent runtime 与当前后端 Agent
 - `ppx` CLI 和 skill 如何复用后端能力
 
+### `project-workbench.md`
+
+项目工作台的契约与持久化边界：
+
+- 只读总览聚合与 `section_errors` 分区块容错
+- 项目拥有的活动历史（`project_activities`、迁移与删除语义）
+- 图片文件的真实内容校验、原字节下载与内联预览
+- Markdown 导出的图片引用解析与 DOCX/PDF/HTML 转换
+- 后台导出作业的单 worker、去重、阶段、保留与重启语义
+
 ### `roadmap.md`
 
 状态快照，用于同步：
@@ -91,4 +103,5 @@ Agent 配置与自动输出预算见 [token_budget.md](token_budget.md)。
   - [workflow_quickstart.md](./workflow_quickstart.md)
   - [architecture.md](./architecture.md)
   - [librarian.md](./librarian.md)（如果影响检索/Researcher/CLI）
+  - [project-workbench.md](./project-workbench.md)（如果影响项目概览、活动、项目文件或导出）
 - 修改测试方式时，同步更新 [../tests/README.md](../tests/README.md)。

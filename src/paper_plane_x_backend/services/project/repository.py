@@ -10,6 +10,11 @@ from typing import Any, cast
 
 from paper_plane_x_backend.models import Project, ProjectSortKey, SortOrder
 from paper_plane_x_backend.services.database import Database
+from paper_plane_x_backend.services.project.activity import (
+    ProjectActivityStore,
+    build_operation_log_activity_id,
+    map_operation_to_activity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +90,13 @@ class ProjectRepository:
             "event=project.agent_summary_updated project_id=%s",
             project_id,
         )
+        ProjectActivityStore(self.db).record(
+            project_id=project_id,
+            category="project",
+            event_type="summary_updated" if content else "summary_cleared",
+            status="completed",
+            detail={},
+        )
 
     def delete_agent_summary(self, project_id: str) -> None:
         """删除项目的 agent_summary（置为 NULL）."""
@@ -101,6 +113,14 @@ class ProjectRepository:
     def create(self, project: Project) -> None:
         """插入项目."""
         self.db.insert("projects", project.to_db_dict())
+        ProjectActivityStore(self.db).record(
+            project_id=project.project_id,
+            category="project",
+            event_type="project_created",
+            status="completed",
+            object_name=project.name,
+            created_at=project.created_at,
+        )
         logger.info(
             "event=project.record_created project_id=%s name=%s",
             project.project_id,
@@ -192,17 +212,68 @@ class ProjectRepository:
         """追加操作日志并更新时间."""
         self.ensure_exists(project_id)
         logs = self.get_operation_logs(project_id)
-        logs.append(
-            {
-                "operation": operation,
-                "timestamp": datetime.now().isoformat(),
-                "detail": dict(detail or {}),
-            }
-        )
+        now = datetime.now()
+        entry: dict[str, object] = {
+            "operation": operation,
+            "timestamp": now.isoformat(),
+            "detail": dict(detail or {}),
+        }
+        logs.append(entry)
         self.update(
             project_id,
             {
-                "updated_at": datetime.now(),
+                "updated_at": now,
                 "operation_logs": json.dumps(logs, ensure_ascii=False),
             },
+        )
+        self._record_operation_log_activity(
+            project_id=project_id,
+            index=len(logs) - 1,
+            entry=entry,
+            timestamp=now,
+        )
+
+    def _record_operation_log_activity(
+        self,
+        *,
+        project_id: str,
+        index: int,
+        entry: dict[str, object],
+        timestamp: datetime,
+    ) -> None:
+        """Mirror one operation-log entry into the durable activity table.
+
+        The activity id is derived from the entry position so the one-shot legacy
+        migration cannot double-record the same entry.
+        """
+        operation = entry.get("operation")
+        if not isinstance(operation, str):
+            return
+        mapping = map_operation_to_activity(operation)
+        if mapping is None:
+            return
+        category, event_type = mapping
+        raw_timestamp = entry.get("timestamp")
+        raw_detail = entry.get("detail")
+        detail_payload: dict[str, Any] = (
+            {str(key): value for key, value in cast(dict[Any, Any], raw_detail).items()}
+            if isinstance(raw_detail, dict)
+            else {}
+        )
+        paper_id = detail_payload.get("paper_id")
+        ProjectActivityStore(self.db).record(
+            activity_id=build_operation_log_activity_id(
+                project_id,
+                index,
+                operation,
+                raw_timestamp if isinstance(raw_timestamp, str) else "",
+            ),
+            project_id=project_id,
+            category=category,
+            event_type=event_type,
+            status="info",
+            paper_id=paper_id if isinstance(paper_id, str) else None,
+            created_at=timestamp,
+            updated_at=timestamp,
+            detail={"operation": operation, "detail": detail_payload},
         )
