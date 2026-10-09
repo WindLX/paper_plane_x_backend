@@ -24,6 +24,8 @@
 
 本地 MinerU 4.x 的接口迁移、模型与按需服务部署见 [mineru_v4.md](mineru_v4.md)。
 
+Agent 配置与自动输出预算见 [token_budget.md](token_budget.md)。
+
 ## 文档分工
 
 ### `README.md`

@@ -289,3 +289,6 @@ Paper Plane X Backend 使用 [GNU Affero General Public License v3.0 or later](L
 ## MinerU 4 migration / MinerU 4 迁移
 
 Local parsing requires MinerU 4.x V1. See [migration and on-demand deployment](docs/mineru_v4.md) for the request contract, cold startup, and idle shutdown. 本地解析要求 MinerU 4.x V1；配置与按需部署说明见上述文档。
+
+
+六个 Agent 的单次请求总 Token 预算默认均为 **240000**，使用 `max_total_tokens`；后端自动计数并计算剩余输出空间，无需配置 tokenizer。旧 `max_tokens` 用户配置已移除，升级时需要清理旧字段，详见 [Token 预算说明](docs/token_budget.md)。

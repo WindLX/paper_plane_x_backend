@@ -97,7 +97,7 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/settings/providers \
 for agent in extraction analysis fact_check deep_diver query_builder global_finder; do
   curl -s -X PUT "http://127.0.0.1:8000/api/v1/settings/agent_llm/${agent}" \
     -H "Content-Type: application/json" \
-    -d '{"provider_name": "default"}'
+    -d '{"provider_name": "default", "max_total_tokens": 240000}'
 done
 ```
 

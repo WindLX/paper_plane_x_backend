@@ -5,6 +5,7 @@ from typing import Any, cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from paper_plane_x_backend.models.app_settings import (
+    DEFAULT_MAX_TOTAL_TOKENS,
     CloudPdfParserConfig,
     PandocConfig,
     PdfParserConfig,
@@ -23,6 +24,12 @@ class LLMProviderResponse(BaseModel):
     name: str = Field(..., description="Provider 唯一标识名")
     model: str = Field(..., description="模型名称")
     base_url: str | None = Field(default=None, description="API 基础 URL")
+    context_window_tokens: int | None = Field(
+        default=None, ge=1, description="模型上下文上限"
+    )
+    max_output_tokens: int | None = Field(
+        default=None, ge=1, description="模型最大生成 token 数"
+    )
     has_api_key: bool = Field(
         default=False, description="后端是否已配置 api_key（不返回明文）"
     )
@@ -35,6 +42,8 @@ class LLMProviderResponse(BaseModel):
             model=provider.model,
             base_url=provider.base_url,
             has_api_key=bool(provider.api_key),
+            context_window_tokens=provider.context_window_tokens,
+            max_output_tokens=provider.max_output_tokens,
         )
 
 
@@ -45,6 +54,12 @@ class LLMProviderCreateRequest(BaseModel):
 
     name: str = Field(..., min_length=1, description="Provider 唯一标识名")
     model: str = Field(..., min_length=1, description="模型名称")
+    context_window_tokens: int | None = Field(
+        default=None, ge=1, description="模型上下文上限"
+    )
+    max_output_tokens: int | None = Field(
+        default=None, ge=1, description="模型最大生成 token 数"
+    )
     api_key: str | None = Field(default=None, description="API 密钥")
     base_url: str | None = Field(default=None, description="API 基础 URL")
 
@@ -63,6 +78,12 @@ class LLMProviderUpdateRequest(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
     model: str | None = Field(default=None, min_length=1, description="模型名称")
+    context_window_tokens: int | None = Field(
+        default=None, ge=1, description="模型上下文上限"
+    )
+    max_output_tokens: int | None = Field(
+        default=None, ge=1, description="模型最大生成 token 数"
+    )
     api_key: str | None = Field(default=None, description="API 密钥")
     base_url: str | None = Field(default=None, description="API 基础 URL")
 
@@ -75,7 +96,9 @@ class AgentLLMConfigResponse(BaseModel):
     agent_name: str = Field(..., description="Agent 名称")
     provider_name: str = Field(..., description="引用的 Provider 名称")
     temperature: float = Field(default=0.7, description="采样温度")
-    max_tokens: int | None = Field(default=8192, description="最大生成 token 数")
+    max_total_tokens: int = Field(
+        default=DEFAULT_MAX_TOTAL_TOKENS, ge=1, description="单次请求总 token 预算"
+    )
     timeout: float = Field(default=180.0, description="请求超时时间（秒）")
     thinking_enabled: bool = Field(default=False, description="思考模式")
     reasoning_effort: str | None = Field(default=None, description="推理强度参数")
@@ -103,7 +126,9 @@ class AgentLLMConfigUpdateRequest(BaseModel):
 
     provider_name: str = Field(..., min_length=1, description="引用的 Provider 名称")
     temperature: float | None = Field(default=None, description="覆盖采样温度")
-    max_tokens: int | None = Field(default=None, description="覆盖最大生成 token 数")
+    max_total_tokens: int | None = Field(
+        default=None, ge=1, description="单次请求总 token 预算；默认 240000"
+    )
     timeout: float | None = Field(default=None, description="覆盖请求超时时间（秒）")
     thinking_enabled: bool | None = Field(default=None, description="覆盖思考模式")
     reasoning_effort: str | None = Field(default=None, description="覆盖推理强度")

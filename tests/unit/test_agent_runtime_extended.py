@@ -408,7 +408,7 @@ class TestLLMClientExtended:
             api_key="k1",
             base_url="http://x",
             temperature=0.1,
-            max_tokens=12,
+            max_total_tokens=12000,
             timeout=9.0,
             custom_headers={"X-Test": "1"},
             thinking_enabled=True,
@@ -421,7 +421,7 @@ class TestLLMClientExtended:
         assert client.api_key == "k1"
         assert client.base_url == "http://x"
         assert client.temperature == 0.1
-        assert client.max_tokens == 12
+        assert client.max_total_tokens == 12000
         assert client.timeout == 9.0
         assert client.custom_headers == {"X-Test": "1"}
         assert client.thinking_enabled is True

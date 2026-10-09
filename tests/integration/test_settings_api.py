@@ -183,7 +183,7 @@ class TestSettingsAgentLLM:
             json={
                 "provider_name": "agent-test-provider",
                 "temperature": 0.2,
-                "max_tokens": 4096,
+                "max_total_tokens": 240000,
             },
         )
         assert resp.status_code == 200
@@ -313,3 +313,61 @@ class TestSettingsSections:
             full_resp.json()["pdf_parser"]["local"]["base_url"]
             == "http://mineru-persist:7860"
         )
+
+
+def test_token_budget_defaults_for_all_six_agents(client: TestClient) -> None:
+    from paper_plane_x_backend.models.app_settings import AGENT_NAMES
+
+    repo = get_app_settings_repo()
+    for agent in AGENT_NAMES:
+        repo.update_agent_llm(agent, {"provider_name": "default"})
+    response = client.get("/api/v1/settings/agent_llm")
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 6
+    for entry in response.json()["items"]:
+        assert entry["max_total_tokens"] == 240000
+        assert "max_tokens" not in entry
+    response = client.put(
+        "/api/v1/settings/agent_llm/extraction",
+        json={"provider_name": "default", "max_tokens": 200000},
+    )
+    assert response.status_code == 422
+    response = client.put(
+        "/api/v1/settings/agent_llm/extraction",
+        json={"provider_name": "default", "max_total_tokens": 120000},
+    )
+    assert response.status_code == 200
+    assert response.json()["max_total_tokens"] == 120000
+
+
+def test_provider_token_capabilities_round_trip_and_reset(client: TestClient) -> None:
+    name = "synthetic-token-caps"
+    repo = get_app_settings_repo()
+    if repo.get_provider(name):
+        repo.delete_provider(name)
+    response = client.post(
+        "/api/v1/settings/providers",
+        json={
+            "name": name,
+            "model": "openai/synthetic",
+            "api_key": "synthetic-key",
+            "context_window_tokens": 262144,
+            "max_output_tokens": 200000,
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["context_window_tokens"] == 262144
+    assert response.json()["max_output_tokens"] == 200000
+    assert "tokenizer_model" not in response.json()
+    response = client.put(
+        f"/api/v1/settings/providers/{name}",
+        json={
+            "context_window_tokens": None,
+            "max_output_tokens": None,
+            "api_key": None,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["context_window_tokens"] is None
+    assert response.json()["max_output_tokens"] is None
+    assert response.json()["has_api_key"] is True

@@ -3,20 +3,40 @@
 基于 LiteLLM 的统一接口，按能力封装模型调用。
 """
 
+import json
 import logging
 from collections.abc import AsyncIterator
 from time import perf_counter
-from typing import Any, Literal, Protocol, TypeVar, cast
+from typing import Any, Literal, Protocol, TypedDict, TypeVar, cast
 
-from litellm import acompletion  # pyright: ignore[reportUnknownVariableType]
+from litellm import (
+    acompletion,  # pyright: ignore[reportUnknownVariableType]
+    token_counter,  # pyright: ignore[reportUnknownVariableType]
+)
+
+# LiteLLM exports an unparameterized registry and a counter with untyped message
+# entries. Narrow its registry below; token counting remains at this SDK boundary.
+from litellm import (
+    model_cost as _model_cost,  # pyright: ignore[reportUnknownVariableType]
+)
 from pydantic import BaseModel, Field
 
-from paper_plane_x_backend.models.app_settings import LLMConfig
+from paper_plane_x_backend.models.app_settings import (
+    DEFAULT_MAX_TOTAL_TOKENS,
+    LLMConfig,
+)
 from paper_plane_x_backend.schemas.agent_io.base import (
     ToolCallFunction,
     ToolCallMessage,
 )
 
+
+class ModelTokenLimits(TypedDict, total=False):
+    max_input_tokens: int | None
+    max_output_tokens: int | None
+
+
+model_cost = cast(dict[str, ModelTokenLimits], _model_cost)
 logger = logging.getLogger(__name__)
 
 OutputType = TypeVar("OutputType", bound=BaseModel)
@@ -59,7 +79,9 @@ class LLMClient:
         api_key: str | None = None,
         base_url: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int | None = None,
+        max_total_tokens: int = DEFAULT_MAX_TOTAL_TOKENS,
+        context_window_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         timeout: float = 600.0,
         custom_headers: dict[str, str] | None = None,
         thinking_enabled: bool = False,
@@ -70,7 +92,9 @@ class LLMClient:
         self.api_key = api_key
         self.base_url = base_url
         self.temperature = temperature
-        self.max_tokens = max_tokens
+        self.max_total_tokens = max_total_tokens
+        self.context_window_tokens = context_window_tokens
+        self.max_output_tokens = max_output_tokens
         self.timeout = timeout
         self.custom_headers = custom_headers or {}
         self.thinking_enabled = thinking_enabled
@@ -84,7 +108,9 @@ class LLMClient:
             api_key=config.api_key,
             base_url=config.base_url,
             temperature=config.temperature,
-            max_tokens=config.max_tokens,
+            max_total_tokens=config.max_total_tokens,
+            context_window_tokens=config.context_window_tokens,
+            max_output_tokens=config.max_output_tokens,
             timeout=config.timeout,
             custom_headers=config.custom_headers,
             thinking_enabled=config.thinking_enabled,
@@ -238,57 +264,13 @@ class LLMClient:
             output_schema is not None,
             self.reasoning_effort if self.thinking_enabled else "disabled",
         )
-        request: dict[str, Any] = {
-            "model": resolved_model,
-            "messages": messages,
-            "api_key": self.api_key,
-            "base_url": self.base_url,
-            "temperature": kwargs.pop("temperature", self.temperature),
-            "max_tokens": kwargs.pop("max_tokens", self.max_tokens),
-            "timeout": kwargs.pop("timeout", self.timeout),
-            "headers": self.custom_headers or None,
-        }
-
-        if custom_provider is not None:
-            request["custom_llm_provider"] = custom_provider
-
-        if tools is not None:
-            request["tools"] = tools
-            request["tool_choice"] = tool_choice
-
-        if output_schema is not None:
-            request["response_format"] = {
-                "type": "json_object",
-                "schema": output_schema.model_json_schema(),
-            }
-
-        request_extra_body = dict(self.extra_body)
-        if self.thinking_enabled:
-            request_extra_body.setdefault("thinking", {"type": "enabled"})
-
-        kwargs_extra_body = kwargs.pop("extra_body", None)
-        if isinstance(kwargs_extra_body, dict):
-            request_extra_body.update(cast(dict[str, Any], kwargs_extra_body))
-
-        if request_extra_body:
-            request["extra_body"] = request_extra_body
-
-        reasoning_effort = kwargs.pop("reasoning_effort", self.reasoning_effort)
-        if reasoning_effort is not None:
-            request["reasoning_effort"] = reasoning_effort
-            allowed_openai_params = kwargs.pop("allowed_openai_params", None)
-            merged_allowed_openai_params: list[str] = []
-            if isinstance(allowed_openai_params, list):
-                merged_allowed_openai_params.extend(
-                    item
-                    for item in cast(list[Any], allowed_openai_params)
-                    if isinstance(item, str)
-                )
-            if "reasoning_effort" not in merged_allowed_openai_params:
-                merged_allowed_openai_params.append("reasoning_effort")
-            request["allowed_openai_params"] = merged_allowed_openai_params
-
-        request.update(kwargs)
+        request = self._build_request(
+            messages,
+            tools=tools,
+            output_schema=output_schema,
+            tool_choice=tool_choice,
+            **kwargs,
+        )
         response = await acompletion(**request)
         parsed = self._parse_response(response)
         logger.debug(
@@ -341,7 +323,6 @@ class LLMClient:
             "api_key": self.api_key,
             "base_url": self.base_url,
             "temperature": kwargs.pop("temperature", self.temperature),
-            "max_tokens": kwargs.pop("max_tokens", self.max_tokens),
             "timeout": kwargs.pop("timeout", self.timeout),
             "headers": self.custom_headers or None,
         }
@@ -386,7 +367,75 @@ class LLMClient:
             request["allowed_openai_params"] = merged_allowed_openai_params
 
         request.update(kwargs)
+        self._apply_token_budget(request)
         return request
+
+    def _apply_token_budget(self, request: dict[str, Any]) -> None:
+        """Reserve input + output in one request; never trim research evidence.
+
+        LiteLLM counters estimate the serialized messages and tools. Count the
+        response schema separately, and leave 4096 tokens for tokenizer/template
+        differences. Explicit gateway limits override registry metadata; for an
+        unknown alias, the configured total budget remains the explicit ceiling.
+        """
+        metadata = (
+            model_cost.get(self.model)
+            or model_cost.get(self.model.removeprefix("openai/"))
+            or {}
+        )
+        known_context = metadata.get("max_input_tokens")
+        known_output = metadata.get("max_output_tokens")
+        context_limit = self.context_window_tokens
+        if context_limit is None and isinstance(known_context, int):
+            context_limit = known_context
+        output_limit = self.max_output_tokens
+        if output_limit is None and isinstance(known_output, int):
+            output_limit = known_output
+        total_budget = (
+            self.max_total_tokens
+            if context_limit is None
+            else min(self.max_total_tokens, context_limit)
+        )
+        input_tokens = token_counter(
+            model=self.model,
+            messages=request["messages"],
+            tools=request.get("tools"),
+            tool_choice=request.get("tool_choice"),
+            use_default_image_token_count=True,
+        )
+        if "response_format" in request:
+            input_tokens += token_counter(
+                model=self.model,
+                text=json.dumps(request["response_format"], ensure_ascii=False),
+            )
+        remaining = total_budget - input_tokens - 4096
+        if remaining <= 0:
+            raise ValueError(
+                f"Input exceeds token budget: estimated input={input_tokens}, total budget={total_budget}, safety margin=4096. Increase the budget/model context limit or reduce the input."
+            )
+        limits = [remaining]
+        if output_limit is not None:
+            limits.append(output_limit)
+        # Provider output parameters are derived, not user-configurable. Reject
+        # conflicting aliases in request options/body rather than bypass budget.
+        extra_body = request.get("extra_body", {})
+        for source in (request, extra_body):
+            if any(
+                key in source
+                for key in ("max_tokens", "max_completion_tokens", "max_output_tokens")
+            ):
+                raise ValueError(
+                    "Output token limits are automatic; configure max_total_tokens or the provider's model output limit instead"
+                )
+        request["max_tokens"] = min(limits)
+        logger.info(
+            "event=llm.token_budget model=%s estimated_input=%s total_budget=%s context_limit=%s output_limit=%s safety_margin=4096",
+            self.model,
+            input_tokens,
+            total_budget,
+            context_limit,
+            request["max_tokens"],
+        )
 
     @staticmethod
     def _parse_stream_tool_calls(

@@ -130,10 +130,15 @@ def update_provider(
     request: LLMProviderUpdateRequest,
 ) -> LLMProviderResponse:
     logger.info("event=settings.provider_update_request_received name=%s", name)
+    updates = request.model_dump(mode="json", exclude_none=True)
+    # Null explicitly resets optional model capabilities; keep existing key/null
+    # behavior for connection fields such as api_key.
+    if "context_window_tokens" in request.model_fields_set:
+        updates["context_window_tokens"] = request.context_window_tokens
+    if "max_output_tokens" in request.model_fields_set:
+        updates["max_output_tokens"] = request.max_output_tokens
     try:
-        updated = _repo().update_provider(
-            name, request.model_dump(mode="json", exclude_none=True)
-        )
+        updated = _repo().update_provider(name, updates)
     except AppSettingsRepositoryError as exc:
         _raise_as_http(exc)
     return LLMProviderResponse.from_provider(updated)

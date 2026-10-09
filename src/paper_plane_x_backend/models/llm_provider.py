@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from paper_plane_x_backend.models.app_settings import DEFAULT_MAX_TOTAL_TOKENS
+
 
 class LLMProvider(BaseModel):
     """LLM Provider 配置模型.
@@ -23,7 +25,11 @@ class LLMProvider(BaseModel):
         description="API 基础 URL (VLLM: http://localhost:8000/v1)",
     )
     temperature: float = Field(default=0.7, description="采样温度")
-    max_tokens: int | None = Field(default=8192, description="最大生成 token 数")
+    max_total_tokens: int = Field(
+        default=DEFAULT_MAX_TOTAL_TOKENS, ge=1, description="单次请求总 token 预算"
+    )
+    context_window_tokens: int | None = Field(default=None, ge=1)
+    max_output_tokens: int | None = Field(default=None, ge=1)
     timeout: float = Field(default=180.0, description="请求超时时间（秒）")
     custom_headers: dict[str, str] | None = Field(
         default=None, description="自定义 HTTP 请求头"

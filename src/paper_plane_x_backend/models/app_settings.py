@@ -10,6 +10,8 @@ from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
+DEFAULT_MAX_TOTAL_TOKENS = 240000
+
 # 预定义的 Agent 名称（与 AgentLLMConfigs 字段一一对应）
 AGENT_NAMES: tuple[str, ...] = (
     "extraction",
@@ -41,7 +43,17 @@ class LLMConfig(BaseModel):
         description="API 基础 URL (VLLM: http://localhost:8000/v1)",
     )
     temperature: float = Field(default=0.7, description="采样温度")
-    max_tokens: int | None = Field(default=8192, description="最大生成 token 数")
+    max_total_tokens: int = Field(
+        default=DEFAULT_MAX_TOTAL_TOKENS,
+        ge=1,
+        description="单次请求总 token 预算（输入与生成合计）",
+    )
+    context_window_tokens: int | None = Field(
+        default=None, ge=1, description="模型上下文上限；为空时使用已知模型信息"
+    )
+    max_output_tokens: int | None = Field(
+        default=None, ge=1, description="模型最大生成量；为空时使用已知模型信息"
+    )
     timeout: float = Field(default=180.0, description="请求超时时间（秒）")
     custom_headers: dict[str, str] | None = Field(
         default=None, description="自定义 HTTP 请求头"
@@ -75,11 +87,15 @@ class AgentLLMConfigEntry(BaseModel):
     通过引用 Provider 名称 + 可选覆盖项来配置 Agent 的 LLM 参数。
     """
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     provider_name: str = Field(default="default", description="引用的 Provider 名称")
     temperature: float = Field(default=0.7, description="采样温度")
-    max_tokens: int | None = Field(default=8192, description="最大生成 token 数")
+    max_total_tokens: int = Field(
+        default=DEFAULT_MAX_TOTAL_TOKENS,
+        ge=1,
+        description="单次请求总 token 预算（输入与生成合计）",
+    )
     timeout: float = Field(default=180.0, description="请求超时时间（秒）")
     thinking_enabled: bool = Field(default=False, description="思考模式开关")
     reasoning_effort: str | None = Field(default=None, description="推理强度参数")
@@ -137,6 +153,12 @@ class LLMProvider(BaseModel):
 
     name: str = Field(..., min_length=1, description="Provider 唯一标识名")
     model: str = Field(..., min_length=1, description="模型名称")
+    context_window_tokens: int | None = Field(
+        default=None, ge=1, description="模型上下文上限；未知网关模型可显式设置"
+    )
+    max_output_tokens: int | None = Field(
+        default=None, ge=1, description="模型最大生成 token 数"
+    )
     api_key: str | None = Field(default=None, description="API 密钥")
     base_url: str | None = Field(
         default=None,

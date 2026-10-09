@@ -23,7 +23,7 @@ def _mock_app_settings():
         api_key="k-global",
         base_url="http://global",
         temperature=0.7,
-        max_tokens=2048,
+        max_total_tokens=240000,
         timeout=60.0,
         custom_headers={"X-G": "1"},
         thinking_enabled=True,
@@ -56,7 +56,7 @@ def test_resolve_agent_llm_config_merges_overrides(
         "base_url": "http://extract",
         "api_key": "k-extract",
         "temperature": 0.5,
-        "max_tokens": 4096,
+        "max_output_tokens": 4096,
         "timeout": 30.0,
         "thinking_enabled": True,
         "reasoning_effort": "high",
@@ -80,7 +80,7 @@ def test_resolve_agent_llm_config_merges_overrides(
     assert cfg.api_key == "k-extract"
     assert cfg.base_url == "http://extract"
     # 仅当 Agent 显式设置字段时才覆盖，Provider 基线配置应保留。
-    assert cfg.max_tokens == 4096
+    assert cfg.max_output_tokens == 4096
     assert cfg.thinking_enabled is False
     assert cfg.reasoning_effort == "low"
     assert cfg.is_vlm is True

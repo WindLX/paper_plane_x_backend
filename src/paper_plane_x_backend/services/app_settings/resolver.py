@@ -6,7 +6,10 @@
 
 from typing import Any, TypedDict
 
-from paper_plane_x_backend.models.app_settings import LLMConfig
+from paper_plane_x_backend.models.app_settings import (
+    DEFAULT_MAX_TOTAL_TOKENS,
+    LLMConfig,
+)
 from paper_plane_x_backend.services.app_settings.repository import (
     get_app_settings_repo,
 )
@@ -16,7 +19,7 @@ class AgentConfigResponsePayload(TypedDict):
     agent_name: str
     provider_name: str
     temperature: float
-    max_tokens: int | None
+    max_total_tokens: int
     timeout: float
     thinking_enabled: bool
     reasoning_effort: str | None
@@ -76,7 +79,7 @@ def build_agent_config_response(agent_name: str) -> AgentConfigResponsePayload:
             "agent_name": agent_name,
             "provider_name": "default",
             "temperature": 0.7,
-            "max_tokens": 8192,
+            "max_total_tokens": DEFAULT_MAX_TOTAL_TOKENS,
             "timeout": 180.0,
             "thinking_enabled": False,
             "reasoning_effort": None,
@@ -93,7 +96,7 @@ def build_agent_config_response(agent_name: str) -> AgentConfigResponsePayload:
         "agent_name": agent_name,
         "provider_name": entry.provider_name,
         "temperature": entry.temperature,
-        "max_tokens": entry.max_tokens,
+        "max_total_tokens": entry.max_total_tokens,
         "timeout": entry.timeout,
         "thinking_enabled": entry.thinking_enabled,
         "reasoning_effort": entry.reasoning_effort,
